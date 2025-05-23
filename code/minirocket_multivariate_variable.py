@@ -310,3 +310,87 @@ def transform(X, L, parameters):
                 num_channels_start = num_channels_end
 
     return features
+import numpy as np
+
+def transform_prime(X, kernels, biases):
+    n_samples, n_channels, series_length = X.shape
+    features = np.zeros((n_samples, len(kernels)), dtype=np.float32)
+    traces = []
+
+    for i in range(n_samples):
+        for f_idx, kernel in enumerate(kernels):
+            weights = kernel['weights']
+            dilation = kernel['dilation']
+            channels = kernel['channels']
+            bias = biases[f_idx]
+            total_windows = 0
+            ppv_count = 0
+            activated_segments = []
+
+            for pos in range(series_length - dilation * (len(weights) - 1)):
+                conv_sum = 0.0
+                segment = []
+                for k in range(len(weights)):
+                    for ch in channels:
+                        idx = pos + k * dilation
+                        x_val = X[i, ch, idx]
+                        w_val = weights[k]
+                        conv_sum += x_val * w_val
+                        segment.append((idx, x_val, w_val))
+                conv_sum += bias
+                total_windows += 1
+                if conv_sum > 0:
+                    ppv_count += 1
+                    activated_segments.append(segment)
+
+            ppv = ppv_count / total_windows if total_windows > 0 else 0
+            features[i, f_idx] = ppv
+            traces.append({
+                'sample': i,
+                'feature_index': f_idx,
+                'kernel_index': kernel['id'],
+                'bias': bias,
+                'channels': channels,
+                'dilation': dilation,
+                'segments': activated_segments,
+                'ppv': ppv,
+                'weights': weights
+            })
+
+    return features, traces
+def explain(X, X_baseline, traces, alphas, phi_x, phi_x_baseline):
+    T = X.shape[2]
+    contributions = {}
+
+    for trace in traces:
+        k = trace['feature_index']
+        alpha_k = alphas[k]
+        delta_phi_k = phi_x[k] - phi_x_baseline[k]
+        if abs(delta_phi_k) < 1e-10:
+            continue
+
+        for segment in trace['segments']:
+            chi_k = sum(w * X[0, 0, idx] for idx, _, w in segment)
+            chi_k_base = sum(w * X_baseline[0, 0, idx] for idx, _, w in segment)
+            delta_chi_k = chi_k - chi_k_base
+            if abs(delta_chi_k) < 1e-10:
+                continue
+
+            delta_t_dict = {idx: X[0, 0, idx] - X_baseline[0, 0, idx] for idx, _, _ in segment}
+
+            for idx, x_val, w_val in segment:
+                delta_t_j = x_val - X_baseline[0, 0, idx]
+                if abs(delta_t_j) < 1e-10:
+                    continue
+
+                sum_kernel = 0.0
+                for idx_m, _, w_m in segment:
+                    delta_t_m = delta_t_dict.get(idx_m, 1e-8)
+                    sum_kernel += w_m / delta_t_m
+
+                multiplier = alpha_k / (delta_phi_k * delta_chi_k)
+                beta_j = delta_t_j * multiplier * sum_kernel
+                contributions[idx] = contributions.get(idx, 0.0) + beta_j
+
+    return contributions
+
