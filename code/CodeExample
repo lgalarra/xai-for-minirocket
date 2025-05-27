@@ -1,1 +1,40 @@
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+import shap
 
+# PASO 1: Crear baseline de clase opuesta
+class_actual = y_sub[0]  # etiqueta de la serie que queremos explicar
+clase_opuesta = 'facil' if class_actual == 'dificil' else 'dificil'
+
+X_baseline = X_sub[y_sub == clase_opuesta].mean(axis=0, keepdims=True)  # (1, 1, 500)
+
+# PASO 2: Transformar baseline
+phi_x_baseline, _ = transform2_minimal_unicanal(X_baseline, kernels, biases)
+
+# PASO 3: Entrenar modelo y obtener SHAP values
+clf = RandomForestClassifier(n_estimators=100, random_state=0)
+clf.fit(phi_X, y_sub)
+
+explainer = shap.Explainer(clf, phi_X)
+shap_values = explainer(phi_X)
+
+# PASO 4: Determinar clase predicha por el modelo para la muestra 0
+clase_predicha_idx = clf.predict_proba(phi_X)[0].argmax()
+
+# Extraer alphas de shap_values para esa clase
+alphas = shap_values.values[0][:, clase_predicha_idx]  # shape: (500,)
+phi_x = phi_X[0]
+
+# PASO 5: Calcular contribuciones usando fórmula de Luis
+# Filtrar las trazas correspondientes a la muestra 0 (primeras 500 si hay 500 kernels)
+trazas_muestra_0 = [t for t in trazas if t['example'] == 0]
+
+contribuciones_beta_j = calcular_contribuciones_luis_formula_completa(
+    X_sub[0:1], X_baseline, trazas_muestra_0, alphas, phi_x, phi_x_baseline[0]
+)
+
+# PASO 6: Validar la suma de contribuciones
+delta_f = np.dot(alphas, phi_x - phi_x_baseline[0])
+suma_beta = sum(contribuciones_beta_j.values())
+
+print(f"Δf = {delta_f:.6f}, Suma de β_j = {suma_beta:.6f}, Diferencia = {abs(delta_f - suma_beta):.6e}")
