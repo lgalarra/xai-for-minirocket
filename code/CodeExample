@@ -1,40 +1,57 @@
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-import shap
+from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
+from sktime.datasets import load_UCR_UEA_dataset
 
-# PASO 1: Crear baseline de clase opuesta
-class_actual = y_sub[0]  # etiqueta de la serie que queremos explicar
-clase_opuesta = 'facil' if class_actual == 'dificil' else 'dificil'
+# Paso 1: Cargar FordA
+X, y = load_UCR_UEA_dataset(name="FordA", return_X_y=True)
+X = X.to_numpy().astype(np.float32).reshape((-1, 1, 500))  # (n_samples, 1, 500)
+y = np.where(y == -1, 0, 1)  # Asegura etiquetas 0/1
 
-X_baseline = X_sub[y_sub == clase_opuesta].mean(axis=0, keepdims=True)  # (1, 1, 500)
+# Paso 2: Separar datos
+X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
 
-# PASO 2: Transformar baseline
-phi_x_baseline, _ = transform2_minimal_unicanal(X_baseline, kernels, biases)
+# Paso 3: Obtener parámetros de MiniRocket
+from minirocket import fit, get_parameters
+X_sample = X_train[:100]  # Muestra pequeña para obtener parámetros
+parameters = get_parameters(X_sample)  # (num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases)
 
-# PASO 3: Entrenar modelo y obtener SHAP values
-clf = RandomForestClassifier(n_estimators=100, random_state=0)
-clf.fit(phi_X, y_sub)
+# Paso 4: Transformar con trazas
+from explicabilidad import transform_prime  # Asegúrate de importar tus funciones correctamente
+phi_X_train, _ = transform_prime(X_train, X_train, parameters)
+phi_X_test, _ = transform_prime(X_test, X_test, parameters)
 
-explainer = shap.Explainer(clf, phi_X)
-shap_values = explainer(phi_X)
+# Paso 5: Entrenar clasificador
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(phi_X_train, y_train)
 
-# PASO 4: Determinar clase predicha por el modelo para la muestra 0
-clase_predicha_idx = clf.predict_proba(phi_X)[0].argmax()
+# Paso 6: Aplicar explicabilidad
+from explicabilidad import minirocket_explain
+X_to_explain = X_test[0:1]  # Una muestra para explicar
+y_pred = clf.predict(phi_X_test[0:1])
 
-# Extraer alphas de shap_values para esa clase
-alphas = shap_values.values[0][:, clase_predicha_idx]  # shape: (500,)
-phi_x = phi_X[0]
+# Background de SHAP
+background_X = X_train[:100]
 
-# PASO 5: Calcular contribuciones usando fórmula de Luis
-# Filtrar las trazas correspondientes a la muestra 0 (primeras 500 si hay 500 kernels)
-trazas_muestra_0 = [t for t in trazas if t['example'] == 0]
-
-contribuciones_beta_j = calcular_contribuciones_luis_formula_completa(
-    X_sub[0:1], X_baseline, trazas_muestra_0, alphas, phi_x, phi_x_baseline[0]
+# Aplicar MiniRocket Explain
+contribuciones_beta_j, pred = minirocket_explain(
+    X_to_explain, clf, background_X,
+    base_explanation_method='strato',
+    baseline_policy='baricenter_opposite_class',
+    parameters=parameters
 )
 
-# PASO 6: Validar la suma de contribuciones
-delta_f = np.dot(alphas, phi_x - phi_x_baseline[0])
-suma_beta = sum(contribuciones_beta_j.values())
+# Paso 7: Comparar con StratoSHAP puro (punto a punto)
+from explicabilidad import shap_explain_on_timeseries
+contribuciones_puntuales = shap_explain_on_timeseries(
+    clf, X_to_explain, background_X
+)
 
-print(f"Δf = {delta_f:.6f}, Suma de β_j = {suma_beta:.6f}, Diferencia = {abs(delta_f - suma_beta):.6e}")
+# Paso 8: Evaluar similitud
+# Alinear los vectores para r2
+beta_strato_phi = np.array([contribuciones_beta_j[j] for j in sorted(contribuciones_beta_j.keys())])
+beta_strato_point = np.array([contribuciones_puntuales[j] for j in sorted(contribuciones_puntuales.keys())])
+r2 = r2_score(beta_strato_point, beta_strato_phi)
+print(f"R² entre explicaciones: {r2:.4f}")
+
