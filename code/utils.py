@@ -31,3 +31,8 @@ def export(s, columns, suffix, folder='data'):
     N = int(len(s.index) / len(columns))
     for (VAR, VARNAME) in columns:
         s[[VAR  + str(i) for i in range(1, N+1)]].to_frame().to_csv(f'{folder}/{VARNAME}/{VARNAME}_{suffix}.csv', header=False)
+
+def export_univ_tmc(s, columns, suffix, folder='data'):
+    N = int(len(s.index) / len(columns))
+    for (VAR, VARNAME) in columns:
+        s[[VAR  + str(i) for i in range(0, N)]].to_frame().to_csv(f'{folder}/{VARNAME}/{VARNAME}_{suffix}.csv', header=False)
