@@ -355,13 +355,14 @@ def transform(X, L, parameters):
 def _compute_sigma_traces_one(Xi_CL, parameters):
     """
     Xi_CL: (C, L)  (una sola instancia)
-    Devuelve: lista de dicts (len = num_features), cada dict tiene:
+    Devuelve: lista de dicts (len = num_features). Cada dict contiene:
       - 'sigma'    : ndarray (L,) con {0,1}
       - 'bias_b'   : float
       - 'dilation' : int
       - 'channels' : list[int]
-      - 'kernel'   : ndarray (9,) con taps reales de MiniRocket (-1 en todas, +2 en 3 pos)
-      - 'conv_sum' : ndarray (L,) suma convolutiva (útil si luego quieres recomputar σ)
+      - 'kernel'   : ndarray (9,) con taps MiniRocket (-1 en todas, +2 en 3 posiciones)
+      - 'conv_sum' : ndarray (L,) suma convolutiva agregada en canales (base para σ)
+      - 'conv_by_channel' : dict[int -> ndarray(L,)] serie convolutiva por canal
     Replica la construcción de C de transform(...), pero sin promediar .mean().
     """
     import numpy as np
@@ -372,7 +373,7 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
      num_features_per_dilation,
      biases) = parameters
 
-    # mismos índices de tripletas que usa transform(...)
+    # Índices de tripletas (84 combinaciones) usados por MiniRocket
     indices = np.array((
         0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
         0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
@@ -389,24 +390,24 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
     ), dtype=np.int32).reshape(84, 3)
 
     C_count, L = Xi_CL.shape
-    num_kernels  = len(indices)
-    num_dilations = len(dilations)
+    num_kernels    = len(indices)
+    num_dilations  = len(dilations)
 
-    # A y G como en transform(...)
+    # Construcciones A y G como en transform(...)
     A = -Xi_CL.astype(np.float32)
     G = (Xi_CL + Xi_CL + Xi_CL).astype(np.float32)
 
     traces_list = []
     feature_index_start = 0
-    combination_index = 0
-    num_channels_start = 0
+    combination_index   = 0
+    num_channels_start  = 0
 
     for dilation_index in range(num_dilations):
         dilation  = int(dilations[dilation_index])
         padding   = ((9 - 1) * dilation) // 2
         num_features_this_dil = int(num_features_per_dilation[dilation_index])
 
-        # Construcciones como en transform(...)
+        # Compensaciones con dilatación
         C_alpha = np.zeros((C_count, L), dtype=np.float32); C_alpha[:] = A
         C_gamma = np.zeros((9, C_count, L), dtype=np.float32); C_gamma[9 // 2] = G
 
@@ -429,26 +430,33 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
             feature_index_end = feature_index_start + num_features_this_dil
 
             num_chs_this_comb = int(num_channels_per_combination[combination_index])
-            num_channels_end = num_channels_start + num_chs_this_comb
+            num_channels_end  = num_channels_start + num_chs_this_comb
             channels_this_comb = channel_indices[num_channels_start:num_channels_end]
 
             idx0, idx1, idx2 = indices[kernel_index]
 
-            # Serie convolutiva (suma sobre canales seleccionados)
-            C_series = (
-                C_alpha[channels_this_comb] +
-                C_gamma[idx0][channels_this_comb] +
-                C_gamma[idx1][channels_this_comb] +
-                C_gamma[idx2][channels_this_comb]
-            )
-            C_series = np.sum(C_series, axis=0).astype(np.float32)  # (L,)
+            # --- Serie convolutiva por canal (antes de sumar canales) ---
+            conv_by_channel = {}
+            for i_ch in channels_this_comb:
+                conv_i = (
+                    C_alpha[i_ch] +
+                    C_gamma[idx0][i_ch] +
+                    C_gamma[idx1][i_ch] +
+                    C_gamma[idx2][i_ch]
+                ).astype(np.float32)  # (L,)
+                conv_by_channel[int(i_ch)] = conv_i
 
-            # Kernel real MiniRocket: -1 en todas, +2 en tres posiciones
+            # Agregada sobre canales (base para σ/PPV)
+            C_series = np.sum(
+                [conv_by_channel[int(i)] for i in channels_this_comb],
+                axis=0
+            ).astype(np.float32)  # (L,)
+
+            # Kernel MiniRocket "real": -1 en todas y +2 en (idx0, idx1, idx2)
             kappa = np.full(9, -1.0, dtype=np.float64)
             kappa[idx0] += 3.0
             kappa[idx1] += 3.0
             kappa[idx2] += 3.0
-            # (Esto equivale a +2 en idx0/idx1/idx2 y -1 en el resto)
 
             # Para cada feature de esta dilatación (misma C_series, distinto bias)
             for fidx in range(feature_index_start, feature_index_end):
@@ -460,7 +468,8 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
                     dilation=dilation,
                     channels=list(map(int, channels_this_comb)),
                     kernel=kappa,
-                    conv_sum=C_series.copy()
+                    conv_sum=C_series.copy(),
+                    conv_by_channel=conv_by_channel
                 ))
 
             feature_index_start = feature_index_end
@@ -470,190 +479,8 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
     return traces_list
 
 
-import numpy as np
-
-
-# Nuevas funciones:
-
-def minirocket_explain(
-    X_timeseries_to_explain,           # shape: (1, C, L)
-    classifier_phi,                    # modelo entrenado sobre características φ(x)
-    background_X,                      # shape: (N, C, L)
-    transform_function,                # como transform_prime
-    parameters,                        # parámetros de MiniRocket (kernels, biases, etc.)
-    base_explanation_method='shap',   # 'shap' o 'stratoshap'
-    baseline_policy='shap',           # 'shap', 'baricenter_opposite_class', etc.
-    k=1                                # presupuesto para StratoSHAP
-):
-    # 1. Transformar entrada real y background
-    phi_x, traces = transform_function(X_timeseries_to_explain, X_timeseries_to_explain, parameters)
-    phi_background, _ = transform_function(background_X, background_X, parameters)
-
-    # 2. Calcular alphas
-    if base_explanation_method.lower() == 'shap':
-        import shap
-        explainer = shap.Explainer(classifier_phi, phi_background)
-        shap_values = explainer(phi_x)
-        class_index = classifier_phi.predict_proba(phi_x)[0].argmax()
-        alphas = shap_values.values[0][:, class_index]  # (500,)
-    
-    elif base_explanation_method.lower() in ['stratoshap', 'st-shap']:
-        from stratoshap import SHAPStratum  # Asegúrate de tenerlo
-        class_index = classifier_phi.predict_proba(phi_x)[0].argmax()
-
-        # Aplanar φ(x) y φ(background)
-        x_flat = phi_x[0]
-        x_bar = phi_background.mean(axis=0)
-        
-        class Game:
-            def __init__(self, model, x, x_baseline):
-                self.model = model
-                self.x = x
-                self.baseline = x_baseline
-                self.feature_count = len(x)
-
-            def compute_value(self, coalition):
-                mask = np.zeros_like(self.x)
-                mask[coalition] = 1
-                x_masked = self.baseline * (1 - mask) + self.x * mask
-                return self.model(x_masked.reshape(1, -1))[0]
-        
-        game = Game(classifier_phi.predict_proba, x_flat, x_bar)
-        shap_stratum = SHAPStratum()
-        shap_stratum.game = game
-        shap_stratum.n = len(x_flat)
-        shap_stratum.budget = k
-        shap_stratum.idx_dims = class_index
-        shap_stratum.dim = 1
-
-        shap_values, _ = shap_stratum.approximate_shapley_values()
-        alphas = shap_values[0]  # (500,)
-    
-    else:
-        raise ValueError(f"Unsupported explanation method: {base_explanation_method}")
-
-    # 3. Calcular X_bar de acuerdo con la baseline_policy
-    if baseline_policy == 'shap':
-        X_bar = background_X.mean(axis=0, keepdims=True)
-
-    elif baseline_policy == 'baricenter_opposite_class':
-        # Asumimos que tienes y_train o etiquetas del background
-        raise NotImplementedError("Necesitas proporcionar y_train para usar esta política")
-
-    elif baseline_policy == 'centroid':
-        X_bar = np.median(background_X, axis=0, keepdims=True)
-
-    else:
-        raise ValueError(f"Unsupported baseline policy: {baseline_policy}")
-
-    # 4. Aplicar fórmula de Luis (explain) con trazas y alphas
-    contribuciones = explain(X_timeseries_to_explain, X_bar, alphas, 
-                             lambda X, X_bar: transform_function(X, X_bar, parameters))
-
-    return contribuciones, classifier_phi.predict(phi_x)
-
-def shap_explain_on_minirocket_classifier(
-    clf, phi_X, phi_X_background,
-    class_of_interest=None,
-    base_explanation_method='shap',
-    budget=1  # solo aplica a StratoSHAP
-):
-    """
-    Explicación de φ(X) mediante SHAP o StratoSHAP para un clasificador entrenado en φ.
-
-    Parámetros:
-    - clf: clasificador entrenado en φ(X)
-    - phi_X: ndarray (1, num_features) → instancia a explicar
-    - phi_X_background: ndarray (n_background, num_features)
-    - class_of_interest: int (índice de clase a explicar)
-    - base_explanation_method: 'shap' o 'strato'
-    - budget: int (solo para StratoSHAP, por defecto k=1)
-
-    Retorna:
-    - alphas: ndarray de forma (num_features,)
-    """
-    if base_explanation_method == 'shap':
-        explainer = shap.Explainer(clf, phi_X_background)
-        shap_values = explainer(phi_X)  # (1, num_features, num_classes)
-        class_idx = class_of_interest if class_of_interest is not None else clf.predict_proba(phi_X)[0].argmax()
-        alphas = shap_values.values[0][:, class_idx]  # (num_features,)
-
-    elif base_explanation_method == 'strato':
-        x_flat = phi_X.flatten()
-        x_bar_flat = phi_X_background.mean(axis=0).flatten()
-
-        class_idx = class_of_interest if class_of_interest is not None else clf.predict_proba(phi_X)[0].argmax()
-
-        def predict_phi_flat(X_flat_input):
-            return clf.predict_proba(X_flat_input.reshape(1, -1))
-
-        game = TimeSeriesGame(predict_phi_flat, x_flat, x_bar_flat)
-        shap_stratum = SHAPStratum()
-        shap_stratum.game = game
-        shap_stratum.n = len(x_flat)
-        shap_stratum.budget = budget
-        shap_stratum.idx_dims = class_idx
-        shap_stratum.dim = 1
-        shap_values, _ = shap_stratum.approximate_shapley_values()
-        alphas = shap_values[0]
-
-    else:
-        raise ValueError("base_explanation_method debe ser 'shap' o 'strato'.")
-
-    return alphas
-
-def shap_explain_on_timeseries(
-    X_to_explain,                   # (1, C, L)
-    background_X,                   # (n, C, L)
-    clf,                            # Clasificador entrenado en φ
-    transform_function,             # MiniRocket modificado (e.g., transform_prime)
-    X_bar_policy='shap',            # 'shap', 'baricenter_opposite_class', etc.
-    base_explanation_method='shap', # 'shap' o 'strato'
-    class_of_interest=None,
-    budget=1                        # Presupuesto k (solo aplica a StratoSHAP)
-):
-    """
-    Aplica MiniRocket + SHAP o StratoSHAP desde la serie original,
-    y obtiene contribuciones β_j punto a punto.
-    """
-    # Paso 1: Obtener φ(X) y φ(background)
-    phi_X, traces = transform_function(X_to_explain)
-    phi_background, _ = transform_function(background_X)
-
-    # Paso 2: Calcular la referencia φ(X̄)
-    if X_bar_policy == 'shap' or X_bar_policy == 'centroid':
-        X_bar = np.mean(background_X, axis=0, keepdims=True)  # (1, C, L)
-        phi_X_bar = np.mean(phi_background, axis=0, keepdims=True)
-
-    elif X_bar_policy == 'baricenter_opposite_class':
-        preds = clf.predict(transform_function(background_X)[0])
-        pred_class = clf.predict(phi_X)[0]
-        opposite_class = 1 - pred_class  # Solo si es binario
-        mask = preds == opposite_class
-        X_bar = np.mean(background_X[mask], axis=0, keepdims=True)
-        phi_X_bar = np.mean(phi_background[mask], axis=0, keepdims=True)
-
-    else:
-        raise ValueError("Política de referencia no implementada")
-
-    # Paso 3: Calcular alphas en φ(X)
-    alphas = shap_explain_on_minirocket_classifier(
-        clf=clf,
-        phi_X=phi_X,
-        phi_X_background=phi_background,
-        class_of_interest=class_of_interest,
-        base_explanation_method=base_explanation_method,
-        budget=budget
-    )
-
-    # Paso 4: Aplicar fórmula de Luis con trazas
-    beta_j = explain(X_to_explain, X_bar, alphas, transform_function)
-
-    return beta_j
-
-# =========================
 # A) GLOBALS & HELPERS
-# =========================
+
 import numpy as np
 
 MINIROCKET_PARAMETERS = None  # parámetros de MiniRocket tras fit(...)
@@ -734,41 +561,6 @@ def transform_prime(X_in, parameters=None):
     return {'phi': phi, 'traces': traces_meta}
 
 
-# =========================
-# C) Calibración α→Δf y explain wrapper
-# =========================
-def calibrate_alphas_to_delta_f(alphas, delta_f, phi_x, phi_x0, ridge=1e-8, eps=1e-12):
-    s = float(np.sum(alphas))
-    if abs(s) > eps:
-        return alphas * (delta_f / s)
-    dphi = (phi_x - phi_x0).reshape(-1)
-    denom = float(np.dot(dphi, dphi) + ridge)
-    return (delta_f / denom) * dphi
-
-def _ensure_TC(x):
-    x = np.asarray(x)
-    if x.ndim == 3:
-        assert x.shape[0] == 1, f"Se espera batch=1; recibido {x.shape}"
-        x = x[0]
-    if x.ndim == 2:
-        return x.T if x.shape[0] < x.shape[1] else x
-    raise ValueError(f"Forma no soportada: {x.shape}")
-
-def explain(X, X_bar, alphas, transform_func=transform_prime, parameters=None, propagate_luis_fn=None):
-    out = transform_func(X, parameters)
-    traces = out['traces']
-    x_tc  = _ensure_TC(X)
-    x0_tc = _ensure_TC(X_bar)
-    if propagate_luis_fn is None:
-        if 'propagate_luis' not in globals():
-            raise RuntimeError("propagate_luis no está definido.")
-        propagate_luis_fn = propagate_luis
-    beta = propagate_luis_fn(np.asarray(alphas).reshape(-1), traces, x_tc, x0_tc)
-    return beta
-
-# =========================
-# D) Logits desde φ (para usar LogisticRegression)
-# =========================
 _CLF_PHI_FOR_LOGITS = None
 _CLASS_IDX_FOR_LOGITS = None  # opcional: fija clase objetivo
 
@@ -784,85 +576,148 @@ def _to_phi(x_tc):
 
 def model_logit(x_tc, eps=1e-9):
     """
-    Escoge la clase objetivo y devuelve:
-      - binario: log(p/(1-p))
-      - multiclase: log p_c
+    Devuelve el margen del clasificador en φ (decision_function), consistente con la calibración de α.
+    - Binario: logit (idéntico a log(p/(1-p))).
+    - Multiclase: margen de la clase objetivo según decision_function.
     """
     global _CLF_PHI_FOR_LOGITS, _CLASS_IDX_FOR_LOGITS
     if _CLF_PHI_FOR_LOGITS is None:
         raise RuntimeError("Llama antes a set_phi_classifier_for_logits(clf_phi, class_idx=None).")
-    phi_x = _to_phi(x_tc)                           # (1,F)
+    phi_x = _to_phi(x_tc)  # (1,F)
+
+    # Escoge clase objetivo (o la predicha si no se fijó)
     proba = _CLF_PHI_FOR_LOGITS.predict_proba(phi_x)[0]
     cls = int(np.argmax(proba)) if _CLASS_IDX_FOR_LOGITS is None else int(_CLASS_IDX_FOR_LOGITS)
-    p = proba[cls] if 0 <= cls < len(proba) else proba.max()
-    if len(proba) == 2:
-        p = float(np.clip(p, eps, 1.0 - eps))
-        return float(np.log(p / (1.0 - p)))
+
+    # Usa siempre decision_function para coherencia con la calibración
+    z = _CLF_PHI_FOR_LOGITS.decision_function(phi_x)
+    z = np.asarray(z)
+    if z.ndim == 1:
+        return float(z[0])                # binario
     else:
-        return float(np.log(float(np.clip(p, eps, 1.0))))  # log-prob
+        return float(z[0, cls])           # multiclase
 
-# =========================
-# E) Propagación de Luis (base, preserva eficiencia)
-# =========================
-def propagate_luis(alphas, traces_x, x_tc, x0_tc, *, sigma_ref=None, mode="channel_energy", dt=None):
-    """
-    Propagación fiel a la fórmula corregida:
-      - Usa Δσ_{b,k}^j ∈ {-1,0,1} como compuerta y signo local
-      - Pondera por taps de κ y dilatación (ventana efectiva)
-      - Normaliza UNA sola vez al final para cerrar Σβ = Σα (= Δf)
-      - Soporta Δt opcional (dt); si None, se asume rejilla uniforme (dt=1)
 
-    Devuelve: beta (T, 1)
+#Función de propagación de Luis
+
+def propagate_luis(
+    alphas,
+    traces_x,
+    x_tc,
+    x0_tc,
+    *,
+    sigma_ref=None,
+    mode="channel_energy",
+    dt=None,
+    per_channel=False
+):
     """
+    Fiel a la corrección:
+      - Δσ_{b,k}^j ∈ {-1,0,1} como compuerta/signo local
+      - Peso temporal por ventana/taps |κ| con dilatación
+      - Reparto por canal (si per_channel=True) usando Δχ por canal
+      - Normalización global única al final: Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
+    """
+    import numpy as np
+
+    def _as_TC(x):
+        x = np.asarray(x)
+        # admite (1,C,L) o (T,C)
+        if x.ndim == 3:   # (1,C,L)
+            assert x.shape[0] == 1
+            return x[0].T
+        if x.ndim == 2:   # (T,C) o (C,T)
+            return x if x.shape[0] >= x.shape[1] else x.T
+        raise ValueError(f"Forma no soportada para x/x0: {x.shape}")
+
+    def _ensure_sigma_in_traces(trs):
+        # cada tr debe traer 'sigma'
+        for tr in trs:
+            if "sigma" not in tr:
+                raise ValueError("Falta 'sigma' en traces; usa transform_prime con trazas completas.")
+        return trs
+
     x_tc  = _as_TC(x_tc)
     x0_tc = _as_TC(x0_tc)
 
-    # Asegura sigma en trazas de x y obtiene sigma de referencia
     traces_x = _ensure_sigma_in_traces(traces_x)
     if sigma_ref is None:
+        # requiere transform_prime en ámbito global
         sigma_ref = compute_sigma_ref_from_x0(x0_tc, transform_prime)
 
     T, C = x_tc.shape
-    beta = np.zeros((T, 1), dtype=np.float64)
+    beta = np.zeros((T, C if per_channel else 1), dtype=np.float64)
 
-    # Δt (opcional). Si no se da, rejilla uniforme (1)
+    # Δt (rejilla uniforme por defecto)
     if dt is None:
         dt_vec = np.ones(T, dtype=np.float64)
     else:
         dt_vec = np.asarray(dt, dtype=np.float64).reshape(-1)
         if dt_vec.shape[0] != T:
-            raise ValueError(f"dt debe tener longitud T={T}, recibido {dt_vec.shape}")
+            raise ValueError(f"dt debe tener longitud T={T}, recibido {dt_vec.shape[0]}")
 
     total_alpha = float(np.sum(alphas))
     if total_alpha == 0.0:
-        return beta  # nada que propagar
+        return beta
+
+    # Si repartimos por canal, precalcula trazas de la referencia (conv_by_channel de x̄)
+    traces0_all = None
+    if per_channel:
+        traces0_all = transform_prime(x0_tc[None, ...])["traces"]  # usa transform_prime global
+
+        # helper: normaliza conv_by_channel (dict o array) a dict {canal:int -> serie (T,)}
+        def _as_series_per_channel(cbc):
+            out = {}
+            if cbc is None:
+                return out
+            arr_like = np.asarray(cbc) if not isinstance(cbc, dict) else None
+            if isinstance(cbc, dict):
+                for k, v in cbc.items():
+                    v = np.asarray(v)
+                    if v.ndim == 1 and v.shape[0] == T:
+                        out[int(k)] = v.astype(np.float64)
+                    elif v.ndim == 1 and v.shape[0] == C:
+                        out[int(k)] = np.full(T, float(v[int(k)]), dtype=np.float64)
+                    elif v.ndim == 0:
+                        out[int(k)] = np.full(T, float(v), dtype=np.float64)
+                    else:
+                        out[int(k)] = np.zeros(T, dtype=np.float64)
+            else:
+                if arr_like.ndim == 1 and arr_like.shape[0] == C:
+                    out = {i: np.full(T, float(arr_like[i]), dtype=np.float64) for i in range(C)}
+                elif arr_like.ndim == 0:
+                    out = {i: np.full(T, float(arr_like), dtype=np.float64) for i in range(C)}
+                else:
+                    out = {}
+            return out
+
+    idx = np.arange(T, dtype=np.int64)
 
     for k, tr in enumerate(traces_x):
         alpha_k = float(alphas[k])
         if alpha_k == 0.0:
             continue
 
+        # Compuerta Δσ ∈ {-1,0,1}
         sigma_x  = np.asarray(tr["sigma"], dtype=np.int8)
         sigma_0  = np.asarray(sigma_ref[k], dtype=np.int8)
-        delta_sig = sigma_x - sigma_0  # {-1,0,1}
+        delta_sig = sigma_x - sigma_0
         if not np.any(delta_sig):
-            continue  # sin cambio de estado, esta firma no aporta
+            continue
 
-        kappa = np.asarray(tr["kernel"], dtype=np.float64)  # (q,), taps reales
+        # Peso temporal por ventana / |κ| y dilatación
+        kappa = np.asarray(tr["kernel"], dtype=np.float64)  # (q,)
         delta = int(tr["dilation"])
-        q = len(kappa)
-        half = q // 2
+        q = len(kappa); half = q // 2
 
-        # Peso por ventana/taps κ con dilatación (en el eje de tiempo T)
         w = np.zeros(T, dtype=np.float64)
-        idx = np.arange(T)
         for m in range(-half, half + 1):
             j = idx + m * delta
             valid = (j >= 0) & (j < T)
             w[valid] += abs(kappa[m + half])
-        w[w == 0.0] = 1.0  # evita división por cero
+        w[w == 0.0] = 1.0
 
-        # Gate Δσ mapeado a T (en tu trazado d_k == T; si no, mapear aquí)
+        # Gate Δσ → T (si d_k != T, mapear según tus trazas)
         gate = np.zeros(T, dtype=np.float64)
         dk = min(len(delta_sig), T)
         gate[:dk] = delta_sig[:dk].astype(np.float64)
@@ -871,29 +726,101 @@ def propagate_luis(alphas, traces_x, x_tc, x0_tc, *, sigma_ref=None, mode="chann
         if not np.any(mask):
             continue
 
-        # Normalización local de pesos sólo en los j activos por Δσ
-        w_eff = np.zeros_like(w)
-        w_eff[mask] = w[mask]
+        # Contribución temporal agregada (T,)
+        w_eff = np.zeros_like(w); w_eff[mask] = w[mask]
         Z = w_eff[mask].sum()
         if Z <= 0:
             w_eff[mask] = 1.0
             Z = np.count_nonzero(mask)
 
-        contrib = np.zeros(T, dtype=np.float64)
-        # SIGNO LOCAL = sign(Δσ_j). Esto es la corrección clave.
-        contrib[mask] = alpha_k * np.sign(gate[mask]) * (w_eff[mask] / Z)
+        contrib_t = np.zeros(T, dtype=np.float64)
+        contrib_t[mask] = alpha_k * np.sign(gate[mask]) * (w_eff[mask] / Z)
 
-        beta[:, 0] += contrib
+        if not per_channel:
+            beta[:, 0] += contrib_t
+        else:
+            # Reparto por canal fiel con Δχ por canal
+            chans = tr.get("channels", list(range(C)))
 
-    # Factor Δt (si uniforme, es 1 y no cambia)
-    beta[:, 0] *= dt_vec
+            # Normaliza conv_by_channel de x y de x0 a series (T,)
+            convx_by_ch = tr.get("conv_by_channel", None)
+            if isinstance(convx_by_ch, dict):
+                convx_by_ch = {int(k): np.asarray(v) for k, v in convx_by_ch.items()}
+            conv0_raw = traces0_all[k].get("conv_by_channel", None)
 
-    # Cierre global: Σβ = Σα (= Δf)
+            # Si tenemos helper local (definido más arriba), úsalo
+            conv0_by_ch = _as_series_per_channel(conv0_raw) if traces0_all is not None else {}
+            convx_norm = {}
+            if convx_by_ch is None:
+                convx_norm = {i: np.zeros(T, dtype=np.float64) for i in chans}
+            else:
+                # aceptar dict o array-like
+                if isinstance(convx_by_ch, dict):
+                    for i_ch in chans:
+                        v = np.asarray(convx_by_ch.get(int(i_ch), np.zeros(T)))
+                        if v.ndim == 1 and v.shape[0] == T:
+                            convx_norm[int(i_ch)] = v.astype(np.float64)
+                        elif v.ndim == 1 and v.shape[0] == C:
+                            convx_norm[int(i_ch)] = np.full(T, float(v[int(i_ch)]), dtype=np.float64)
+                        elif v.ndim == 0:
+                            convx_norm[int(i_ch)] = np.full(T, float(v), dtype=np.float64)
+                        else:
+                            convx_norm[int(i_ch)] = np.zeros(T, dtype=np.float64)
+                else:
+                    arr = np.asarray(convx_by_ch)
+                    if arr.ndim == 1 and arr.shape[0] == C:
+                        convx_norm = {i: np.full(T, float(arr[i]), dtype=np.float64) for i in chans}
+                    elif arr.ndim == 0:
+                        convx_norm = {i: np.full(T, float(arr), dtype=np.float64) for i in chans}
+                    else:
+                        convx_norm = {i: np.zeros(T, dtype=np.float64) for i in chans}
+
+            e = np.zeros((T, C), dtype=np.float64)
+
+            for i_ch in chans:
+                # series (T,) garantizadas
+                conv_x_i = np.asarray(convx_norm.get(int(i_ch), np.zeros(T)), dtype=np.float64)
+                conv_0_i = np.asarray(conv0_by_ch.get(int(i_ch), np.zeros(T)), dtype=np.float64)
+
+                # --- Normalización extra por si quedara algo raro ---
+                if conv_x_i.ndim == 1 and conv_x_i.shape[0] == C:
+                    conv_x_i = np.full(T, float(conv_x_i[int(i_ch)]), dtype=np.float64)
+                elif conv_x_i.ndim == 0:
+                    conv_x_i = np.full(T, float(conv_x_i), dtype=np.float64)
+                if conv_0_i.ndim == 1 and conv_0_i.shape[0] == C:
+                    conv_0_i = np.full(T, float(conv_0_i[int(i_ch)]), dtype=np.float64)
+                elif conv_0_i.ndim == 0:
+                    conv_0_i = np.full(T, float(conv_0_i), dtype=np.float64)
+                # ----------------------------------------------------
+
+                dchi_i = conv_x_i - conv_0_i  # (T,)
+
+                e_i = np.zeros(T, dtype=np.float64)
+                for m in range(-half, half + 1):
+                    j = idx + m * delta
+                    valid = (j >= 0) & (j < T)
+                    e_i[valid] += np.abs(dchi_i[j[valid]] * kappa[m + half])
+                e[:, int(i_ch)] = e_i
+
+            # Divide contrib_t[j] entre canales activos según e(j,·)
+            for j in np.where(mask)[0]:
+                Ej = e[j, chans].sum()
+                if Ej <= 0:
+                    share = contrib_t[j] / max(len(chans), 1)
+                    for i_ch in chans:
+                        beta[j, i_ch] += share
+                else:
+                    for i_ch in chans:
+                        beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
+
+    # Aplica dt y cierre global Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
+    beta *= dt_vec[:, None]
     S = float(beta.sum())
     if S != 0.0:
         beta *= (total_alpha / S)
-
     return beta
+
+
 
 
 

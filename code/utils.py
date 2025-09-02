@@ -6,48 +6,7 @@ from scipy.spatial.distance import cdist
 from sklearn.linear_model import LogisticRegression
 
 
-def medoid(X: pd.DataFrame):
-    """
-    Return the index label of the medoid of a pandas DataFrame X (rows = samples).
-    """
-    X_array = X.to_numpy()
-    distances = cdist(X_array, X_array, metric='euclidean')
-    total_distances = distances.sum(axis=1)
-    medoid_position = total_distances.argmin()
-    return medoid_position, X.index[medoid_position]
 
-def centroid(X: pd.DataFrame):
-    return X.mean(axis=0)
-
-def medoid_per_class(X: pd.DataFrame, y):
-    medoids = {}
-
-    for label in np.unique(y):
-        # Extract samples of this class
-        X_class = X[y == label]
-
-        # Index of the minimum sum distance → medoid
-        medoid_idx, _ = medoid(X_class)
-
-        # Store medoid vector
-        medoids[label] = medoid_idx
-
-    return medoids
-
-def centroid_per_class(X, y):
-    centroids = {}
-
-    for label in np.unique(y):
-        # Extract samples of this class
-        X_class = X[y == label]
-
-        # Average vector
-        centroid_idx = centroid(X_class)
-
-        # Store medoid vector
-        centroids[label] = centroid_idx
-
-    return centroids
 
 def export(s, columns, suffix, folder='data'):
     N = int(len(s.index) / len(columns))
