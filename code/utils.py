@@ -6,8 +6,6 @@ from scipy.spatial.distance import cdist
 from sklearn.linear_model import LogisticRegression
 
 
-
-
 def export(s, columns, suffix, folder='data'):
     N = int(len(s.index) / len(columns))
     for (VAR, VARNAME) in columns:
@@ -27,10 +25,14 @@ def get_cognitive_circles_data(data_dir='data/cognitive-circles'):
 
     return None, None
 
-def get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty'):
+def get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty', as_numpy=False):
     train_data, test_data = get_cognitive_circles_data(data_dir)
-    return (train_data.drop(columns=[target_col]).select_dtypes(include=np.float64).dropna(axis=1), train_data[target_col],
-            test_data.drop(columns=[target_col]).select_dtypes(include=np.float64).dropna(axis=1), test_data[target_col])
+    if as_numpy:
+        (df_train, df_y_train), (df_test, df_y_test) = get_cognitive_circles_data_for_classification(data_dir, target_col, as_numpy=False)
+        return prepare_cognitive_circles_data_for_minirocket(df_train, df_y_train), prepare_cognitive_circles_data_for_minirocket(df_test, df_y_test)
+    else:
+        return ((train_data.drop(columns=[target_col]).select_dtypes(include=np.float64).dropna(axis=1), train_data[target_col]),
+                (test_data.drop(columns=[target_col]).select_dtypes(include=np.float64).dropna(axis=1), test_data[target_col]))
 
 def prepare_cognitive_circles_data_for_minirocket(df, y, class_dict=None):
     if class_dict is None:

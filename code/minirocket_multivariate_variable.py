@@ -600,15 +600,13 @@ def model_logit(x_tc, eps=1e-9):
 
 #Función de propagación de Luis
 
-def propagate_luis(
+def back_propagate_attribution(
     alphas,
     traces_x,
     x_tc,
     x0_tc,
     *,
     sigma_ref=None,
-    mode="channel_energy",
-    dt=None,
     per_channel=False
 ):
     """
@@ -637,6 +635,7 @@ def propagate_luis(
                 raise ValueError("Falta 'sigma' en traces; usa transform_prime con trazas completas.")
         return trs
 
+    dt_vec = x_tc - x0_tc
     x_tc  = _as_TC(x_tc)
     x0_tc = _as_TC(x0_tc)
 
@@ -647,14 +646,6 @@ def propagate_luis(
 
     T, C = x_tc.shape
     beta = np.zeros((T, C if per_channel else 1), dtype=np.float64)
-
-    # Δt (rejilla uniforme por defecto)
-    if dt is None:
-        dt_vec = np.ones(T, dtype=np.float64)
-    else:
-        dt_vec = np.asarray(dt, dtype=np.float64).reshape(-1)
-        if dt_vec.shape[0] != T:
-            raise ValueError(f"dt debe tener longitud T={T}, recibido {dt_vec.shape[0]}")
 
     total_alpha = float(np.sum(alphas))
     if total_alpha == 0.0:
