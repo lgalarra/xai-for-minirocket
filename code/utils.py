@@ -6,6 +6,46 @@ from scipy.spatial.distance import cdist
 from sklearn.linear_model import LogisticRegression
 
 
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class ChannelScaler(BaseEstimator, TransformerMixin):
+    """
+    Z-normalize a time series dataset (N, C, L) per channel,
+    using statistics computed on the training set.
+    """
+
+    def __init__(self):
+        self.mean_ = None
+        self.std_ = None
+
+    def fit(self, X: np.ndarray, y=None):
+        """
+        Compute per-channel mean and std from training data.
+        :param X: array of shape (N, C, L)
+        """
+        self.mean_ = X.mean(axis=(0, 2), keepdims=True)  # shape (1, C, 1)
+        self.std_ = X.std(axis=(0, 2), keepdims=True)    # shape (1, C, 1)
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Apply normalization using training statistics.
+        """
+        if self.mean_ is None or self.std_ is None:
+            raise ValueError("This ChannelScaler instance is not fitted yet. Call 'fit' first.")
+        return (X - self.mean_) / self.std_
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Revert normalization back to the original scale.
+        """
+        if self.mean_ is None or self.std_ is None:
+            raise ValueError("This ChannelScaler instance is not fitted yet. Call 'fit' first.")
+        return X * self.std_ + self.mean_
+
+
+
 def export(s, columns, suffix, folder='data'):
     N = int(len(s.index) / len(columns))
     for (VAR, VARNAME) in columns:
@@ -25,7 +65,31 @@ def get_cognitive_circles_data(data_dir='data/cognitive-circles'):
 
     return None, None
 
-def get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty', as_numpy=False):
+def get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty',
+                                                  as_numpy=False, normalize_numpy=True):
+    """
+    
+    :param data_dir: directory where the data is stored
+    :param target_col: column name of the target variable
+    :param as_numpy: return numpy arrays instead of pandas dataframes
+    :param normalize_numpy: normalize the data to have zero mean and unit variance for each channel (applicable only if as_numpy=True) 
+    :return: 
+    """
+    (X_train, y_train), (X_test, y_test)  = _get_cognitive_circles_data_for_classification(data_dir, target_col,
+                                                                                                   as_numpy=as_numpy)
+    if as_numpy and normalize_numpy:
+        channel_scaler = ChannelScaler()
+        channel_scaler.fit(X_train)
+        X_train_trans = channel_scaler.transform(X_train)
+        X_test_trans = channel_scaler.transform(X_test)
+        return (X_train_trans, y_train), (X_test_trans, y_test)
+    else:
+        return (X_train, y_train), (X_test, y_test)
+
+
+
+def _get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty',
+                                                  as_numpy=False):
     train_data, test_data = get_cognitive_circles_data(data_dir)
     if as_numpy:
         (df_train, df_y_train), (df_test, df_y_test) = get_cognitive_circles_data_for_classification(data_dir, target_col, as_numpy=False)
@@ -77,3 +141,6 @@ def logistic_gradient(model: LogisticRegression, x: np.ndarray) -> np.ndarray:
     # Gradient of p with respect to x
     grad = p * (1 - p) * w
     return grad
+
+def normalize_df(df):
+    return (df - df.mean()) / df.std()

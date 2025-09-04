@@ -649,6 +649,7 @@ def back_propagate_attribution(
 
     total_alpha = float(np.sum(alphas))
     if total_alpha == 0.0:
+        print("WARNING: alphas suman 0.0, devuelve beta = 0.0")
         return beta
 
     # Si repartimos por canal, precalcula trazas de la referencia (conv_by_channel de x̄)
@@ -805,11 +806,19 @@ def back_propagate_attribution(
                         beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
 
     # Aplica dt y cierre global Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
-    beta *= dt_vec[:, None]
+    #beta *= dt_vec[:, None].T
     S = float(beta.sum())
-    if S != 0.0:
-        beta *= (total_alpha / S)
-    return beta
+    print('first sum of betas', S)
+    beta *= dt_vec.T
+    S = float(beta.sum())
+    print('sum of betas', S)
+    #S = beta.sum(axis=0, keepdims=True)
+    #print(S.shape)
+
+    #if S != 0.0:
+    #    beta *= (total_alpha / S)
+    beta *= total_alpha
+    return beta.T
 
 
 

@@ -10,12 +10,33 @@ from minirocket_multivariate_variable import back_propagate_attribution
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class
 import minirocket_multivariate_variable as mmv
 
+
 class Explanation:
     def __init__(self):
         self.instances = list()
 
     def add_instance(self, explanation: dict):
         self.instances.append(explanation)
+
+    def check_explanations_local_accuracy(self, tol=1e-10):
+        checks = []
+        for instance_exp in self.instances:
+            cake1 = instance_exp['coefficients'].sum()
+            cake2 = instance_exp['minirocket_coefficients'].sum()
+            checks.append(np.abs(cake1 - cake2) <= tol)
+        return np.array(checks)
+
+    def get_references(self):
+        X = list()
+        for instance_exp in self.instances:
+            X.append(instance_exp['reference'])
+        return np.array(X)
+
+    def get_attributions(self):
+        X = list()
+        for instance_exp in self.instances:
+            X.append(instance_exp['coefficients'].reshape(-1))
+        return np.array(X)
 
 def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, background=None, target=None):
     if type(classifier_explainer) == str:
@@ -24,7 +45,7 @@ def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, bac
         elif classifier_explainer == 'stratoshap-k1':
             if target is None:
                 raise ValueError("Target original time series must be provided when using stratoshap-k1.")
-            return partial(shap.KernelExplainer(classifier_explainer, background).explain,
+            return partial(shap.KernelExplainer(classifier_fn, background).explain,
                            kwargs=dict(nsamples=2*target.shape[0]*target.shape[1]))
     elif inspect.isfunction(classifier_explainer):
         return classifier_explainer
@@ -63,8 +84,9 @@ class MinirocketExplainer:
         out_x = mmv.transform_prime(x_target, parameters=self.minirocket_params)
         reference_mr = mmv.transform_prime(reference, parameters=self.minirocket_params)
         classifier_explainer_fn = get_minirocket_classifier_explainer(classifier_explainer_fn,
-                                                                      self.minirocket_classifier.predict,
-                                                                      background=np.array(reference_mr['phi']))
+                                                                      lambda x : self.minirocket_classifier.predict_proba(x)[:,y_label],
+                                                                      background=np.array(reference_mr['phi']),
+                                                                      target=x_target)
         alphas = classifier_explainer_fn(out_x['phi'])
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel)

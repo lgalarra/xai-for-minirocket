@@ -63,14 +63,19 @@ def medoid_ids_per_class(X: np.ndarray, y) -> dict:
     medoids = {}
 
     for label in np.unique(y):
+        # Indices of this class in the full dataset
+        class_indices = np.where(y == label)[0]
+
         # Extract samples of this class
-        X_class = X[y == label]
+        X_class = X[class_indices]
 
         # Index of the minimum sum distance → medoid
-        medoid_idx =  medoid_time_series_idx(X_class)
+        medoid_idx_local = medoid_time_series_idx(X_class)
+
+        medoid_idx_global = class_indices[medoid_idx_local]
 
         # Store medoid vector
-        medoids[label] = medoid_idx
+        medoids[label] = medoid_idx_global
 
     return medoids
 

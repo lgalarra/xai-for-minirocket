@@ -1,5 +1,8 @@
+import numpy as np
+import shap
+
 import minirocket_multivariate_variable as mmv
-from explainer import MinirocketExplainer, get_minirocket_classifier_explainer
+from explainer import MinirocketExplainer, get_minirocket_classifier_explainer, Explanation
 
 
 class MinirocketClassifier:
@@ -61,9 +64,23 @@ class MinirocketClassifier:
         return MinirocketExplainer(X, y, minirocket_classifier=self.classifier,
                                    minirocket_params=self.minirocket_params)
 
-    def explain_instances_from_explainer(self, X, y, explainerfn=None, reference=None):
-        if explainerfn is None or reference is None:
-            return self.get_explainer(X, y).explain_instances(X)
 
-        return explainerfn(X)
+    def explain_instance(self, x_target, reference, explainer='shap'):
+        y_label = self.classifier.predict(self.minirocket_transform(x_target)['phi'])[0]
+
+
+        classifier_explainer_fn = get_minirocket_classifier_explainer(explainer,
+                                                                      lambda x: self.classifier.predict_proba(x)[:,y_label],
+                                                                      background=np.array(reference),
+                                                                      target=x_target)
+        alphas = classifier_explainer_fn(x_target)
+
+        return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
+                'instance_prediction': y_label,
+                'instance_logits': self.classifier.predict_proba(x_target)[:,y_label] }
+
+    def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap'):
+        explanation = Explanation()
+        for idx, _x in enumerate(X):
+             explanation.add_instance(self.explain_instance(X[idx], X_reference[idx], explainer))
 
