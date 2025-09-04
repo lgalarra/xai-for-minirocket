@@ -60,7 +60,7 @@ explainer =  classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
 
 # In[76]:
 
-explanation = explainer.explain_instances(X_test[0:2], classifier_explainer='stratoshap-k1',
+explanation = explainer.explain_instances(X_test[0], classifier_explainer='extreme_feature_coalitions',
                                           reference_policy='opposite_class_medoid')
 
 
@@ -75,7 +75,7 @@ print(explanation.check_explanations_local_accuracy(tol=1e-4).all())
 print(explanation.check_explanations_local_accuracy(tol=1e-4).any())
 
 
-explanations_p2p = classifier.explain_instances(X_test[0:2], explanation.get_references(), explainer='shap')
+explanations_p2p = classifier.explain_instances(X_test[0], explanation.get_references(), explainer='extreme_feature_coalitions')
 # In[21]:
 
 

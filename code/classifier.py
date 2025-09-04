@@ -70,7 +70,7 @@ class MinirocketClassifier:
 
 
         classifier_explainer_fn = get_minirocket_classifier_explainer(explainer,
-                                                                      lambda x: self.classifier.predict_proba(x)[:,y_label],
+                                                                      lambda x: self.predict_proba(x)[:,y_label],
                                                                       background=np.array(reference),
                                                                       target=x_target)
         alphas = classifier_explainer_fn(x_target)
