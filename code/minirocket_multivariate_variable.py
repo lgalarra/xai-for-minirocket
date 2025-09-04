@@ -807,17 +807,13 @@ def back_propagate_attribution(
 
     # Aplica dt y cierre global Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
     #beta *= dt_vec[:, None].T
-    S = float(beta.sum())
-    print('first sum of betas', S)
     beta *= dt_vec.T
     S = float(beta.sum())
-    print('sum of betas', S)
-    #S = beta.sum(axis=0, keepdims=True)
-    #print(S.shape)
+    ## Luis: Yo creo que la normalización de división para S no debería ser
+    ## necesaria.
 
-    #if S != 0.0:
-    #    beta *= (total_alpha / S)
-    beta *= total_alpha
+    if S != 0.0:
+        beta *= (total_alpha / S)
     return beta.T
 
 
