@@ -1,71 +1,64 @@
 from functools import partial
+from typing import Generator
 
 import numpy as np
 import shap
 import inspect
-
-from seobject import kwargs
 
 from minirocket_multivariate_variable import back_propagate_attribution
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class
 import minirocket_multivariate_variable as mmv
 
 class ExtremeFeatureCoalitions:
-    def __init__(self, clf_fn, x_reference):
+    def __init__(self, clf_fn, x_reference: np.ndarray):
+        """
+
+        :param clf_fn: A classifier function that takes an array of shape (1, ...) as input
+        :param x_reference: An (1, ...) array representing a single instance
+        """
         self.clf_fn = clf_fn
         self.x_reference = x_reference
 
-    def explain(self, x_target) -> np.ndarray:
+    def explain_instance(self, x_target: np.ndarray) -> np.ndarray:
+        print(x_target.shape, self.x_reference.shape)
+        if x_target.shape[0] != 1:
+            x_target = np.array([x_target])
         # Extreme Feature Coalitions
-        single_coalition = self.x_reference.copy()
-        almost_full_coalition = x_target.copy()
-        y_t = int(np.argmax(self.clf_fn(x_target)[0]))
         fsc = np.zeros(x_target.shape)
         fafc = np.zeros(self.x_reference.shape)
-        for x_target_j, x_reference_j, sc, afc, vsc, vafc in np.nditer([x_target, self.x_reference,
-                                                                        single_coalition, almost_full_coalition, fsc, fafc],
-                           op_flags=[['readonly'], ['readonly'], ['readwrite'], ['readwrite'], ['readwrite'], ['readwrite']] ):
+        for idx in np.ndindex(x_target.shape):
+            x_target_j = x_target[idx]
+            x_reference_j = self.x_reference[idx]
+            x_target[idx] = x_reference_j
+            self.x_reference[idx] = x_target_j
 
-            almost_full_coalition[...] = x_reference_j
-            single_coalition[...] = x_target_j
-            fafc[...] = self.clf_fn(almost_full_coalition)[:,y_t]
-            fsc[...] = self.clf_fn(single_coalition)[:,y_t]
-            almost_full_coalition[...] = x_target_j
-            single_coalition[...] = x_reference_j
+            fafc[idx] = self.clf_fn(x_target)
+            fsc[idx] = self.clf_fn(self.x_reference)
+
+            x_target[idx] = x_target_j
+            self.x_reference[idx] = x_reference_j
 
         return 0.5 * fsc - 0.5 * fafc
 
 class Explanation:
-    def __init__(self):
-        self.instances = list()
+    def __init__(self, explanation: dict):
+        self.explanation = explanation
 
-    def add_instance(self, explanation: dict):
-        self.instances.append(explanation)
+    def check_explanation_local_accuracy(self, tol=1e-10) -> bool:
+        cake1 = self.explanation['coefficients'].sum()
+        cake2 = self.explanation['minirocket_coefficients'].sum()
+        return np.abs(cake1 - cake2) <= tol
 
-    def check_explanations_local_accuracy(self, tol=1e-10):
-        checks = []
-        for instance_exp in self.instances:
-            cake1 = instance_exp['coefficients'].sum()
-            cake2 = instance_exp['minirocket_coefficients'].sum()
-            checks.append(np.abs(cake1 - cake2) <= tol)
-        return np.array(checks)
+    def get_reference(self) -> np.ndarray:
+        return self.explanation['reference']
 
-    def get_references(self):
-        X = list()
-        for instance_exp in self.instances:
-            X.append(instance_exp['reference'])
-        return np.array(X)
+    def get_attributions(self) -> np.ndarray:
+        return self.explanation['coefficients'].reshape(-1)
 
-    def get_attributions(self):
-        X = list()
-        for instance_exp in self.instances:
-            X.append(instance_exp['coefficients'].reshape(-1))
-        return np.array(X)
-
-def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, background=None, target=None):
+def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
     if type(classifier_explainer) == str:
         if classifier_explainer == "shap":
-            return shap.KernelExplainer(classifier_fn, background).explain
+            return shap.KernelExplainer(classifier_fn, X_background).explain
         elif classifier_explainer == 'stratoshap-k1':
             if target is None:
                 raise ValueError("Target original time series must be provided when using stratoshap-k1.")
@@ -73,10 +66,11 @@ def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, bac
                 budget = 2 * target.shape[0]
             else:
                 budget = 2 * target.shape[0] * target.shape[1]
-            return partial(shap.KernelExplainer(classifier_fn, background).explain,
+            return partial(shap.KernelExplainer(classifier_fn, X_background).explain,
                            kwargs=dict(nsamples=budget))
         elif classifier_explainer == 'extreme_feature_coalitions':
-            return ExtremeFeatureCoalitions(classifier_fn, background).explain
+            ## Extreme Feature Coalitions directly works with a single background instance
+            return ExtremeFeatureCoalitions(classifier_fn, X_background).explain_instance
     elif inspect.isfunction(classifier_explainer):
         return classifier_explainer
     elif inspect.isclass(classifier_explainer):
@@ -98,7 +92,7 @@ class MinirocketExplainer:
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
-                                 reference_policy, reference=None) -> dict:
+                                 reference_policy, reference=None, alpha_mask=None) -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -113,20 +107,25 @@ class MinirocketExplainer:
         is_multichannel = x_target.shape[1] > 1
         out_x = mmv.transform_prime(x_target, parameters=self.minirocket_params)
         reference_mr = mmv.transform_prime(reference, parameters=self.minirocket_params)
+
         classifier_explainer_fn = get_minirocket_classifier_explainer(classifier_explainer_fn,
                                                                       lambda x : self.minirocket_classifier.predict_proba(x)[:,y_label],
-                                                                      background=np.array(reference_mr['phi']),
-                                                                      target=out_x['phi'])
+                                                                      X_background=np.array([reference_mr['phi'][0]]),
+                                                                      target=out_x['phi'][0])
         alphas = classifier_explainer_fn(out_x['phi'])
+        if alphas.shape[0] == 1:
+            alphas = alphas[0]
+        if alpha_mask is not None:
+            alphas = alphas * alpha_mask
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel)
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
-                'instance': x_target, 'instance_transformed': out_x['phi'],
-                'traces': out_x['traces'], 'reference': reference,
-                'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi']),
-                'instance_prediction': self.minirocket_classifier.predict(out_x['phi']),
-                'reference_logits': self.minirocket_classifier.predict_proba(reference_mr['phi']),
-                'instance_logits': self.minirocket_classifier.predict_proba(out_x['phi'])
+                'instance': x_target, 'instance_transformed': out_x['phi'][0],
+                'traces': out_x['traces'][0], 'reference': reference,
+                'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1)),
+                'instance_prediction': self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1)),
+                'reference_logits': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1)),
+                'instance_logits': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))
                 }
 
     def get_reference(self, X, y, reference_policy) -> np.ndarray:
@@ -144,28 +143,22 @@ class MinirocketExplainer:
 
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
-                          reference_policy = 'global_centroid', reference=None) -> Explanation:
+                          reference_policy = 'global_centroid', reference=None, alpha_mask=None) -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
-        :return: An explanation object with the attributions per instance as arrays (n, C, L)
+        :return: A generator of Explanation objects
         """
         if reference_policy == 'custom' and reference is None:
             raise ValueError("Reference must be different from None if reference_policy is 'custom'.")
 
-        explanation = Explanation()
         if y is None:
             y = self.minirocket_classifier.predict(mmv.transform_prime(X)['phi'])
 
         if len(X.shape) == 2:
-            explanation.add_instance(self._explain_single_instance(X, y[0],
-                                                                   classifier_explainer,
-                                                                   reference_policy, reference))
+            yield self._explain_single_instance(X, y, alpha_mask=alpha_mask)
         else:
             for idx, x in enumerate(X):
-                explanation.add_instance(self._explain_single_instance(x, y[idx],
-                                                                       classifier_explainer,
-                                                                       reference_policy, reference))
-
-        return explanation
-
+                yield self._explain_single_instance(x, y[idx],
+                                                    classifier_explainer, reference_policy,
+                                                    reference, alpha_mask=alpha_mask)

@@ -71,16 +71,20 @@ class MinirocketClassifier:
 
         classifier_explainer_fn = get_minirocket_classifier_explainer(explainer,
                                                                       lambda x: self.predict_proba(x)[:,y_label],
-                                                                      background=np.array(reference),
+                                                                      X_background=np.array(reference),
                                                                       target=x_target)
-        alphas = classifier_explainer_fn(x_target)
+        alphas = classifier_explainer_fn(np.array(x_target))
 
         return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
                 'instance_logits': self.classifier.predict_proba(x_target)[:,y_label] }
 
     def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap'):
-        explanation = Explanation()
-        for idx, _x in enumerate(X):
-             explanation.add_instance(self.explain_instance(X[idx], X_reference[idx], explainer))
+        explanations = []
+        if len(X.shape) == 2:
+            return Explanation(self.explain_instance(X, X_reference, explainer))
+        else:
+            for idx, x in enumerate(X):
+                explanations.append(Explanation(self.explain_instance(x, X_reference[idx], explainer)))
 
+        return explanations
