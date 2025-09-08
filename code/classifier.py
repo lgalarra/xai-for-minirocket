@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import shap
 
@@ -66,18 +68,21 @@ class MinirocketClassifier:
 
 
     def explain_instance(self, x_target, reference, explainer='shap'):
+        start = time.perf_counter()
         y_label = self.classifier.predict(self.minirocket_transform(x_target)['phi'])[0]
 
 
         classifier_explainer_fn = get_minirocket_classifier_explainer(explainer,
                                                                       lambda x: self.predict_proba(x)[:,y_label],
-                                                                      X_background=np.array(reference),
+                                                                      X_background=np.array([reference]),
                                                                       target=x_target)
-        alphas = classifier_explainer_fn(np.array(x_target))
+        alphas = classifier_explainer_fn(np.array([x_target]))
 
         return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
-                'instance_logits': self.classifier.predict_proba(x_target)[:,y_label] }
+                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],\
+                'time_elapsed': time.perf_counter() - start
+                }
 
     def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap'):
         explanations = []
@@ -88,3 +93,44 @@ class MinirocketClassifier:
                 explanations.append(Explanation(self.explain_instance(x, X_reference[idx], explainer)))
 
         return explanations
+
+class MinirocketSegmentedClassifier(MinirocketClassifier):
+    def __init__(self, minirocket_features_classifier, target_instance,
+                 reference_instance, num_segments=10):
+        super().__init__(minirocket_features_classifier)
+        self.target_instance = target_instance
+        self.reference_instance = reference_instance
+        self.num_segments = num_segments
+
+    def predict(self, X):
+        X_undiscretized = self._undiscretize(X)
+        return super().predict(X_undiscretized)
+
+    def predict_proba(self, X):
+        X_undiscretized = self._undiscretize(X)
+        return super().predict_proba(X_undiscretized)
+
+    def _undiscretize(self, X: np.ndarray):
+        X_d = list()
+        for x in X:
+            X_d.append(self._undiscretize_instance(x))
+        return np.array(X_d)
+
+    def _undiscretize_instance(self, x: np.ndarray):
+        n_ones = np.count_nonzero(x)
+        recipient = None
+        sender = None
+        segment_size = self.reference_instance.shape[-1] // self.num_segments
+        if n_ones > x.shape[0] // 2:
+            recipient = self.target_instance
+            sender = self.reference_instance
+        else:
+            recipient = self.reference_instance
+            sender = self.target_instance
+
+        z = recipient.copy()
+        segments_sender = np.array_split(sender, self.num_segments, axis=-1)
+        for idx, segment in enumerate(segments_sender):
+            z[..., idx*segment_size:(idx+1)*segment_size] = segment
+
+        return z

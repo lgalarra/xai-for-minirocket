@@ -1,5 +1,7 @@
+import time
+from datetime import datetime
 from functools import partial
-from typing import Generator
+from typing import Generator, override
 
 import numpy as np
 import shap
@@ -49,8 +51,14 @@ class Explanation:
         cake2 = self.explanation['minirocket_coefficients'].sum()
         return np.abs(cake1 - cake2) <= tol
 
+    def get_instance(self) -> np.ndarray:
+        return self.explanation['instance']
+
     def get_reference(self) -> np.ndarray:
         return self.explanation['reference']
+
+    def get_runtime(self):
+        return self.explanation['time_elapsed']
 
     def get_attributions(self) -> np.ndarray:
         return self.explanation['coefficients'].reshape(-1)
@@ -104,6 +112,7 @@ class MinirocketExplainer:
         else:
             reference = self.get_reference(x_target, y_label, reference_policy)
 
+        start = time.perf_counter()
         is_multichannel = x_target.shape[1] > 1
         out_x = mmv.transform_prime(x_target, parameters=self.minirocket_params)
         reference_mr = mmv.transform_prime(reference, parameters=self.minirocket_params)
@@ -125,7 +134,8 @@ class MinirocketExplainer:
                 'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1)),
                 'instance_prediction': self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1)),
                 'reference_logits': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1)),
-                'instance_logits': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))
+                'instance_logits': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1)),
+                'time_elapsed': time.perf_counter() - start
                 }
 
     def get_reference(self, X, y, reference_policy) -> np.ndarray:
@@ -156,9 +166,16 @@ class MinirocketExplainer:
             y = self.minirocket_classifier.predict(mmv.transform_prime(X)['phi'])
 
         if len(X.shape) == 2:
-            yield self._explain_single_instance(X, y, alpha_mask=alpha_mask)
+            yield Explanation(self._explain_single_instance(X, y, alpha_mask=alpha_mask))
         else:
             for idx, x in enumerate(X):
-                yield self._explain_single_instance(x, y[idx],
+                yield Explanation(self._explain_single_instance(x, y[idx],
                                                     classifier_explainer, reference_policy,
-                                                    reference, alpha_mask=alpha_mask)
+                                                    reference, alpha_mask=alpha_mask))
+
+class SegmentedMinirocketExplainer(MinirocketExplainer):
+
+    def __init__(self, X, y, minirocket_classifier, minirocket_params, num_segments=10):
+        self.num_segments = num_segments
+        super().__init__(X, y, minirocket_classifier, minirocket_params)
+
