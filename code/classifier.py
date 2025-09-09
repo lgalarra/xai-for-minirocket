@@ -4,8 +4,7 @@ import numpy as np
 import shap
 
 import minirocket_multivariate_variable as mmv
-from explainer import MinirocketExplainer, get_minirocket_classifier_explainer, Explanation
-
+from explainer import MinirocketExplainer, get_classifier_explainer, Explanation
 
 class MinirocketClassifier:
     """
@@ -67,30 +66,30 @@ class MinirocketClassifier:
                                    minirocket_params=self.minirocket_params)
 
 
-    def explain_instance(self, x_target, reference, explainer='shap'):
+    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray, explainer='shap'):
         start = time.perf_counter()
         y_label = self.classifier.predict(self.minirocket_transform(x_target)['phi'])[0]
 
 
-        classifier_explainer_fn = get_minirocket_classifier_explainer(explainer,
-                                                                      lambda x: self.predict_proba(x)[:,y_label],
-                                                                      X_background=np.array([reference]),
-                                                                      target=x_target)
-        alphas = classifier_explainer_fn(np.array([x_target]))
+        classifier_explainer_fn = get_classifier_explainer(explainer,
+                                                           lambda x: self.predict_proba(np.array([xi.reshape(x_target.shape) for xi in x]))[:,y_label],
+                                                           X_background=np.array([reference.reshape(-1)]),
+                                                           target=x_target)
+        alphas = classifier_explainer_fn(np.array([x_target.reshape(-1)]))
 
         return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
-                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],\
+                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
                 'time_elapsed': time.perf_counter() - start
                 }
 
     def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap'):
         explanations = []
         if len(X.shape) == 2:
-            return Explanation(self.explain_instance(X, X_reference, explainer))
+            return Explanation(self.explain_instance_on_original_space(X, X_reference, explainer))
         else:
             for idx, x in enumerate(X):
-                explanations.append(Explanation(self.explain_instance(x, X_reference[idx], explainer)))
+                explanations.append(Explanation(self.explain_instance_on_original_space(x, X_reference[idx], explainer)))
 
         return explanations
 
@@ -134,3 +133,20 @@ class MinirocketSegmentedClassifier(MinirocketClassifier):
             z[..., idx*segment_size:(idx+1)*segment_size] = segment
 
         return z
+
+    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray, explainer='shap'):
+        start = time.perf_counter()
+        y_label = self.predict(self.minirocket_transform(x_target)['phi'])[0]
+
+
+        classifier_explainer_fn = get_classifier_explainer(explainer,
+                                                           lambda x: self.predict_proba(x)[:,y_label],
+                                                           X_background=np.array([reference]),
+                                                           target=x_target)
+        alphas = classifier_explainer_fn(np.array([x_target]))
+
+        return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
+                'instance_prediction': y_label,
+                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
+                'time_elapsed': time.perf_counter() - start
+                }

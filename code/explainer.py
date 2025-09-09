@@ -63,7 +63,7 @@ class Explanation:
     def get_attributions(self) -> np.ndarray:
         return self.explanation['coefficients'].reshape(-1)
 
-def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
+def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
     if type(classifier_explainer) == str:
         if classifier_explainer == "shap":
             return shap.KernelExplainer(classifier_fn, X_background).explain
@@ -85,7 +85,6 @@ def get_minirocket_classifier_explainer(classifier_explainer, classifier_fn, X_b
         return classifier_explainer
     else:
         raise ValueError("classifier_explainer must be a string or a function or a class object with an 'explain' method.")
-
 
 class MinirocketExplainer:
     def __init__(self, X, y, minirocket_classifier, minirocket_params):
@@ -117,10 +116,10 @@ class MinirocketExplainer:
         out_x = mmv.transform_prime(x_target, parameters=self.minirocket_params)
         reference_mr = mmv.transform_prime(reference, parameters=self.minirocket_params)
 
-        classifier_explainer_fn = get_minirocket_classifier_explainer(classifier_explainer_fn,
-                                                                      lambda x : self.minirocket_classifier.predict_proba(x)[:,y_label],
-                                                                      X_background=np.array([reference_mr['phi'][0]]),
-                                                                      target=out_x['phi'][0])
+        classifier_explainer_fn = get_classifier_explainer(classifier_explainer_fn,
+                                                           lambda x : self.minirocket_classifier.predict_proba(x)[:,y_label],
+                                                           X_background=np.array([reference_mr['phi'][0]]),
+                                                           target=out_x['phi'][0])
         alphas = classifier_explainer_fn(out_x['phi'])
         if alphas.shape[0] == 1:
             alphas = alphas[0]

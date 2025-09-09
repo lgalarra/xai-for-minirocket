@@ -35,7 +35,7 @@ DATASET_FETCH_FUNCTIONS = {
     "ford-a": "get_forda_for_classification()",
     "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)"
 }
-EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'stratoshap-k1']
+EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
 
 # ## Fetching data
 
@@ -72,6 +72,8 @@ for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
                     runtimes_backpropagated = []
                     runtimes_p2p = []
                     runtimes_segmented = []
+                    complexity_backpropagated = []
+                    complexity_p2p = []
                     for explanation in explainer.explain_instances(X_test[0:1], y_test[0:1],
                                                               classifier_explainer=explainer_method,
                                                               reference_policy=reference_policy):
@@ -93,8 +95,15 @@ for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
                             explainer=explainer_method
                         )
                         runtimes_segmented.append(segmented_explanation.get_runtime())
+                        complexity_backpropagated.append(np.count_nonzero(explanation.get_attributions()))
+                        complexity_p2p.append(np.count_nonzero(explanation_p2p.get_attributions()))
 
-
+                    results_df['complexity'] = complexity_backpropagated
+                    results_df['complexity-mean'] = np.mean(complexity_backpropagated)
+                    results_df['complexity-std'] = np.std(complexity_backpropagated)
+                    results_df['complexity-p2p'] = complexity_p2p
+                    results_df['complexity-p2p-mean'] = np.mean(complexity_p2p)
+                    results_df['complexity-p2p-std'] = np.std(complexity_p2p)
                     results_df['runtimes-seconds'] = runtimes_backpropagated
                     results_df['runtimes-mean'] = np.mean(runtimes_backpropagated)
                     results_df['runtimes-std'] = np.std(runtimes_backpropagated)
@@ -108,7 +117,6 @@ for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
                     results_df['r2s-mean'] = np.mean(r2s)
                     results_df['r2s-std'] = np.std(r2s)
                     results_df['local_accuracy'] = local_accuracy / len(r2s)
-                    final_df = pd.concat([final_df, pd.DataFrame(results_df)])
                     final_df.to_csv('approximation-results.csv', mode='a', index=False)
 
 
