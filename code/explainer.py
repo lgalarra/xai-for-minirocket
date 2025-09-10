@@ -8,8 +8,24 @@ import shap
 import inspect
 
 from minirocket_multivariate_variable import back_propagate_attribution
-from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class
+from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class, \
+    farthest_series_euclidean, closest_series_euclidean
 import minirocket_multivariate_variable as mmv
+from stratoshap.StratoShap import SHAPStratum
+
+
+class Game:
+    def __init__(self, model, x, x0):
+        self.model = model
+        self.x = x
+        self.x0 = x0
+        self.feature_count = len(x)
+
+    def compute_value(self, coalition):
+        m = np.zeros_like(self.x, dtype=float)
+        m[list(coalition)] = 1.0
+        z = self.x0 * (1 - m) + self.x * m
+        return self.model(z.reshape(1, -1))[0]  # vector de probabilidades
 
 class ExtremeFeatureCoalitions:
     def __init__(self, clf_fn, x_reference: np.ndarray):
@@ -22,7 +38,6 @@ class ExtremeFeatureCoalitions:
         self.x_reference = x_reference
 
     def explain_instance(self, x_target: np.ndarray) -> np.ndarray:
-        print(x_target.shape, self.x_reference.shape)
         if x_target.shape[0] != 1:
             x_target = np.array([x_target])
         # Extreme Feature Coalitions
@@ -63,20 +78,24 @@ class Explanation:
     def get_attributions(self) -> np.ndarray:
         return self.explanation['coefficients'].reshape(-1)
 
+
 def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
     if type(classifier_explainer) == str:
         if classifier_explainer == "shap":
             return shap.KernelExplainer(classifier_fn, X_background).explain
         elif classifier_explainer == 'stratoshap-k1':
-            if target is None:
-                raise ValueError("Target original time series must be provided when using stratoshap-k1.")
-            if len(target.shape) == 1:
-                budget = 2 * target.shape[0]
-            else:
-                budget = 2 * target.shape[0] * target.shape[1]
-            return partial(shap.KernelExplainer(classifier_fn, X_background).explain,
-                           kwargs=dict(nsamples=budget))
-        elif classifier_explainer == 'extreme_feature_coalitions':
+            x_flat = target.reshape(-1)
+            x_bar = X_background[0].reshape(-1)
+            strato = SHAPStratum()
+            #strato.game = Game(lambda x : np.array([[classifier_fn(xi.reshape(1, -1)), 1.0-classifier_fn(xi.reshape(1, -1))]
+            #                                        for xi in x]), x_flat, x_bar)
+            strato.game = Game(classifier_fn, x_flat, x_bar)
+            strato.n = len(x_flat)
+            strato.dim = 1
+            strato.idx_dims = 0
+            strato.budget = 1
+            return lambda _x : strato.approximate_shapley_values()[0]
+    elif classifier_explainer == 'extreme_feature_coalitions':
             ## Extreme Feature Coalitions directly works with a single background instance
             return ExtremeFeatureCoalitions(classifier_fn, X_background).explain_instance
     elif inspect.isfunction(classifier_explainer):
@@ -96,6 +115,9 @@ class MinirocketExplainer:
         self.global_centroid = centroid_time_series(X)
         self.centroids_per_class = centroid_per_class(X, y)
         self.medoids_per_class = medoid_ids_per_class(X, y)
+        self.subsets = {}
+        for label in np.unique(y):
+            self.subsets[label] =  X[y == label]
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
@@ -137,7 +159,7 @@ class MinirocketExplainer:
                 'time_elapsed': time.perf_counter() - start
                 }
 
-    def get_reference(self, X, y, reference_policy) -> np.ndarray:
+    def get_reference(self, x_target, y, reference_policy) -> np.ndarray:
         if reference_policy == 'global_medoid':
             return self.global_medoid
         elif reference_policy == 'global_centroid':
@@ -146,10 +168,12 @@ class MinirocketExplainer:
             return self._X[self.medoids_per_class[1 - y]]
         elif reference_policy == 'opposite_class_centroid':
             return self.centroids_per_class[1 - y]
+        elif reference_policy == 'opposite_class_farthest_instance':
+            return (farthest_series_euclidean(x_target, self.subsets[1 - y]))[1]
+        elif reference_policy == 'opposite_class_closest_instance':
+            return (closest_series_euclidean(x_target, self.subsets[1 - y]))[1]
         else:
-            ##TODO: Add support for farthest instance policy
-            raise ValueError(f"Unsupported reference policy: {reference_policy}")
-
+            raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
                           reference_policy = 'global_centroid', reference=None, alpha_mask=None) -> Generator:

@@ -96,3 +96,43 @@ def centroid_per_class(X: np.ndarray, y) -> dict:
         centroids[label] = centroid_time_series(X_class)
 
     return centroids
+
+
+def closest_series_euclidean(x, X):
+    """
+    Find the closest series in X to x using Euclidean distance.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Shape (C, L), the query time series
+    X : np.ndarray
+        Shape (N, C, L), the dataset of time series
+
+    Returns
+    -------
+    idx : int
+        Index of closest time series
+    series : np.ndarray
+        The closest series (C, L)
+    """
+    N, C, L = X.shape
+    x_flat = x.reshape(1, C * L)
+    X_flat = X.reshape(N, C * L)
+
+    distances = cdist(x_flat, X_flat, metric="euclidean").flatten()
+    idx = np.argmin(distances)
+    return idx, X[idx]
+
+
+def farthest_series_euclidean(x, X):
+    """
+    Find the farthest series in X to x using Euclidean distance.
+    """
+    N, C, L = X.shape
+    x_flat = x.reshape(1, C * L)
+    X_flat = X.reshape(N, C * L)
+
+    distances = cdist(x_flat, X_flat, metric="euclidean").flatten()
+    idx = np.argmax(distances)
+    return idx, X[idx]
