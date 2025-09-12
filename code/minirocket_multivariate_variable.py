@@ -607,14 +607,15 @@ def back_propagate_attribution(
     x0_tc,
     *,
     sigma_ref=None,
-    per_channel=False
+    per_channel=False,
+    dt=None
 ):
     """
     Fiel a la corrección:
       - Δσ_{b,k}^j ∈ {-1,0,1} como compuerta/signo local
       - Peso temporal por ventana/taps |κ| con dilatación
       - Reparto por canal (si per_channel=True) usando Δχ por canal
-      - Normalización global única al final: Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
+      - Conservación local por kernel con split-sign (RevealCancel-like)
     """
     import numpy as np
 
@@ -635,53 +636,55 @@ def back_propagate_attribution(
                 raise ValueError("Falta 'sigma' en traces; usa transform_prime con trazas completas.")
         return trs
 
-    dt_vec = x_tc - x0_tc
+    def _as_series_per_channel(cbc, T, C, chans):
+        out = {}
+        if cbc is None:
+            return {i: np.zeros(T, dtype=np.float64) for i in chans}
+        if isinstance(cbc, dict):
+            for i_ch in chans:
+                v = np.asarray(cbc.get(int(i_ch), np.zeros(T)))
+                if v.ndim == 1 and v.shape[0] == T:
+                    out[int(i_ch)] = v.astype(np.float64)
+                elif v.ndim == 1 and v.shape[0] == C:
+                    out[int(i_ch)] = np.full(T, float(v[int(i_ch)]), dtype=np.float64)
+                elif v.ndim == 0:
+                    out[int(i_ch)] = np.full(T, float(v), dtype=np.float64)
+                else:
+                    out[int(i_ch)] = np.zeros(T, dtype=np.float64)
+        else:
+            arr = np.asarray(cbc)
+            if arr.ndim == 1 and arr.shape[0] == C:
+                out = {i: np.full(T, float(arr[i]), dtype=np.float64) for i in chans}
+            elif arr.ndim == 0:
+                out = {i: np.full(T, float(arr), dtype=np.float64) for i in chans}
+            else:
+                out = {i: np.zeros(T, dtype=np.float64) for i in chans}
+        return out
+
     x_tc  = _as_TC(x_tc)
     x0_tc = _as_TC(x0_tc)
 
     traces_x = _ensure_sigma_in_traces(traces_x)
     if sigma_ref is None:
-        # requiere transform_prime en ámbito global
         sigma_ref = compute_sigma_ref_from_x0(x0_tc, transform_prime)
 
     T, C = x_tc.shape
     beta = np.zeros((T, C if per_channel else 1), dtype=np.float64)
 
+    if dt is None:
+        dt_vec = np.ones(T, dtype=np.float64)
+    else:
+        dt_vec = np.asarray(dt, dtype=np.float64).reshape(-1)
+        if dt_vec.shape[0] != T:
+            raise ValueError(f"dt debe tener longitud T={T}, recibido {dt_vec.shape[0]}")
+
     total_alpha = float(np.sum(alphas))
     if total_alpha == 0.0:
-        print("WARNING: alphas suman 0.0, devuelve beta = 0.0")
         return beta
 
-    # Si repartimos por canal, precalcula trazas de la referencia (conv_by_channel de x̄)
     traces0_all = None
     if per_channel:
-        traces0_all = transform_prime(x0_tc[None, ...])["traces"]  # usa transform_prime global
-
-        # helper: normaliza conv_by_channel (dict o array) a dict {canal:int -> serie (T,)}
-        def _as_series_per_channel(cbc):
-            out = {}
-            if cbc is None:
-                return out
-            arr_like = np.asarray(cbc) if not isinstance(cbc, dict) else None
-            if isinstance(cbc, dict):
-                for k, v in cbc.items():
-                    v = np.asarray(v)
-                    if v.ndim == 1 and v.shape[0] == T:
-                        out[int(k)] = v.astype(np.float64)
-                    elif v.ndim == 1 and v.shape[0] == C:
-                        out[int(k)] = np.full(T, float(v[int(k)]), dtype=np.float64)
-                    elif v.ndim == 0:
-                        out[int(k)] = np.full(T, float(v), dtype=np.float64)
-                    else:
-                        out[int(k)] = np.zeros(T, dtype=np.float64)
-            else:
-                if arr_like.ndim == 1 and arr_like.shape[0] == C:
-                    out = {i: np.full(T, float(arr_like[i]), dtype=np.float64) for i in range(C)}
-                elif arr_like.ndim == 0:
-                    out = {i: np.full(T, float(arr_like), dtype=np.float64) for i in range(C)}
-                else:
-                    out = {}
-            return out
+        traces0_all = transform_prime(x0_tc[None, ...])["traces"]
 
     idx = np.arange(T, dtype=np.int64)
 
@@ -690,14 +693,12 @@ def back_propagate_attribution(
         if alpha_k == 0.0:
             continue
 
-        # Compuerta Δσ ∈ {-1,0,1}
         sigma_x  = np.asarray(tr["sigma"], dtype=np.int8)
         sigma_0  = np.asarray(sigma_ref[k], dtype=np.int8)
         delta_sig = sigma_x - sigma_0
         if not np.any(delta_sig):
             continue
 
-        # Peso temporal por ventana / |κ| y dilatación
         kappa = np.asarray(tr["kernel"], dtype=np.float64)  # (q,)
         delta = int(tr["dilation"])
         q = len(kappa); half = q // 2
@@ -709,7 +710,6 @@ def back_propagate_attribution(
             w[valid] += abs(kappa[m + half])
         w[w == 0.0] = 1.0
 
-        # Gate Δσ → T (si d_k != T, mapear según tus trazas)
         gate = np.zeros(T, dtype=np.float64)
         dk = min(len(delta_sig), T)
         gate[:dk] = delta_sig[:dk].astype(np.float64)
@@ -718,74 +718,45 @@ def back_propagate_attribution(
         if not np.any(mask):
             continue
 
-        # Contribución temporal agregada (T,)
         w_eff = np.zeros_like(w); w_eff[mask] = w[mask]
-        Z = w_eff[mask].sum()
-        if Z <= 0:
-            w_eff[mask] = 1.0
-            Z = np.count_nonzero(mask)
+
+        pos = (mask & (gate > 0))
+        neg = (mask & (gate < 0))
+
+        Wp = float((w_eff[pos] * dt_vec[pos]).sum()) if np.any(pos) else 0.0
+        Wn = float((w_eff[neg] * dt_vec[neg]).sum()) if np.any(neg) else 0.0
 
         contrib_t = np.zeros(T, dtype=np.float64)
-        contrib_t[mask] = alpha_k * np.sign(gate[mask]) * (w_eff[mask] / Z)
+
+        if alpha_k >= 0:
+            if Wp > 0:
+                contrib_t[pos] = alpha_k * (w_eff[pos] * dt_vec[pos]) / Wp
+            elif Wn > 0:
+                contrib_t[neg] = alpha_k * (w_eff[neg] * dt_vec[neg]) / Wn
+        else:
+            if Wn > 0:
+                contrib_t[neg] = alpha_k * (w_eff[neg] * dt_vec[neg]) / Wn
+            elif Wp > 0:
+                contrib_t[pos] = alpha_k * (w_eff[pos] * dt_vec[pos]) / Wp
 
         if not per_channel:
             beta[:, 0] += contrib_t
         else:
-            # Reparto por canal fiel con Δχ por canal
             chans = tr.get("channels", list(range(C)))
 
-            # Normaliza conv_by_channel de x y de x0 a series (T,)
             convx_by_ch = tr.get("conv_by_channel", None)
             if isinstance(convx_by_ch, dict):
-                convx_by_ch = {int(k): np.asarray(v) for k, v in convx_by_ch.items()}
-            conv0_raw = traces0_all[k].get("conv_by_channel", None)
+                convx_by_ch = {int(kc): np.asarray(v) for kc, v in convx_by_ch.items()}
+            conv0_raw = traces0_all[k].get("conv_by_channel", None) if (traces0_all is not None) else None
 
-            # Si tenemos helper local (definido más arriba), úsalo
-            conv0_by_ch = _as_series_per_channel(conv0_raw) if traces0_all is not None else {}
-            convx_norm = {}
-            if convx_by_ch is None:
-                convx_norm = {i: np.zeros(T, dtype=np.float64) for i in chans}
-            else:
-                # aceptar dict o array-like
-                if isinstance(convx_by_ch, dict):
-                    for i_ch in chans:
-                        v = np.asarray(convx_by_ch.get(int(i_ch), np.zeros(T)))
-                        if v.ndim == 1 and v.shape[0] == T:
-                            convx_norm[int(i_ch)] = v.astype(np.float64)
-                        elif v.ndim == 1 and v.shape[0] == C:
-                            convx_norm[int(i_ch)] = np.full(T, float(v[int(i_ch)]), dtype=np.float64)
-                        elif v.ndim == 0:
-                            convx_norm[int(i_ch)] = np.full(T, float(v), dtype=np.float64)
-                        else:
-                            convx_norm[int(i_ch)] = np.zeros(T, dtype=np.float64)
-                else:
-                    arr = np.asarray(convx_by_ch)
-                    if arr.ndim == 1 and arr.shape[0] == C:
-                        convx_norm = {i: np.full(T, float(arr[i]), dtype=np.float64) for i in chans}
-                    elif arr.ndim == 0:
-                        convx_norm = {i: np.full(T, float(arr), dtype=np.float64) for i in chans}
-                    else:
-                        convx_norm = {i: np.zeros(T, dtype=np.float64) for i in chans}
+            convx_norm = _as_series_per_channel(convx_by_ch, T, C, chans)
+            conv0_by_ch = _as_series_per_channel(conv0_raw,   T, C, chans)
 
             e = np.zeros((T, C), dtype=np.float64)
-
             for i_ch in chans:
-                # series (T,) garantizadas
                 conv_x_i = np.asarray(convx_norm.get(int(i_ch), np.zeros(T)), dtype=np.float64)
                 conv_0_i = np.asarray(conv0_by_ch.get(int(i_ch), np.zeros(T)), dtype=np.float64)
-
-                # --- Normalización extra por si quedara algo raro ---
-                if conv_x_i.ndim == 1 and conv_x_i.shape[0] == C:
-                    conv_x_i = np.full(T, float(conv_x_i[int(i_ch)]), dtype=np.float64)
-                elif conv_x_i.ndim == 0:
-                    conv_x_i = np.full(T, float(conv_x_i), dtype=np.float64)
-                if conv_0_i.ndim == 1 and conv_0_i.shape[0] == C:
-                    conv_0_i = np.full(T, float(conv_0_i[int(i_ch)]), dtype=np.float64)
-                elif conv_0_i.ndim == 0:
-                    conv_0_i = np.full(T, float(conv_0_i), dtype=np.float64)
-                # ----------------------------------------------------
-
-                dchi_i = conv_x_i - conv_0_i  # (T,)
+                dchi_i = conv_x_i - conv_0_i
 
                 e_i = np.zeros(T, dtype=np.float64)
                 for m in range(-half, half + 1):
@@ -794,7 +765,6 @@ def back_propagate_attribution(
                     e_i[valid] += np.abs(dchi_i[j[valid]] * kappa[m + half])
                 e[:, int(i_ch)] = e_i
 
-            # Divide contrib_t[j] entre canales activos según e(j,·)
             for j in np.where(mask)[0]:
                 Ej = e[j, chans].sum()
                 if Ej <= 0:
@@ -805,16 +775,7 @@ def back_propagate_attribution(
                     for i_ch in chans:
                         beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
 
-    # Aplica dt y cierre global Σ_{t,i} β_{t,i} = Σ_k α_k (= Δf)
-    #beta *= dt_vec[:, None].T
-    beta *= dt_vec.T
-    S = float(beta.sum())
-    ## Luis: Yo creo que la normalización de división para S no debería ser
-    ## necesaria.
-
-    if S != 0.0:
-        beta *= (total_alpha / S)
-    return beta.T
+    return beta
 
 
 
