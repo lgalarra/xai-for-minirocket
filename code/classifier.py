@@ -1,3 +1,4 @@
+import pickle
 import time
 
 import numpy as np
@@ -66,7 +67,8 @@ class MinirocketClassifier:
                                    minirocket_params=self.minirocket_params)
 
 
-    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray, explainer='shap'):
+    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray,
+                                           explainer='shap', reference_policy = 'global_centroid'):
         start = time.perf_counter()
         y_label = self.classifier.predict(self.minirocket_transform(x_target)['phi'])[0]
 
@@ -80,18 +82,25 @@ class MinirocketClassifier:
         return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
                 'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
-                'time_elapsed': time.perf_counter() - start
+                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
                 }
 
-    def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap'):
+    def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap',
+                          reference_policy = 'global_centroid'):
         explanations = []
         if len(X.shape) == 2:
-            return Explanation(self.explain_instance_on_original_space(X, X_reference, explainer))
+            return Explanation(self.explain_instance_on_original_space(X, X_reference, explainer, reference_policy))
         else:
             for idx, x in enumerate(X):
-                explanations.append(Explanation(self.explain_instance_on_original_space(x, X_reference[idx], explainer)))
+                explanations.append(Explanation(self.explain_instance_on_original_space(x,
+                                                                                        X_reference[idx],
+                                                                                        explainer, reference_policy)))
 
         return explanations
+
+    def save(self, output_path: str):
+        with open(output_path, 'wb') as output_file:
+            pickle.dump(self, output_file, pickle.HIGHEST_PROTOCOL)
 
 class MinirocketSegmentedClassifier(MinirocketClassifier):
     def __init__(self, minirocket_features_classifier, target_instance,
@@ -100,6 +109,10 @@ class MinirocketSegmentedClassifier(MinirocketClassifier):
         self.target_instance = target_instance
         self.reference_instance = reference_instance
         self.num_segments = num_segments
+
+    def predict_proba_on_flatten_series(self, X):
+        X_unflattened = np.array([x.reshape(self.target_instance.shape) for x in X])
+        return self.predict_proba(X_unflattened)
 
     def predict(self, X):
         X_undiscretized = self._undiscretize(X)
@@ -130,23 +143,27 @@ class MinirocketSegmentedClassifier(MinirocketClassifier):
         z = recipient.copy()
         segments_sender = np.array_split(sender, self.num_segments, axis=-1)
         for idx, segment in enumerate(segments_sender):
-            z[..., idx*segment_size:(idx+1)*segment_size] = segment
+            z[..., idx*segment_size:(idx*segment_size + segment.shape[-1])] = segment
 
         return z
 
-    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray, explainer='shap'):
+    def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray, explainer='shap',
+                                           reference_policy = 'global_centroid'):
         start = time.perf_counter()
         y_label = self.predict(self.minirocket_transform(x_target)['phi'])[0]
 
+        x_target_discr_shape = list(x_target.shape)
+        x_target_discr_shape[-1] = self.num_segments
+        x_target_discretized = np.ones(x_target_discr_shape)
+        x_reference_discretized = np.zeros(x_target_discr_shape)
 
         classifier_explainer_fn = get_classifier_explainer(explainer,
-                                                           lambda x: self.predict_proba(x)[:,y_label],
-                                                           X_background=np.array([reference]),
-                                                           target=x_target)
-        alphas = classifier_explainer_fn(np.array([x_target]))
-
-        return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
+                                                           lambda x: self.predict_proba(np.array([xi.reshape(x_target_discretized.shape) for xi in x]))[:,y_label],
+                                                           X_background=np.array([x_reference_discretized.reshape(-1)]),
+                                                           target=x_target_discretized)
+        alphas = classifier_explainer_fn(np.array([x_target_discretized.reshape(-1)]))
+        return {'coefficients': alphas.reshape(x_target_discr_shape), 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
-                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
-                'time_elapsed': time.perf_counter() - start
+                'instance_logits': self.predict_proba(x_target_discretized.reshape(1, -1))[:,y_label],
+                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
                 }

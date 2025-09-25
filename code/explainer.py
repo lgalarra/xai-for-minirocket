@@ -54,17 +54,26 @@ class ExtremeFeatureCoalitions:
 
             x_target[idx] = x_target_j
             self.x_reference[idx] = x_reference_j
-
-        return 0.5 * fsc - 0.5 * fafc
+        sum_fafc = np.sum(fafc)
+        sum_fsc = np.sum(fsc)
+        w = (self.clf_fn(x_target) + sum_fafc)/(sum_fsc + sum_fafc)
+        return w * fsc - (1-w) * fafc
 
 class Explanation:
     def __init__(self, explanation: dict):
         self.explanation = explanation
 
-    def check_explanation_local_accuracy(self, tol=1e-10) -> bool:
+    def check_explanation_local_accuracy_wrt_minirocket(self, tol=1e-10) -> (bool, float):
         cake1 = self.explanation['coefficients'].sum()
         cake2 = self.explanation['minirocket_coefficients'].sum()
-        return np.abs(cake1 - cake2) <= tol
+        delta = np.abs(cake1 - cake2)
+        return (delta <= tol, delta)
+
+    def check_mr_explanation_local_accuracy_wrt_classifier(self, tol=1e-10) -> (bool, float):
+        cake1 = self.explanation['instance_logit'] - self.explanation['reference_logit']
+        cake2 = self.explanation['minirocket_coefficients'].sum()
+        delta = np.abs(cake1 - cake2)
+        return (delta <= tol, delta)
 
     def get_instance(self) -> np.ndarray:
         return self.explanation['instance']
@@ -75,9 +84,35 @@ class Explanation:
     def get_runtime(self):
         return self.explanation['time_elapsed']
 
-    def get_attributions(self) -> np.ndarray:
+    def get_attributions_as_single_vector(self) -> np.ndarray:
         return self.explanation['coefficients'].reshape(-1)
 
+    def get_attributions_in_original_dimensions(self):
+        return self.explanation['coefficients']
+
+    def distribute_attributions_for_channel(self, channel):
+        n_segments = self.explanation['coefficients'].shape[-1]
+        standard_segment_size = channel.shape[-1] // self.explanation['coefficients'].shape[-1]
+        results = []
+        for idx in range(n_segments):
+            s = idx * standard_segment_size
+            e = min(self.explanation['instance'].shape[-1], s + standard_segment_size)
+            actual_segment_size = e - s
+            unfolded_attributions = np.tile(channel[idx] / actual_segment_size,
+                                            actual_segment_size)
+            results.append(unfolded_attributions)
+        return np.concatenate(results)
+
+    def get_distributed_explanations_in_original_space(self):
+        print(self.explanation['coefficients'].shape, self.explanation['instance'].shape)
+        if self.explanation['coefficients'].shape[-1] < self.explanation['instance'].shape[-1]:
+            result = list()
+            for channel in self.explanation['instance']:
+                unfolded_attributions = self.distribute_attributions_for_channel(channel)
+                result.append(unfolded_attributions)
+            return np.array(result)
+        else:
+            raise ValueError("There is a problem: there cannot be more attributions than features.")
 
 def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
     if type(classifier_explainer) == str:
@@ -95,9 +130,11 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
             strato.idx_dims = 0
             strato.budget = 1
             return lambda _x : strato.approximate_shapley_values()[0]
-    elif classifier_explainer == 'extreme_feature_coalitions':
+        elif classifier_explainer == 'extreme_feature_coalitions':
             ## Extreme Feature Coalitions directly works with a single background instance
             return ExtremeFeatureCoalitions(classifier_fn, X_background).explain_instance
+        else:
+            raise ValueError(f"classifier_explainer '{classifier_explainer}' not recognized.")
     elif inspect.isfunction(classifier_explainer):
         return classifier_explainer
     elif inspect.isclass(classifier_explainer):
@@ -152,11 +189,12 @@ class MinirocketExplainer:
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
                 'instance': x_target, 'instance_transformed': out_x['phi'][0],
                 'traces': out_x['traces'][0], 'reference': reference,
-                'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1)),
-                'instance_prediction': self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1)),
-                'reference_logits': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1)),
-                'instance_logits': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1)),
-                'time_elapsed': time.perf_counter() - start
+                'instance_label': y_label,
+                'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0],
+                'instance_prediction': self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0],
+                'reference_logit': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_label],
+                'instance_logit': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_label],
+                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
                 }
 
     def get_reference(self, x_target, y, reference_policy) -> np.ndarray:

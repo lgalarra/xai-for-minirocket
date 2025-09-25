@@ -1,4 +1,6 @@
 import os
+import re
+from curses.ascii import isdigit
 
 import numpy as np
 import pandas as pd
@@ -11,6 +13,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split
 from sktime.datasets import load_UCR_UEA_dataset
 
+COGNITIVE_CIRCLES_CHANNELS = dict([('X', 'X coordinate'), ('V', 'Velocity'), ('VA', 'Angular Velocity'),
+ ('DR', 'Radial Velocity'), ('Y', 'Y'), ('D', 'Radius'), ('A', 'Acceleration')])
 
 class ChannelScaler(BaseEstimator, TransformerMixin):
     """
@@ -59,17 +63,24 @@ def export_univ_tmc(s, columns, suffix, folder='data'):
     for (VAR, VARNAME) in columns:
         s[[VAR  + str(i) for i in range(0, N)]].to_frame().to_csv(f'{folder}/{VARNAME}/{VARNAME}_{suffix}.csv', header=False)
 
-def forda_transform(X):
+def univariate_series_transform(X):
     return X.to_numpy().astype(np.float32).reshape(-1, 1, X.shape[1])
+
+def get_starlightcurves_for_classification(target_class=None):
+    X, y = load_UCR_UEA_dataset(name="StarLightCurves", return_X_y=True)
+    X = X.iloc[:, 0].apply(pd.Series)
+    y = np.where(y != target_class, 0, 1)  # Asegura etiquetas 0/1
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return (univariate_series_transform(X_train), y_train), (univariate_series_transform(X_test), y_test)
 
 def get_forda_for_classification():
     X, y = load_UCR_UEA_dataset(name="FordA", return_X_y=True)
     X = X.iloc[:, 0].apply(pd.Series)
     y = np.where(y == '-1', 0, 1)  # Asegura etiquetas 0/1
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    return (forda_transform(X_train), y_train), (forda_transform(X_test), y_test)
+    return (univariate_series_transform(X_train), y_train), (univariate_series_transform(X_test), y_test)
 
-def get_cognitive_circles_data(data_dir='data/cognitive-circles'):
+def get_cognitive_circles_data(data_dir='data/cognitive-circles') -> (pd.DataFrame, pd.DataFrame):
     train_data_path = f'{data_dir}/df40participants.h5'
     test_data_path = f'{data_dir}/df8participants.h5'
     if os.path.exists(train_data_path) and os.path.exists(test_data_path):
@@ -99,6 +110,9 @@ def get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circl
         return (X_train, y_train), (X_test, y_test)
 
 
+def cognitive_circles_get_sorted_channels_from_df(data_dir='data/cognitive-circles') -> list:
+    (train_data, _), _, = _get_cognitive_circles_data_for_classification(data_dir)
+    return [re.sub(r'1$', '', col) for col in train_data.columns if col.endswith("1") and not isdigit(col[len(col) - 2])]
 
 def _get_cognitive_circles_data_for_classification(data_dir='data/cognitive-circles', target_col='RealDifficulty',
                                                   as_numpy=False):

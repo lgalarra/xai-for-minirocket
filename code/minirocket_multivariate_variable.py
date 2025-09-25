@@ -775,7 +775,7 @@ def back_propagate_attribution(
                     for i_ch in chans:
                         beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
 
-    return beta
+    return beta.T
 
 
 
