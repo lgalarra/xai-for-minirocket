@@ -32,7 +32,8 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
-from export_data import export_instance_and_explanations, prepare_output_folder_for_export
+from export_data import export_instance_and_explanations, prepare_output_folder_for_export, \
+    create_output_folder_for_export, DataExporter
 from reference import REFERENCE_POLICIES
 
 
@@ -52,9 +53,6 @@ if __name__ == '__main__':
     }
     EXPLAINERS = ['shap', 'stratoshap-k1', 'extreme_feature_coalitions']
     
-    # ## Fetching data
-    if export_data:
-        prepare_output_folder_for_export(DATASET_FETCH_FUNCTIONS)
 
     # In[42]:
     OUTPUT_FILE = 'approximation-results.csv'
@@ -71,7 +69,7 @@ if __name__ == '__main__':
                  'complexity-p2p': [], 'complexity-p2p-mean': [], 'complexity-p2p-std': []}
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
-    
+
     
     for dataset_name, (dataset_fetch_function, features) in DATASET_FETCH_FUNCTIONS.items():
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
@@ -80,8 +78,12 @@ if __name__ == '__main__':
             classifier.fit(X_train, y_train)
             y_test_pred = classifier.predict(X_test)
             classifier.save(f'data/{dataset_name}_{mr_classifier.__class__.__name__}.pkl')
-            for reference_policy in REFERENCE_POLICIES:
-                for label in LABELS:
+            for label in LABELS:
+                if export_data:
+                    data_exporter = DataExporter(dataset_name, mr_classifier.__class__.__name__, label)
+                    data_exporter.prepare_export(DATASET_FETCH_FUNCTIONS)
+
+                for reference_policy in REFERENCE_POLICIES:
                     for explainer_method in EXPLAINERS:
                         print(f"Running: {dataset_name} {mr_classifier.__class__.__name__} {label} {explainer_method} {reference_policy}")
                         results_df = df_schema.copy()
@@ -141,7 +143,7 @@ if __name__ == '__main__':
                             idx += 1
 
                             if export_data:
-                                export_instance_and_explanations(idx, y_test[idx], dataset_name,
+                                data_exporter.export_instance_and_explanations(idx, y_test[idx], dataset_name,
                                                                  features, explanation,
                                                                  explanation_p2p, segmented_explanation,
                                                                  explainer_method, mr_classifier, label_type=label)
