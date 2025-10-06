@@ -8,10 +8,10 @@ from reference import REFERENCE_POLICIES
 
 from explainer import Explanation
 
-METADATA_COLUMNS =(['series', 'label', 'label_type', 'predicted_class', 'predicted_class_probability', 'channel', 'group', 'annotation',
+METADATA_COLUMNS =(['series', 'label', 'label_type', 'label_probability', 'channel', 'group', 'annotation',
                     'global_medoid_id'] + [f'reference_{i}' for i in range(len(REFERENCE_POLICIES))]
-                   + [f'reference_{i}_predicted_class' for i in range(len(REFERENCE_POLICIES))]
-                   + [f'reference_{i}_predicted_class_probability' for i in range(len(REFERENCE_POLICIES))]
+                   + [f'reference_{i}_label' for i in range(len(REFERENCE_POLICIES))]
+                   + [f'reference_{i}_label_probability' for i in range(len(REFERENCE_POLICIES))]
                    + ['beta_attributions'] )
 
 
@@ -40,8 +40,10 @@ class DataExporter(object):
                                          configuration: tuple,
                                          explanations_dict: dict):
         (dataset_name, mr_classifier_name, explainer_method, label_type) = configuration
-        ##TODO: Iterate over the reference policies to export the explanations
+        some_reference_policy = next(iter(explanations_dict))
+        (explanation, explanation_p2p, segmented_explanation) = explanations_dict[some_reference_policy]
         instance = explanation.get_instance()
+        ##TODO: Iterate over the reference policies to get the different betas
         betas = explanation.get_attributions_in_original_dimensions()
         betas_p2p = explanation_p2p.get_attributions_in_original_dimensions()
         betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
