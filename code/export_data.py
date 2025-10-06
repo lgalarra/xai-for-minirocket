@@ -35,14 +35,12 @@ class DataExporter(object):
             pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.output_path}/metadata.csv', mode='w',
                                                  index=False, header=True)
 
-    def export_instance_and_explanations(self, i, y_i, dataset_name,
+    def export_instance_and_explanations(self, i, y_i,
                                          features: list,
-                                         explanation: Explanation,
-                                         explanation_p2p: Explanation,
-                                         segmented_explanation: Explanation,
-                                         explainer_method: str,
-                                         mr_classifier: BaseEstimator,
-                                         label_type: str = 'training'):
+                                         configuration: tuple,
+                                         explanations_dict: dict):
+        (dataset_name, mr_classifier_name, explainer_method, label_type) = configuration
+        ##TODO: Iterate over the reference policies to export the explanations
         instance = explanation.get_instance()
         betas = explanation.get_attributions_in_original_dimensions()
         betas_p2p = explanation_p2p.get_attributions_in_original_dimensions()
