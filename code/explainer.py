@@ -227,7 +227,10 @@ class MinirocketExplainer:
             y = self.minirocket_classifier.predict(mmv.transform_prime(X)['phi'])
 
         if len(X.shape) == 2:
-            yield Explanation(self._explain_single_instance(X, y, alpha_mask=alpha_mask))
+            yield Explanation(self._explain_single_instance(X, y, classifier_explainer,
+                                                            reference_policy,
+                                                            reference,
+                                                            alpha_mask=alpha_mask))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],

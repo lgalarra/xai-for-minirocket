@@ -10,6 +10,8 @@ import pandas
 import pandas as pd
 import copy
 
+from scipy.stats import kendalltau
+
 from explainer import Explanation
 from exputils import to_sep_list
 
@@ -33,13 +35,12 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
-from export_data import export_instance_and_explanations, prepare_output_folder_for_export, \
-    create_output_folder_for_export, DataExporter
+from export_data import DataExporter
 from reference import REFERENCE_POLICIES
 
 
 if __name__ == '__main__':
-    export_data = len(sys.argv) > 1 and sys.argv[1].lower() in ('1', "true", "yes")
+    should_export_data = len(sys.argv) > 1 and sys.argv[1].lower() in ('1', "true", "yes")
     MR_CLASSIFIERS = [LogisticRegression(), RandomForestClassifier()]
 
     LABELS = ['training', 'predicted']
@@ -58,8 +59,11 @@ if __name__ == '__main__':
     # In[42]:
     OUTPUT_FILE = 'approximation-results.csv'
     
-    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> float:
-        return r2_score(explanation_p2p.get_attributions_as_single_vector(), explanation.get_attributions_as_single_vector())
+    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
+        explanation_vector = explanation.get_attributions_as_single_vector()
+        explanation_p2p_vector = explanation_p2p.get_attributions_as_single_vector()
+        res = kendalltau(explanation_p2p_vector, explanation_vector)
+        return r2_score(explanation_p2p_vector, explanation_vector), res.statistic
     
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
                  'dataset': [], 'r2s': [], 'r2s-mean': [], 'r2s-std': [],
@@ -68,7 +72,8 @@ if __name__ == '__main__':
                  'runtimes-segmented-seconds': [], 'runtimes-segmented-mean': [], 'runtimes-segmented-std': [],
                  'complexity': [], 'complexity-mean': [], 'complexity-std': [],
                  'complexity-p2p': [], 'complexity-p2p-mean': [], 'complexity-p2p-std': [],
-                 'complexity-segmented': [], 'complexity-segmented-mean': [], 'complexity-segmented-std': []}
+                 'complexity-segmented': [], 'complexity-segmented-mean': [], 'complexity-segmented-std': [],
+                 'kendall-taus': [], 'kendall-taus-mean': [], 'kendall-taus-std': []}
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
@@ -79,27 +84,33 @@ if __name__ == '__main__':
             classifier = MinirocketClassifier(minirocket_features_classifier=mr_classifier)
             classifier.fit(X_train, y_train)
             y_test_pred = classifier.predict(X_test)
-            mr_classifier_name = f'{dataset_name}_{mr_classifier.__class__.__name__}'
-            classifier.save(f'data/{mr_classifier_name}.pkl')
+            DataExporter.save_classifier(classifier, dataset_name)
+            mr_classifier_name = f'{mr_classifier.__class__.__name__}'
             for explainer_method in EXPLAINERS:
                 for label in LABELS:
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
-                    if export_data:
-                        exporter = DataExporter(dataset_name, mr_classifier.__class__.__name__, label)
-                        exporter.prepare_export(DATASET_FETCH_FUNCTIONS)
+                    if should_export_data:
+                        exporter = DataExporter(dataset_name, mr_classifier.__class__.__name__, explainer_method, label)
+                        exporter.prepare_export(DATASET_FETCH_FUNCTIONS[dataset_name])
                         exporters_dict[configuration] = exporter
-                    results_df = df_schema.copy()
+                    results_df_dict = {}
+                    results_df = copy.deepcopy(df_schema.copy())
                     results_df['timestamp'].append(pd.Timestamp.now())
                     results_df['base_explainer'].append(explainer_method)
                     results_df['mr_classifier'].append(mr_classifier.__class__.__name__)
                     results_df['label'].append(label)
                     results_df['dataset'].append(dataset_name)
+                    for reference_policy in REFERENCE_POLICIES:
+                        results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     idx = -1
-                    for x_target, y_target in (X_test, y_test if label == 'training' else y_test_pred):
-                        idx += 1
-                        explanations_for_instance = {}
+                    dataset_measures = []
+                    for idx in range(1, 2): #range(len(X_test)):
                         measures_for_instance = {}
+                        x_target = X_test[idx]
+                        y_target = y_test[idx]
+                        explanations_for_instance = {}
                         r2s = {}
+                        kendalls = {}
                         runtimes_backpropagated = {}
                         runtimes_p2p = {}
                         runtimes_segmented = {}
@@ -110,9 +121,9 @@ if __name__ == '__main__':
                         for reference_policy in REFERENCE_POLICIES:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
 
-                            explanation = explainer.explain_instances(x_target, y_target,
+                            explanation = list(explainer.explain_instances(x_target, y_target,
                                                                       classifier_explainer=explainer_method,
-                                                                      reference_policy=reference_policy)
+                                                                      reference_policy=reference_policy))[0]
                             ## Segmented explanation
                             segmented_explanation = MinirocketSegmentedClassifier(mr_classifier, explanation.get_instance(),
                                                            explanation.get_reference()).explain_instances(
@@ -122,6 +133,7 @@ if __name__ == '__main__':
                                 reference_policy=reference_policy
                             )
                             r2s[reference_policy] = []
+                            kendalls[reference_policy] = []
                             runtimes_backpropagated[reference_policy] = []
                             runtimes_p2p[reference_policy] = []
                             runtimes_segmented[reference_policy] = []
@@ -137,8 +149,9 @@ if __name__ == '__main__':
                                                                             reference_policy=reference_policy
                                                                            )
 
-                            r2 = compare_explanations(explanation, explanation_p2p)
+                            r2, kendall = compare_explanations(explanation, explanation_p2p)
                             r2s[reference_policy].append(r2)
+                            kendalls[reference_policy].append(kendall)
                             runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
                             runtimes_p2p[reference_policy].append(explanation_p2p.get_runtime())
                             runtimes_segmented[reference_policy].append(segmented_explanation.get_runtime())
@@ -149,48 +162,62 @@ if __name__ == '__main__':
                             local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p, segmented_explanation)
 
-                            measures_for_instance[reference_policy] = (r2s[reference_policy], runtimes_backpropagated[reference_policy],
+                            measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy], runtimes_backpropagated[reference_policy],
                                                                    runtimes_p2p[reference_policy], runtimes_segmented[reference_policy],
                                                                    complexity_backpropagated[reference_policy], complexity_p2p[reference_policy],
                                                                    complexity_segmented[reference_policy], local_accuracy[reference_policy])
-                        if export_data:
+                        dataset_measures.append(measures_for_instance)
+                        if should_export_data:
                             exporters_dict[configuration].export_instance_and_explanations(idx, y_target,
                                                                                            features, configuration,
                                                                                            explanations_for_instance)
-                    for reference_policy in measures_for_instance:
-                        (r2s, runtimes_backpropagated,
-                         runtimes_p2p, runtimes_segmented,
-                         complexity_backpropagated, complexity_p2p,
-                         complexity_segmented, local_accuracy) = measures_for_instance[reference_policy]
+                    for reference_policy in REFERENCE_POLICIES:
+                        for instance_measures in dataset_measures:
+                            (kendalls, r2s, runtimes_backpropagated,
+                             runtimes_p2p, runtimes_segmented,
+                             complexity_backpropagated, complexity_p2p,
+                             complexity_segmented, local_accuracy) = instance_measures[reference_policy]
+                            results_df_rp = results_df_dict[reference_policy]
+                            results_df_rp['reference_policy'].append(reference_policy)
+                            results_df_rp['complexity'].append(to_sep_list(complexity_backpropagated))
+                            results_df_rp['complexity-mean'].append(np.mean(complexity_backpropagated))
+                            results_df_rp['complexity-std'].append(np.std(complexity_backpropagated))
 
-                        results_df_rp = copy.deepcopy(results_df)
-                        results_df_rp['reference_policy'].append(reference_policy)
-                        results_df_rp['complexity'] = to_sep_list(complexity_backpropagated)
-                        results_df_rp['complexity-mean'] = np.mean(complexity_backpropagated)
-                        results_df_rp['complexity-std'] = np.std(complexity_backpropagated)
+                            results_df_rp['complexity-p2p'].append(to_sep_list(complexity_p2p))
+                            results_df_rp['complexity-p2p-mean'].append(np.mean(complexity_p2p))
+                            results_df_rp['complexity-p2p-std'].append(np.std(complexity_p2p))
 
-                        results_df_rp['complexity-p2p'] = to_sep_list(complexity_p2p)
-                        results_df_rp['complexity-p2p-mean'] = np.mean(complexity_p2p)
-                        results_df_rp['complexity-p2p-std'] = np.std(complexity_p2p)
+                            results_df_rp['complexity-segmented'].append(to_sep_list(complexity_segmented))
+                            results_df_rp['complexity-segmented-mean'].append(np.mean(complexity_segmented))
+                            results_df_rp['complexity-segmented-std'].append(np.std(complexity_segmented))
 
-                        results_df_rp['runtimes-seconds'] = to_sep_list(runtimes_backpropagated)
-                        results_df_rp['runtimes-mean'] = np.mean(runtimes_backpropagated)
-                        results_df_rp['runtimes-std'] = np.std(runtimes_backpropagated)
+                            results_df_rp['runtimes-seconds'].append(to_sep_list(runtimes_backpropagated))
+                            results_df_rp['runtimes-mean'].append(np.mean(runtimes_backpropagated))
+                            results_df_rp['runtimes-std'].append(np.std(runtimes_backpropagated))
 
-                        results_df_rp['runtimes-p2p-seconds'] = to_sep_list(runtimes_p2p)
-                        results_df_rp['runtimes-p2p-mean'] = np.mean(runtimes_p2p)
-                        results_df_rp['runtimes-p2p-std'] = np.std(runtimes_p2p)
+                            results_df_rp['runtimes-p2p-seconds'].append(to_sep_list(runtimes_p2p))
+                            results_df_rp['runtimes-p2p-mean'].append(np.mean(runtimes_p2p))
+                            results_df_rp['runtimes-p2p-std'].append(np.std(runtimes_p2p))
 
-                        results_df_rp['runtimes-segmented-seconds'] = to_sep_list(runtimes_segmented)
-                        results_df_rp['runtimes-segmented-mean'] = np.mean(runtimes_segmented)
-                        results_df_rp['runtimes-segmented-std'] = np.std(runtimes_segmented)
+                            results_df_rp['runtimes-segmented-seconds'].append(to_sep_list(runtimes_segmented))
+                            results_df_rp['runtimes-segmented-mean'].append(np.mean(runtimes_segmented))
+                            results_df_rp['runtimes-segmented-std'].append(np.std(runtimes_segmented))
 
-                        results_df_rp['r2s'] = to_sep_list(r2s)
-                        results_df_rp['r2s-mean'] = np.mean(r2s)
-                        results_df_rp['r2s-std'] = np.std(r2s)
+                            results_df_rp['r2s'].append(to_sep_list(r2s))
+                            results_df_rp['r2s-mean'].append(np.mean(r2s))
+                            results_df_rp['r2s-std'].append(np.std(r2s))
 
-                        results_df_rp['local_accuracy'] = local_accuracy / len(r2s)
-                        pd.DataFrame(results_df).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)
+                            results_df_rp['kendall-taus'].append(to_sep_list(kendalls))
+                            results_df_rp['kendall-taus-mean'].append(np.mean(kendalls))
+                            results_df_rp['kendall-taus-std'].append(np.std(kendalls))
+
+                            results_df_rp['local_accuracy'].append(local_accuracy / len(r2s))
+                            print(results_df_rp)
+                            pd.DataFrame(results_df_rp).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)
+
+    if should_export_data:
+        for configuration, exporter in exporters_dict.items():
+            exporter.export_metametadata()
 
 
 

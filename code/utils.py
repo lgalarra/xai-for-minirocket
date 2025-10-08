@@ -16,6 +16,9 @@ from sktime.datasets import load_UCR_UEA_dataset
 COGNITIVE_CIRCLES_CHANNELS = dict([('X', 'X coordinate'), ('V', 'Velocity'), ('VA', 'Angular Velocity'),
  ('DR', 'Radial Velocity'), ('Y', 'Y'), ('D', 'Radius'), ('A', 'Acceleration')])
 
+COGNITIVE_CIRCLES_UNITS = {'X': 'pixel', 'Y': 'pixel', 'V': 'pixel/s', 'VA': 'radians/s^2', 'DR': 'pixel/s^2',
+                           'D': 'pixel', 'A': 'pixel/s^2'}
+
 class ChannelScaler(BaseEstimator, TransformerMixin):
     """
     Z-normalize a time series dataset (N, C, L) per channel,

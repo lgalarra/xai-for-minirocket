@@ -79,7 +79,7 @@ class MinirocketClassifier:
                                                            target=x_target)
         alphas = classifier_explainer_fn(np.array([x_target.reshape(-1)]))
 
-        return {'coefficients': alphas, 'instance': x_target, 'reference': reference,
+        return {'coefficients': alphas.reshape(x_target.shape), 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
                 'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
                 'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
