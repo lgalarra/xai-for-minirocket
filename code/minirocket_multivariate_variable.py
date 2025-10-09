@@ -9,8 +9,12 @@
 #    multivariate input.  It is untested, may contain errors, and may be
 #    inefficient in terms of both storage and computation. **
 
+
 from numba import njit, prange, vectorize
 import numpy as np
+import numpy as np
+import math
+
 def _as_TC(x):
     """Devuelve (T, C) dada una entrada (1,C,L) o (C,T) o (T,C)."""
     x = np.asarray(x)
@@ -49,9 +53,6 @@ def compute_sigma_ref_from_x0(x0_raw, transform_prime):
     traces0 = _ensure_sigma_in_traces(out0["traces"])
     sigma_ref = [tr0["sigma"] for tr0 in traces0]
     return sigma_ref
-
-
-
 
 @njit("float32[:](float32[:,:],int32[:],int32[:],int32[:],int32[:],int32[:],float32[:])", fastmath = True, parallel = False, cache = True)
 def _fit_biases(X, L, num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, quantiles):
@@ -559,6 +560,119 @@ def transform_prime(X_in, parameters=None):
         num_channels                 = int(C),
     )
     return {'phi': phi, 'traces': traces_meta}
+
+@njit(fastmath=True, cache=True)
+def _ppv_heaviside_mean(C, b, k):
+    """
+    Media de la 'Heaviside suavizada': s = sigmoid(k*(C-b)) y luego mean(s).
+    Mantiene el espíritu de PPV (proporción de activación), pero diferenciable.
+    """
+    z = k * (C - b)
+    s = 1.0 / (1.0 + np.exp(-z))
+    return s.mean()
+
+@njit(fastmath=True, parallel=True, cache=True)
+def transform_heaviside(X, L, parameters, k):
+    """
+    Igual que transform(...), pero sustituyendo PPV (escalón) por
+    la 'Heaviside suavizada' con pendiente k y promediando (PPV suave).
+    """
+
+    (num_channels_per_combination,
+     channel_indices,
+     dilations,
+     num_features_per_dilation,
+     biases) = parameters
+
+    # Combinaciones de kernel 
+    indices = np.array((
+        0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
+        0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
+        0,3,5,0,3,6,0,3,7,0,3,8,0,4,5,0,4,6,0,4,7,
+        0,4,8,0,5,6,0,5,7,0,5,8,0,6,7,0,6,8,0,7,8,
+        1,2,3,1,2,4,1,2,5,1,2,6,1,2,7,1,2,8,1,3,4,
+        1,3,5,1,3,6,1,3,7,1,3,8,1,4,5,1,4,6,1,4,7,
+        1,4,8,1,5,6,1,5,7,1,5,8,1,6,7,1,6,8,1,7,8,
+        2,3,4,2,3,5,2,3,6,2,3,7,2,3,8,2,4,5,2,4,6,
+        2,4,7,2,4,8,2,5,6,2,5,7,2,5,8,2,6,7,2,6,8,
+        2,7,8,3,4,5,3,4,6,3,4,7,3,4,8,3,5,6,3,5,7,
+        3,5,8,3,6,7,3,6,8,3,7,8,4,5,6,4,5,7,4,5,8,
+        4,6,7,4,6,8,4,7,8,5,6,7,5,6,8,5,7,8,6,7,8
+    ), dtype=np.int32).reshape(84, 3)
+
+    num_examples = len(L)
+    num_channels, _ = X.shape
+    num_kernels   = len(indices)
+    num_dilations = len(dilations)
+    num_features  = num_kernels * np.sum(num_features_per_dilation)
+
+    features = np.zeros((num_examples, num_features), dtype=np.float32)
+
+    for example_index in prange(num_examples):
+        input_length = np.int64(L[example_index])
+
+        bsum = np.sum(L[0:example_index + 1])
+        a = bsum - input_length
+
+        _X = X[:, a:bsum]  # (C, L_i)
+
+        A = -_X.astype(np.float32)
+        G = (_X + _X + _X).astype(np.float32)
+
+        feature_index_start = 0
+        combination_index = 0
+        num_channels_start = 0
+
+        for dilation_index in range(num_dilations):
+            dilation = int(dilations[dilation_index])
+            padding  = ((9 - 1) * dilation) // 2
+            num_features_this_dilation = int(num_features_per_dilation[dilation_index])
+
+            C_alpha = np.zeros((num_channels, input_length), dtype=np.float32); C_alpha[:] = A
+            C_gamma = np.zeros((9, num_channels, input_length), dtype=np.float32); C_gamma[9 // 2] = G
+
+            start = dilation
+            end   = input_length - padding
+
+            for gamma_index in range(9 // 2):
+                if end > 0:
+                    C_alpha[:, -end:] += A[:, :end]
+                    C_gamma[gamma_index, :, -end:] = G[:, :end]
+                end += dilation
+
+            for gamma_index in range(9 // 2 + 1, 9):
+                if start < input_length:
+                    C_alpha[:, :-start] += A[:, start:]
+                    C_gamma[gamma_index, :, :-start] = G[:, start:]
+                start += dilation
+
+            for kernel_index in range(num_kernels):
+                feature_index_end = feature_index_start + num_features_this_dilation
+
+                num_channels_this_comb = int(num_channels_per_combination[combination_index])
+                num_channels_end = num_channels_start + num_channels_this_comb
+                channels_this_comb = channel_indices[num_channels_start:num_channels_end]
+
+                idx0, idx1, idx2 = indices[kernel_index]
+
+                C = (
+                    C_alpha[channels_this_comb] +
+                    C_gamma[idx0][channels_this_comb] +
+                    C_gamma[idx1][channels_this_comb] +
+                    C_gamma[idx2][channels_this_comb]
+                )
+                C = np.sum(C, axis=0).astype(np.float32)  # (L_i,)
+
+                # Cambio clave: PPV → Heaviside suavizada con pendiente k
+                for fidx in range(feature_index_start, feature_index_end):
+                    b = float(biases[fidx])
+                    features[example_index, fidx] = _ppv_heaviside_mean(C, b, k)
+
+                feature_index_start = feature_index_end
+                combination_index   += 1
+                num_channels_start  = num_channels_end
+
+    return features
 
 
 _CLF_PHI_FOR_LOGITS = None
