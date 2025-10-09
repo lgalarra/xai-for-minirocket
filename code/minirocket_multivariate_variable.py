@@ -572,7 +572,7 @@ def _ppv_heaviside_mean(C, b, k):
     return s.mean()
 
 @njit(fastmath=True, parallel=True, cache=True)
-def transform_heaviside(X, L, parameters, k):
+def transform_soft_heaviside(X, L, parameters, k):
     """
     Igual que transform(...), pero sustituyendo PPV (escalón) por
     la 'Heaviside suavizada' con pendiente k y promediando (PPV suave).

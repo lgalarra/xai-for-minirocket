@@ -1,11 +1,14 @@
 import os
 import re
 from curses.ascii import isdigit
+import numdifftools as nd
+
 
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.linear_model import LogisticRegression
+import minirocket_multivariate_variable as mmv
 
 
 import numpy as np
@@ -173,3 +176,52 @@ def logistic_gradient(model: LogisticRegression, x: np.ndarray) -> np.ndarray:
 
 def normalize_df(df):
     return (df - df.mean()) / df.std()
+
+def make_jacobian_fn(X, L, parameters, k):
+    """
+    Returns a callable that computes the full Jacobian dF/dX using numdifftools.
+    F = transform_heaviside(X, L, parameters, k)
+
+    The Jacobian has shape (F.size, X.size).
+    """
+
+    original_shape_X = X.shape  # e.g. (C, total_length)
+    # Compute output shape to know how to reshape the Jacobian later
+    sample_output = mmv.transform_soft_heaviside(X, L, parameters, k)
+    original_shape_F = sample_output.shape  # (num_examples, num_features)
+
+    def wrapped_transform_soft_heaviside(X_flat):
+        # Reshape flattened X back into its original multidimensional form
+        X_matrix = X_flat.reshape(original_shape_X)
+        F = mmv.transform_soft_heaviside(X_matrix, L, parameters, k)
+        return F.ravel()  # flatten output for numdifftools.Jacobian
+
+    # Build the Jacobian calculator
+    jac_fn = nd.Jacobian(
+        wrapped_transform_soft_heaviside,
+        method='central',  # more accurate than 'forward'
+        step=1e-5
+    )
+
+    def jacobian_of_X(X_val):
+        """
+        Computes Jacobian at given X value.
+        Returns array of shape (*F.shape, *X.shape).
+        """
+        J = jac_fn(X_val.ravel())
+        # numdifftools returns (F.size, X.size)
+        return J.reshape(*original_shape_F, *original_shape_X)
+
+    return jacobian_of_X
+
+def transform_soft_heaviside_gradient(X, L, parameters, k):
+    # ---------------------------------------------------------------------------
+    # Example usage
+    # ---------------------------------------------------------------------------
+
+    # Assume you already have your inputs defined:
+    # X, L, parameters, k = ...
+
+    jacobian_fn = make_jacobian_fn(X, L, parameters, k)
+    return jacobian_fn(X)  # Shape: (num_examples, num_features, *X.shape)
+
