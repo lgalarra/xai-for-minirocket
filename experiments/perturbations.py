@@ -11,6 +11,7 @@ import pandas
 import pandas as pd
 
 from experiments.pertutils import get_perturbations
+from export_data import fetch_computed_attributions
 from exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -23,6 +24,7 @@ from sklearn.linear_model import LogisticRegression
 import importlib
 
 import minirocket_multivariate_variable as mmv
+from import_data import DataImporter
 
 importlib.reload(mmv)
 from sklearn.linear_model import LogisticRegression
@@ -32,7 +34,7 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
-from export_data import export_instance_and_explanations, prepare_output_folder_for_export, fetch_computed_attributions
+
 
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
@@ -80,27 +82,35 @@ if __name__ == '__main__':
 
     for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
-        for mr_classifier in MR_CLASSIFIERS[dataset_name]:
+        data_importer = DataImporter(dataset_name)
+        for classifier in MR_CLASSIFIERS[dataset_name]:
+            classifier_name = classifier.classifier.__class__.__name__
             for reference_policy in REFERENCE_POLICIES:
                 for label in LABELS:
                     for explainer_method in EXPLAINERS:
                         for idx, x in enumerate(X_test):
-                            betas, x_reference = fetch_computed_attributions('data/', dataset_name, x,
-                                                                type='backpropagated',
-                                                                reference_policy=reference_policy,
-                                                                explainer_method=explainer_method)
-                            betas_p2p, _ = fetch_computed_attributions('data/', dataset_name, x,
-                                                                    type='p2p',
-                                                                    reference_policy=reference_policy,
-                                                                    explainer_method=explainer_method)
-                            betas_segment, _ = fetch_computed_attributions('data/', dataset_name, x,
-                                                                        type='segmented', reference_policy=reference_policy,
-                                                                        explainer_method=explainer_method)
-                            print(f"Running: {dataset_name} {mr_classifier.__class__.__name__} {label} {explainer_method} {reference_policy}")
+                            betas, x_reference = data_importer.fetch_computed_attributions(idx,
+                                                                                           classifier=classifier_name,
+                                                                                           label=label,
+                                                                                           reference_policy=reference_policy,
+                                                                                           explainer_method=explainer_method,
+                                                                                           type='backpropagated',
+                                                                                           )
+                            betas_p2p, _ = fetch_computed_attributions(idx, classifier=classifier_name,
+                                                                       label=label,
+                                                                       reference_policy=reference_policy,
+                                                                       explainer_method=explainer_method,
+                                                                       type='p2p')
+                            betas_segment, _ = fetch_computed_attributions(idx, classifier=classifier_name,
+                                                                           label=label,
+                                                                           reference_policy=reference_policy,
+                                                                           explainer_method=explainer_method,
+                                                                           type='segmented')
+                            print(f"Running: {dataset_name} {classifier.__class__.__name__} {label} {explainer_method} {reference_policy}")
                             results_df = df_schema.copy()
                             results_df['timestamp'].append(pd.Timestamp.now())
                             results_df['base_explainer'].append(explainer_method)
-                            results_df['mr_classifier'].append(mr_classifier.__class__.__name__)
+                            results_df['mr_classifier'].append(classifier.__class__.__name__)
                             results_df['reference_policy'].append(reference_policy)
                             results_df['label'].append(label)
                             results_df['dataset'].append(dataset_name)

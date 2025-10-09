@@ -53,7 +53,7 @@ if __name__ == '__main__':
                               [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
                             )
     }
-    EXPLAINERS = ['stratoshap-k1', 'shap', 'extreme_feature_coalitions']
+    EXPLAINERS = ['shap', 'stratoshap-k1' , 'extreme_feature_coalitions']
     
 
     # In[42]:
