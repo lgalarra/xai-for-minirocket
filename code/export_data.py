@@ -1,3 +1,4 @@
+import copy
 import os
 import re
 
@@ -10,10 +11,14 @@ import json
 
 from utils import COGNITIVE_CIRCLES_CHANNELS, cognitive_circles_get_sorted_channels_from_df, COGNITIVE_CIRCLES_UNITS
 
-METADATA_COLUMNS =(['series', 'label', 'label_type', 'label_probability', 'channel', 'group', 'annotation'] + [f'reference_{i}' for i in range(len(REFERENCE_POLICIES))]
+METADATA_COLUMNS =(['instance_id', 'series', 'label', 'label_type', 'label_probability', 'channel', 'group', 'annotation']
+                   + [f'reference_{i}' for i in range(len(REFERENCE_POLICIES))]
                    + [f'reference_{i}_label' for i in range(len(REFERENCE_POLICIES))]
                    + [f'reference_{i}_label_probability' for i in range(len(REFERENCE_POLICIES))]
-                   + ['beta_attributions', 'beta_p2p_attributions', 'beta_segmented_attributions'] )
+                   + [f'beta_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
+                   + [f'beta_p2p_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
+                   + [f'beta_segmented_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
+                   )
 
 UNITS = {
     "ford-a": ["dB"],
@@ -50,6 +55,9 @@ class DataExporter(object):
                                                                         label_type)
         self.output_dataset_path = 'data/' + dataset_name
         self.dataset_name = dataset_name
+        self.mr_classifier_name = mr_classifier_name
+        self.explainer_method = explainer_method
+        self.label_type = label_type
 
     @staticmethod
     def create_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
@@ -76,11 +84,11 @@ class DataExporter(object):
 
     def export_instance_and_explanations(self, instance_id, y_i,
                                          features: list,
-                                         configuration: tuple,
                                          explanations_dict: dict):
-        (dataset_name, mr_classifier_name, explainer_method, label_type) = configuration
-        metadata_dict = METADATA_SCHEMA.copy()
-
+        (dataset_name, mr_classifier_name, explainer_method, label_type) = \
+            (self.dataset_name, self.mr_classifier_name, self.explainer_method, self.label_type)
+        metadata_dict = copy.deepcopy(METADATA_SCHEMA)
+        metadata_dict['instance_id'].append(instance_id)
         some_reference_policy = next(iter(explanations_dict))
         (explanation, _, _) = explanations_dict[some_reference_policy]
         instance = explanation.get_instance()
@@ -94,20 +102,22 @@ class DataExporter(object):
                 reference_code = hash(reference[channel_idx].data.tobytes())
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
                 metadata_dict[f'reference_{idx}'].append(reference_filename)
-                metadata_dict[f'reference_{idx}'].append(REFERENCE_POLICIES_LABELS[reference_policy])
+
                 if not os.path.exists(reference_filename):
                     pd.Series(reference[channel_idx]).to_csv(reference_filename, header=False)
+
                 metadata_dict[f'reference_{idx}_label'].append(explanation.explanation['reference_prediction'])
                 metadata_dict[f'reference_{idx}_label_probability'].append(explanation.explanation['reference_logit'])
-                attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}.csv'
+
+                attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}.csv'
                 pd.Series(betas[channel_idx]).to_csv(attr_channel_filename, header=False)
-                metadata_dict['beta_attributions'].append(attr_channel_filename)
-                attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}.csv'
+                metadata_dict[f'beta_{idx}_attributions'].append(attr_channel_filename)
+                attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}_{idx}.csv'
                 pd.Series(betas_p2p[channel_idx]).to_csv(attr_p2p_channel_filename, header=False)
-                metadata_dict['beta_p2p_attributions'].append(attr_p2p_channel_filename)
-                attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}.csv'
+                metadata_dict[f'beta_p2p_{idx}_attributions'].append(attr_p2p_channel_filename)
+                attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
                 pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
-                metadata_dict['beta_segmented_attributions'].append(attr_segmented_channel_filename)
+                metadata_dict[f'beta_segmented_{idx}_attributions'].append(attr_segmented_channel_filename)
 
             channel_filename = f'{self.output_dataset_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_instance_{instance_id}.csv'
             metadata_dict['series'].append(channel_filename)
@@ -121,6 +131,7 @@ class DataExporter(object):
             metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
             metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
 
+        print(f'Flusing {metadata_dict} in {self.output_path}')
         flush_metadata(metadata_dict, self.output_path)
 
     def export_metametadata(self):
@@ -132,17 +143,13 @@ class DataExporter(object):
         with open(f'{self.output_dataset_path}/metametadata.json', 'w') as f:
             json.dump(metametadata, f)
 
-def fetch_computed_attributions(root_folder: str, dataset_name: str, i: int, type: str, reference_policy: str,
-                                explainer_method: str):
-    pass
-
 
 def extract_dataset_name(dataset_name: str) -> str:
     return re.sub(r'-c\d+$', '',  dataset_name)
 
 
 def flush_metadata(metadata_entries: dict, folder_path: str):
-    pd.DataFrame(metadata_entries).to_csv(f'{folder_path}/metadata.csv', mode='w', index=False, header=False)
+    pd.DataFrame(metadata_entries).to_csv(f'{folder_path}/metadata.csv', mode='a', index=False, header=False)
 
 def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str) -> str:
     return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type

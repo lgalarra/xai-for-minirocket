@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+import copy
+import itertools
 # In[41]:
 import os
 import pickle
@@ -10,8 +11,8 @@ import numpy as np
 import pandas
 import pandas as pd
 
+from experiments.exputils import to_sep_list
 from experiments.pertutils import get_perturbations
-from export_data import fetch_computed_attributions
 from exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -36,9 +37,17 @@ from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 
 
+def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> (np.array, np.array):
+    X_test_expanded = np.repeat(X_test, budget, axis=0)
+    X_reference_expanded = np.repeat(X_reference, budget, axis=0)
+    delta = classifier.predict(X_test_expanded) - classifier.predict(X_perturbed)
+    delta_norm = delta / (classifier.predict(X_test_expanded) - classifier.predict(X_reference_expanded))
+    return delta, delta_norm
+
+
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
-        "startlight-c1": [pickle.load("data/startlight-c1_LogisticRegression.pkl")]
+        "ford-a": [pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb"))]
     }
     ## We will restrict to one or two
     REFERENCE_POLICIES = ['opposite_class_medoid', 'opposite_class_centroid',
@@ -47,16 +56,16 @@ if __name__ == '__main__':
 
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
+        "ford-a": "get_forda_for_classification()",
         "startlight-c1": "get_starlightcurves_for_classification('1')",
         "startlight-c2": "get_starlightcurves_for_classification('2')",
         "startlight-c3": "get_starlightcurves_for_classification('3')",
-        "ford-a": "get_forda_for_classification()",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
-    EXPLAINERS = ['extreme_feature_coalitions', 'stratoshap-k1', 'shap']
+    EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
     BUDGET = 100
     PERTURBATIONS = {'gaussian' : {'percentile_cut': [10, 25, 50],
-                                   'noise_ratio' : [0.05, 0.1, 0.2]
+                                   'sigma' : [0.05, 0.1, 0.2]
                                    },
                      'instance_to_reference': {'percentile_cut': [10, 25, 50],
                                                'interpolation': [0.5, 1.0]
@@ -71,12 +80,13 @@ if __name__ == '__main__':
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
-                 'dataset': [], 'classifier_accuracy': [], 'r2s': [], 'r2s-mean': [], 'r2s-std': [],
-                 'local_accuracy': [], 'runtimes-seconds': [], 'runtimes-mean': [], 'runtimes-std': [],
-                 'runtimes-p2p-seconds': [], 'runtimes-p2p-mean': [], 'runtimes-p2p-std': [],
-                 'runtimes-segmented-seconds': [], 'runtimes-segmented-mean': [], 'runtimes-segmented-std': [],
-                 'complexity': [], 'complexity-mean': [], 'complexity-std': [],
-                 'complexity-p2p': [], 'complexity-p2p-mean': [], 'complexity-p2p-std': []}
+                 'dataset': [], 'f_minus_f0' : [], 'f_minus_f0-mean': [], 'f_minus_f0-std': [],
+                 'f_minus_f0_norm': [], 'f_minus_f0_norm-mean': [], 'f_minus_f0_norm-std': [],
+                 'p2p_f_minus_f0': [], 'p2p_f_minus_f0-mean': [], 'p2p_f_minus_f0-std': [],
+                 'p2p_f_minus_f0_norm': [], 'p2p_f_minus_f0_norm-mean': [], 'p2p_f_minus_f0_norm-std': [],
+                 'segmented_f_minus_f0': [], 'segmented_f_minus_f0-mean': [], 'segmented_f_minus_f0-std': [],
+                 'segmented_f_minus_f0_norm': [], 'segmented_f_minus_f0_norm-mean': [], 'segmented_f_minus_f0_norm-std': [],
+                 'args': [], 'perturbation_policy': [] }
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
@@ -85,34 +95,58 @@ if __name__ == '__main__':
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
-            for reference_policy in REFERENCE_POLICIES:
-                for label in LABELS:
-                    for explainer_method in EXPLAINERS:
-                        for idx, x in enumerate(X_test):
-                            betas, x_reference = data_importer.fetch_computed_attributions(idx,
-                                                                                           classifier=classifier_name,
-                                                                                           label=label,
-                                                                                           reference_policy=reference_policy,
-                                                                                           explainer_method=explainer_method,
-                                                                                           type='backpropagated',
-                                                                                           )
-                            betas_p2p, _ = fetch_computed_attributions(idx, classifier=classifier_name,
-                                                                       label=label,
-                                                                       reference_policy=reference_policy,
-                                                                       explainer_method=explainer_method,
-                                                                       type='p2p')
-                            betas_segment, _ = fetch_computed_attributions(idx, classifier=classifier_name,
-                                                                           label=label,
-                                                                           reference_policy=reference_policy,
-                                                                           explainer_method=explainer_method,
-                                                                           type='segmented')
-                            print(f"Running: {dataset_name} {classifier.__class__.__name__} {label} {explainer_method} {reference_policy}")
-                            results_df = df_schema.copy()
-                            results_df['timestamp'].append(pd.Timestamp.now())
-                            results_df['base_explainer'].append(explainer_method)
-                            results_df['mr_classifier'].append(classifier.__class__.__name__)
-                            results_df['reference_policy'].append(reference_policy)
-                            results_df['label'].append(label)
-                            results_df['dataset'].append(dataset_name)
-                            for perturbation_policy, args in PERTURBATIONS.items():
-                                X_perturbed = get_perturbations(x, x_reference, budget=BUDGET, policy=perturbation_policy, **args)
+            for label in LABELS:
+                for explainer_method in EXPLAINERS:
+                    metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label)
+                    X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict, segmented_explanations_dict = (
+                        DataImporter.get_series_from_metadata(metadata_df)
+                    )
+                    for perturbation_policy, all_args in PERTURBATIONS.items():
+                        for combo in itertools.product(*all_args.values()):
+                            args = dict(zip(all_args.keys(), combo))
+                            for reference_policy in REFERENCE_POLICIES:
+                                df_results = copy.deepcopy(df_schema)
+                                X_reference = explanations_dict[reference_policy]
+                                X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+
+                                X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+
+                                X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+
+                                metric, norm_metric = compute_difference(classifier, X_test, X_perturbed, X_reference, BUDGET)
+                                df_results['f_minus_f0'].append(to_sep_list(metric))
+                                df_results['f_minus_f0-mean'].append(np.mean(metric))
+                                df_results['f_minus_f0-std'].append(np.std(metric))
+                                df_results['f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                df_results['f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                df_results['f_minus_f0_norm-std'].append(np.std(norm_metric))
+
+                                metric, norm_metric = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, BUDGET)
+                                df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
+                                df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
+                                df_results['p2p_f_minus_f0-std'].append(np.std(metric))
+                                df_results['p2p_f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                df_results['p2p_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                df_results['p2p_f_minus_f0_norm-std'].append(np.std(norm_metric))
+
+                                metric, norm_metric = compute_difference(classifier, X_test, X_segmented_perturbed, X_reference, BUDGET)
+                                df_results['segmented_f_minus_f0'].append(to_sep_list(metric))
+                                df_results['segmented_f_minus_f0-mean'].append(np.mean(metric))
+                                df_results['segmented_f_minus_f0-std'].append(np.std(metric))
+                                df_results['segmented_f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                df_results['segmented_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                df_results['segmented_f_minus_f0_norm-std'].append(np.std(norm_metric))
+
+
+                                df_results['timestamp'].append(pd.Timestamp.now())
+                                df_results['base_explainer'].append(explainer_method)
+                                df_results['mr_classifier'].append(classifier_name)
+                                df_results['reference_policy'].append(reference_policy)
+                                df_results['label'].append(label)
+                                df_results['dataset'].append(dataset_name)
+                                df_results['args'].append(f'{args}')
+                                df_results['perturbation_policy'].append(perturbation_policy)
+                                pd.DataFrame(df_results).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)

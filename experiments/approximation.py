@@ -39,6 +39,55 @@ from export_data import DataExporter
 from reference import REFERENCE_POLICIES
 
 
+def compute_explanations(classifier: MinirocketClassifier, explainer, configuration: tuple, reference_policy: str):
+    (dataset_name, mr_classifier_name, explainer_method, label) = configuration
+
+    explanation = list(explainer.explain_instances(x_target, y_target,
+                                                   classifier_explainer=explainer_method,
+                                                   reference_policy=reference_policy))[0]
+
+    ## Point to point explanation
+    explanation_p2p = classifier.explain_instances(explanation.get_instance(),
+                                                   explanation.get_reference(),
+                                                   explainer=explainer_method,
+                                                   reference_policy=reference_policy
+                                                   )
+    ## Segmented explanation
+    segmented_explanation = MinirocketSegmentedClassifier(mr_classifier, explanation.get_instance(),
+                                                          explanation.get_reference()).explain_instances(
+        explanation.get_instance(),
+        explanation.get_reference(),
+        explainer=explainer_method,
+        reference_policy=reference_policy
+    )
+    return explanation, explanation_p2p, segmented_explanation
+
+
+def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
+           complexity_p2p, complexity_segmented, local_accuracy, reference_policy):
+    r2s[reference_policy] = []
+    kendalls[reference_policy] = []
+    runtimes_backpropagated[reference_policy] = []
+    runtimes_p2p[reference_policy] = []
+    runtimes_segmented[reference_policy] = []
+    complexity_backpropagated[reference_policy] = []
+    complexity_p2p[reference_policy] = []
+    complexity_segmented[reference_policy] = []
+    local_accuracy[reference_policy] = 0
+
+    r2, kendall = compare_explanations(explanation, explanation_p2p)
+    r2s[reference_policy].append(r2)
+    kendalls[reference_policy].append(kendall)
+    runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
+    runtimes_p2p[reference_policy].append(explanation_p2p.get_runtime())
+    runtimes_segmented[reference_policy].append(segmented_explanation.get_runtime())
+    complexity_backpropagated[reference_policy].append(np.count_nonzero(explanation.explanation['coefficients']))
+    complexity_p2p[reference_policy].append(np.count_nonzero(explanation_p2p.explanation['coefficients']))
+    complexity_segmented[reference_policy].append(
+        np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space()))
+    (respects_local_accuracy, delta) = explanation.check_explanation_local_accuracy_wrt_minirocket()
+    local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
+
 if __name__ == '__main__':
     should_export_data = len(sys.argv) > 1 and sys.argv[1].lower() in ('1', "true", "yes")
     MR_CLASSIFIERS = [LogisticRegression(), RandomForestClassifier()]
@@ -53,7 +102,7 @@ if __name__ == '__main__':
                               [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
                             )
     }
-    EXPLAINERS = ['shap', 'stratoshap-k1' , 'extreme_feature_coalitions']
+    EXPLAINERS = ['shap', 'stratoshap-k1' , 'extreme_feature_coalitions', 'gradients', 'p2p_gradients']
     
 
     # In[42]:
@@ -85,14 +134,16 @@ if __name__ == '__main__':
             classifier.fit(X_train, y_train)
             y_test_pred = classifier.predict(X_test)
             DataExporter.save_classifier(classifier, dataset_name)
-            mr_classifier_name = f'{mr_classifier.__class__.__name__}'
+            mr_classifier_name = mr_classifier.__class__.__name__
             for explainer_method in EXPLAINERS:
                 for label in LABELS:
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
+                    print(f"Evaluating configuration {configuration}")
                     if should_export_data:
-                        exporter = DataExporter(dataset_name, mr_classifier.__class__.__name__, explainer_method, label)
+                        exporter = DataExporter(dataset_name, mr_classifier_name, explainer_method, label)
                         exporter.prepare_export(DATASET_FETCH_FUNCTIONS[dataset_name])
                         exporters_dict[configuration] = exporter
+
                     results_df_dict = {}
                     results_df = copy.deepcopy(df_schema.copy())
                     results_df['timestamp'].append(pd.Timestamp.now())
@@ -102,13 +153,12 @@ if __name__ == '__main__':
                     results_df['dataset'].append(dataset_name)
                     for reference_policy in REFERENCE_POLICIES:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
-                    idx = -1
                     dataset_measures = []
                     for idx in range(1, 2): #range(len(X_test)):
                         measures_for_instance = {}
-                        x_target = X_test[idx]
-                        y_target = y_test[idx]
                         explanations_for_instance = {}
+                        x_target = X_test[idx]
+                        y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
                         r2s = {}
                         kendalls = {}
                         runtimes_backpropagated = {}
@@ -120,47 +170,13 @@ if __name__ == '__main__':
                         local_accuracy = {}
                         for reference_policy in REFERENCE_POLICIES:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
-
-                            explanation = list(explainer.explain_instances(x_target, y_target,
-                                                                      classifier_explainer=explainer_method,
-                                                                      reference_policy=reference_policy))[0]
-                            ## Segmented explanation
-                            segmented_explanation = MinirocketSegmentedClassifier(mr_classifier, explanation.get_instance(),
-                                                           explanation.get_reference()).explain_instances(
-                                explanation.get_instance(),
-                                explanation.get_reference(),
-                                explainer=explainer_method,
-                                reference_policy=reference_policy
+                            explanation, explanation_p2p, segmented_explanation = (
+                                compute_explanations(classifier, explainer, configuration, reference_policy)
                             )
-                            r2s[reference_policy] = []
-                            kendalls[reference_policy] = []
-                            runtimes_backpropagated[reference_policy] = []
-                            runtimes_p2p[reference_policy] = []
-                            runtimes_segmented[reference_policy] = []
-                            complexity_backpropagated[reference_policy] = []
-                            complexity_p2p[reference_policy] = []
-                            complexity_segmented[reference_policy] = []
-                            local_accuracy[reference_policy] = 0
+                            explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
+                                                                           segmented_explanation)
 
-                            ## Point to point explanation
-                            explanation_p2p = classifier.explain_instances(explanation.get_instance(),
-                                                                           explanation.get_reference(),
-                                                                            explainer=explainer_method,
-                                                                            reference_policy=reference_policy
-                                                                           )
-
-                            r2, kendall = compare_explanations(explanation, explanation_p2p)
-                            r2s[reference_policy].append(r2)
-                            kendalls[reference_policy].append(kendall)
-                            runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
-                            runtimes_p2p[reference_policy].append(explanation_p2p.get_runtime())
-                            runtimes_segmented[reference_policy].append(segmented_explanation.get_runtime())
-                            complexity_backpropagated[reference_policy].append(np.count_nonzero(explanation.explanation['coefficients']))
-                            complexity_p2p[reference_policy].append(np.count_nonzero(explanation_p2p.explanation['coefficients']))
-                            complexity_segmented[reference_policy].append(np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space()))
-                            (respects_local_accuracy, delta) = explanation.check_explanation_local_accuracy_wrt_minirocket()
-                            local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
-                            explanations_for_instance[reference_policy] = (explanation, explanation_p2p, segmented_explanation)
+                            update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated, complexity_p2p, complexity_segmented, local_accuracy, reference_policy)
 
                             measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy], runtimes_backpropagated[reference_policy],
                                                                    runtimes_p2p[reference_policy], runtimes_segmented[reference_policy],
@@ -168,9 +184,9 @@ if __name__ == '__main__':
                                                                    complexity_segmented[reference_policy], local_accuracy[reference_policy])
                         dataset_measures.append(measures_for_instance)
                         if should_export_data:
-                            exporters_dict[configuration].export_instance_and_explanations(idx, y_target,
-                                                                                           features, configuration,
-                                                                                           explanations_for_instance)
+                            print(f"Exporting instance {idx} to {exporter.output_path} ({configuration})")
+                            exporter.export_instance_and_explanations(idx, y_target, features, explanations_for_instance)
+
                     for reference_policy in REFERENCE_POLICIES:
                         for instance_measures in dataset_measures:
                             (kendalls, r2s, runtimes_backpropagated,
