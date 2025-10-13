@@ -37,12 +37,17 @@ from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 
 
-def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> (np.array, np.array):
+def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> (np.array, np.array, float):
     X_test_expanded = np.repeat(X_test, budget, axis=0)
     X_reference_expanded = np.repeat(X_reference, budget, axis=0)
-    delta = classifier.predict(X_test_expanded) - classifier.predict(X_perturbed)
-    delta_norm = delta / (classifier.predict(X_test_expanded) - classifier.predict(X_reference_expanded))
-    return delta, delta_norm
+    y = classifier.predict(X_test_expanded)
+    probs_before = classifier.predict_proba(X_test_expanded)
+    probs_after = classifier.predict_proba(X_perturbed)
+    probs_reference = classifier.predict_proba(X_reference_expanded)
+    delta = probs_before[np.arange(len(y)), y] - probs_after[np.arange(len(y)), y]
+    delta_norm = delta / (probs_before[np.arange(len(y)), y]  - probs_reference[np.arange(len(y)), y])
+    delta_bin = np.abs(classifier.predict(X_test_expanded) - classifier.predict(X_perturbed))
+    return delta, delta_norm, np.mean(delta_bin)
 
 
 if __name__ == '__main__':
@@ -64,27 +69,32 @@ if __name__ == '__main__':
     }
     EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
     BUDGET = 100
-    PERTURBATIONS = {'gaussian' : {'percentile_cut': [10, 25, 50],
-                                   'sigma' : [0.05, 0.1, 0.2]
-                                   },
-                     'instance_to_reference': {'percentile_cut': [10, 25, 50],
-                                               'interpolation': [0.5, 1.0]
-                                              },
-                     'reference_to_instance': {'percentile_cut': [10, 25, 50],
-                                               'interpolation': [0.5, 1.0]
-                                               }
-                     }
+    PERTURBATIONS = {
+                    'instance_to_reference': {'percentile_cut': [90, 75, 50],
+                                  'interpolation': [0.5, 1.0],
+                                  'noise_level': [0.2, 0.4, 0.6, 0.8, 1.0], 'budget': [1]
+                    },
+                    'gaussian' : {'percentile_cut': [90, 75, 50],
+                                   'sigma' : [0.05, 0.1, 0.2],
+                                  'budget': [BUDGET]
+                    },
+                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
+                                               'interpolation': [0.5, 1.0],
+                                               'noise_level': [0.2, 0.4, 0.6, 0.8, 1.0],
+                                               'budget': [1]
+                    }
+    }
 
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
-                 'dataset': [], 'f_minus_f0' : [], 'f_minus_f0-mean': [], 'f_minus_f0-std': [],
+                 'dataset': [], 'f_minus_f0' : [], 'f_minus_f0-mean': [], 'f_minus_f0-std': [], 'f_minus_f0-change_ratio': [],
                  'f_minus_f0_norm': [], 'f_minus_f0_norm-mean': [], 'f_minus_f0_norm-std': [],
-                 'p2p_f_minus_f0': [], 'p2p_f_minus_f0-mean': [], 'p2p_f_minus_f0-std': [],
+                 'p2p_f_minus_f0': [], 'p2p_f_minus_f0-mean': [], 'p2p_f_minus_f0-std': [], 'p2p_f_minus_f0-change_ratio': [],
                  'p2p_f_minus_f0_norm': [], 'p2p_f_minus_f0_norm-mean': [], 'p2p_f_minus_f0_norm-std': [],
-                 'segmented_f_minus_f0': [], 'segmented_f_minus_f0-mean': [], 'segmented_f_minus_f0-std': [],
+                 'segmented_f_minus_f0': [], 'segmented_f_minus_f0-mean': [], 'segmented_f_minus_f0-std': [], 'segmented_f_minus_f0-change_ratio': [],
                  'segmented_f_minus_f0_norm': [], 'segmented_f_minus_f0_norm-mean': [], 'segmented_f_minus_f0_norm-std': [],
                  'args': [], 'perturbation_policy': [] }
     final_df = pd.DataFrame(df_schema.copy())
@@ -108,37 +118,40 @@ if __name__ == '__main__':
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]
                                 X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+                                                                X_reference, policy=perturbation_policy, **args)
 
                                 X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+                                                                X_reference, policy=perturbation_policy, **args)
 
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, budget=BUDGET, policy=perturbation_policy, **args)
+                                                                X_reference, policy=perturbation_policy, **args)
 
-                                metric, norm_metric = compute_difference(classifier, X_test, X_perturbed, X_reference, BUDGET)
+                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['f_minus_f0'].append(to_sep_list(metric))
                                 df_results['f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['f_minus_f0-std'].append(np.std(metric))
                                 df_results['f_minus_f0_norm'].append(to_sep_list(norm_metric))
                                 df_results['f_minus_f0_norm-mean'].append(np.mean(norm_metric))
                                 df_results['f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                df_results['f_minus_f0-change_ratio'].append(change_ratio)
 
-                                metric, norm_metric = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, BUDGET)
+                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
                                 df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['p2p_f_minus_f0-std'].append(np.std(metric))
                                 df_results['p2p_f_minus_f0_norm'].append(to_sep_list(norm_metric))
                                 df_results['p2p_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
                                 df_results['p2p_f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                df_results['p2p_f_minus_f0-change_ratio'].append(change_ratio)
 
-                                metric, norm_metric = compute_difference(classifier, X_test, X_segmented_perturbed, X_reference, BUDGET)
+                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_segmented_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['segmented_f_minus_f0'].append(to_sep_list(metric))
                                 df_results['segmented_f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['segmented_f_minus_f0-std'].append(np.std(metric))
                                 df_results['segmented_f_minus_f0_norm'].append(to_sep_list(norm_metric))
                                 df_results['segmented_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
                                 df_results['segmented_f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                df_results['segmented_f_minus_f0-change_ratio'].append(change_ratio)
 
 
                                 df_results['timestamp'].append(pd.Timestamp.now())
