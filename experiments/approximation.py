@@ -154,7 +154,7 @@ if __name__ == '__main__':
                     for reference_policy in REFERENCE_POLICIES:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
-                    for idx in range(1, 2): #range(len(X_test)):
+                    for idx in range(2, 3): #range(len(X_test)):
                         measures_for_instance = {}
                         explanations_for_instance = {}
                         x_target = X_test[idx]
