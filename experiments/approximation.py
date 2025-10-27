@@ -6,7 +6,6 @@ import os
 import sys
 
 import numpy as np
-import pandas
 import pandas as pd
 import copy
 
@@ -37,6 +36,7 @@ from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 from export_data import DataExporter
 from reference import REFERENCE_POLICIES
+
 
 
 def compute_explanations(classifier: MinirocketClassifier, explainer, configuration: tuple, reference_policy: str):
@@ -102,8 +102,11 @@ if __name__ == '__main__':
                               [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
                             )
     }
-    EXPLAINERS = ['shap', 'stratoshap-k1' , 'extreme_feature_coalitions', 'gradients', 'p2p_gradients']
-    
+    EXPLAINERS = ['gradients', 'extreme_feature_coalitions', 'shap', 'stratoshap-k1']
+    MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 1000}, 'startlight-c1': {'num_features': 1000},
+                              'startlight-c2': {'num_features': 1000}, 'startlight-c3': {'num_features': 1000},
+                              'cognitive-circles': {'num_features': 5000}
+                              }
 
     # In[42]:
     OUTPUT_FILE = 'approximation-results.csv'
@@ -131,7 +134,7 @@ if __name__ == '__main__':
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         for mr_classifier in MR_CLASSIFIERS:
             classifier = MinirocketClassifier(minirocket_features_classifier=mr_classifier)
-            classifier.fit(X_train, y_train)
+            classifier.fit(X_train, y_train, **MINIROCKET_PARAMS_DICT[dataset_name])
             y_test_pred = classifier.predict(X_test)
             DataExporter.save_classifier(classifier, dataset_name)
             mr_classifier_name = mr_classifier.__class__.__name__

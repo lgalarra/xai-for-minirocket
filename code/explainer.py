@@ -4,6 +4,8 @@ from typing import Generator
 
 import numpy as np
 import shap
+import numdifftools as nd
+
 
 import minirocket_multivariate_variable as mmv
 from minirocket_multivariate_variable import back_propagate_attribution
@@ -120,8 +122,6 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
             x_flat = target.reshape(-1)
             x_bar = X_background[0].reshape(-1)
             strato = SHAPStratum()
-            #strato.game = Game(lambda x : np.array([[classifier_fn(xi.reshape(1, -1)), 1.0-classifier_fn(xi.reshape(1, -1))]
-            #                                        for xi in x]), x_flat, x_bar)
             strato.game = Game(classifier_fn, x_flat, x_bar)
             strato.n = len(x_flat)
             strato.dim = 1
@@ -131,6 +131,14 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
         elif classifier_explainer == 'extreme_feature_coalitions':
             ## Extreme Feature Coalitions directly works with a single background instance
             return ExtremeFeatureCoalitions(classifier_fn, X_background).explain_instance
+        elif classifier_explainer == 'gradients':
+            def f(X_flat):
+                return classifier_fn(X_flat.reshape(X_background.shape)).ravel()
+            gradient_fn = nd.Jacobian(f, method='central', step=1e-5)
+            def g(x):
+                grad = gradient_fn(x).reshape(X_background.shape)
+                return grad
+            return g
         else:
             raise ValueError(f"classifier_explainer '{classifier_explainer}' not recognized.")
     elif inspect.isfunction(classifier_explainer):
