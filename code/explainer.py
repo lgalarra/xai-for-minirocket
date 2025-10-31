@@ -41,6 +41,7 @@ class ExtremeFeatureCoalitions:
         if x_target.shape[0] != 1:
             x_target = np.array([x_target])
         # Extreme Feature Coalitions
+        fx0 = self.clf_fn(self.x_reference)
         fsc = np.zeros(x_target.shape)
         fafc = np.zeros(self.x_reference.shape)
         for idx in np.ndindex(x_target.shape):
@@ -57,7 +58,7 @@ class ExtremeFeatureCoalitions:
         sum_fafc = np.sum(fafc)
         sum_fsc = np.sum(fsc)
         w = (self.clf_fn(x_target) + sum_fafc)/(sum_fsc + sum_fafc)
-        return w * fsc - (1-w) * fafc
+        return (w * fsc - (1-w) * fafc) - np.full(self.x_reference.shape, fx0 / self.x_reference.shape[-1])
 
 class Explanation:
     def __init__(self, explanation: dict):
@@ -132,13 +133,20 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
             ## Extreme Feature Coalitions directly works with a single background instance
             return ExtremeFeatureCoalitions(classifier_fn, X_background).explain_instance
         elif classifier_explainer == 'gradients':
-            def f(X_flat):
-                return classifier_fn(X_flat.reshape(X_background.shape)).ravel()
-            gradient_fn = nd.Jacobian(f, method='central', step=1e-5)
-            def g(x):
-                grad = gradient_fn(x).reshape(X_background.shape)
-                return grad
-            return g
+            def f(x_flat):
+                # Handle both single input and batched inputs (for vectorization)
+                if len(x_flat.shape) == 1:
+                    # Single input case
+                    return classifier_fn(np.array([x_flat.reshape(X_background[0].shape)]))[0]
+                else:
+                    # Batched inputs case (each row is a perturbed input)
+                    reshaped_inputs = np.array([xi.reshape(X_background[0].shape) for xi in x_flat])
+                    results = classifier_fn(reshaped_inputs)
+                    # Return results for each input
+                    return results
+
+            gradient_fn = nd.Gradient(f, method='central', step=1e-5)
+            return gradient_fn
         else:
             raise ValueError(f"classifier_explainer '{classifier_explainer}' not recognized.")
     elif inspect.isfunction(classifier_explainer):
@@ -192,6 +200,9 @@ class MinirocketExplainer:
             alphas = alphas * alpha_mask
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel)
+        if beta.shape[0] > 1:
+            beta = beta.T
+
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
                 'instance': x_target, 'instance_transformed': out_x['phi'][0],
                 'traces': out_x['traces'][0], 'reference': reference,

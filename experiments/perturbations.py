@@ -52,7 +52,21 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
 
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
-        "ford-a": [pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb"))]
+        "startlight-c1": [pickle.load(open("data/startlight-c1/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/startlight-c1/RandomForestClassifier.pkl", "rb"))
+                          ],
+#        "startlight-c2": [pickle.load(open("data/startlight-c2/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/startlight-c2/RandomForestClassifier.pkl", "rb"))
+#                          ],
+#        "startlight-c3": [pickle.load(open("data/startlight-c3/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/startlight-c3/RandomForestClassifier.pkl", "rb"))
+#                          ],
+#        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
+#                          ],
+        "ford-a": [pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
+                   pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
+                   ]
     }
     ## We will restrict to one or two
     REFERENCE_POLICIES = ['opposite_class_medoid', 'opposite_class_centroid',
@@ -86,7 +100,7 @@ if __name__ == '__main__':
     }
 
     # In[42]:
-    OUTPUT_FILE = 'perturbation-results.csv'
+    OUTPUT_FILE = 'perturbation-results-old.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -118,15 +132,20 @@ if __name__ == '__main__':
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]
                                 X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, policy=perturbation_policy, **args)
+                                                                explanations_dict[reference_policy],
+                                                                policy=perturbation_policy, **args)
 
                                 X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, policy=perturbation_policy, **args)
+                                                                p2p_explanations_dict[reference_policy],
+                                                                    policy=perturbation_policy, **args)
 
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                X_reference, policy=perturbation_policy, **args)
+                                                                segmented_explanations_dict[reference_policy],
+                                                                          policy=perturbation_policy, **args)
 
-                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
+                                                                                       X_reference,
+                                                                                       PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['f_minus_f0'].append(to_sep_list(metric))
                                 df_results['f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['f_minus_f0-std'].append(np.std(metric))

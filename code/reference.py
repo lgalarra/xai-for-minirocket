@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 from scipy.spatial.distance import cdist
 
-REFERENCE_POLICIES = ['opposite_class_medoid', 'opposite_class_centroid',
+REFERENCE_POLICIES = ['opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid',
                       'global_medoid', 'global_centroid', 'opposite_class_farthest_instance',
-                      'opposite_class_closest_instance']
+                      ]
 
 REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class",
                              'opposite_class_centroid': "Centroid of Opposite Class",

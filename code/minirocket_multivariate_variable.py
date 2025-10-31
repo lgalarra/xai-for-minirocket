@@ -12,8 +12,28 @@
 
 from numba import njit, prange, vectorize
 import numpy as np
-import numpy as np
-import math
+
+HEAVYSIDE_K = 40
+
+@njit(fastmath=True, cache=True)
+def _ppv_heaviside_mean(C, b, k):
+    """
+    Media de la 'Heaviside suavizada': s = sigmoid(k*(C-b)) y luego mean(s).
+    Mantiene el espíritu de PPV (proporción de activación), pero diferenciable.
+    """
+    z = k * (C - b)
+    s = 1.0 / (1.0 + np.exp(-z))
+    return s.mean()
+
+@vectorize("float32(float32,float32,int32)", nopython=True, cache=True)
+def _ppv_heaviside(C, b, k):
+    """
+    Media de la 'Heaviside suavizada': s = sigmoid(k*(C-b)) y luego mean(s).
+    Mantiene el espíritu de PPV (proporción de activación), pero diferenciable.
+    """
+    z = k * (C - b)
+    s = 1.0 / (1.0 + np.exp(-z))
+    return s
 
 def _as_TC(x):
     """Devuelve (T, C) dada una entrada (1,C,L) o (C,T) o (T,C)."""
@@ -188,7 +208,7 @@ def _fit_dilations(reference_length, num_features, max_dilations_per_kernel):
 def _quantiles(n):
     return np.array([(_ * ((np.sqrt(5) + 1) / 2)) % 1 for _ in range(1, n + 1)], dtype = np.float32)
 
-def fit(X, L, reference_length = None, num_features = 10_000, max_dilations_per_kernel = 32):
+def fit(X, L, reference_length = None, num_features = 10_000, max_dilations_per_kernel = 32, diff=False):
 
     # note in relation to dilation:
     # * change *reference_length* according to what is appropriate for your
@@ -229,7 +249,7 @@ def fit(X, L, reference_length = None, num_features = 10_000, max_dilations_per_
 
     biases = _fit_biases(X, L, num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, quantiles)
 
-    return num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases
+    return num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases, diff
 
 # _PPV(C, b).mean() returns PPV for vector C (convolution output) and scalar b (bias)
 @vectorize("float32(float32,float32)", nopython = True, cache = True)
@@ -239,14 +259,14 @@ def _PPV(a, b):
     else:
         return 0
 
-@njit("float32[:,:](float32[:,:],int32[:],Tuple((int32[:],int32[:],int32[:],int32[:],float32[:])))", fastmath = True, parallel = True, cache = True)
+@njit("float32[:,:](float32[:,:],int32[:],Tuple((int32[:],int32[:],int32[:],int32[:],float32[:],bool)))", fastmath = True, parallel = True, cache = True)
 def transform(X, L, parameters):
 
     num_examples = len(L)
 
     num_channels, _ = X.shape
 
-    num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases = parameters
+    num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases, diff = parameters
 
     # equivalent to:
     # >>> from itertools import combinations
@@ -344,7 +364,7 @@ def transform(X, L, parameters):
                 C = np.sum(C, axis = 0)
 
                 for feature_count in range(num_features_this_dilation):
-                    features[example_index, feature_index_start + feature_count] = _PPV(C, biases[feature_index_start + feature_count]).mean()
+                    features[example_index, feature_index_start + feature_count] = _ppv_heaviside_mean(C, biases[feature_index_start + feature_count], HEAVYSIDE_K) if diff else _PPV(C, biases[feature_index_start + feature_count]).mean()
 
                 feature_index_start = feature_index_end
 
@@ -372,7 +392,7 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
      channel_indices,
      dilations,
      num_features_per_dilation,
-     biases) = parameters
+     biases, diff) = parameters
 
     # Índices de tripletas (84 combinaciones) usados por MiniRocket
     indices = np.array((
@@ -462,7 +482,7 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
             # Para cada feature de esta dilatación (misma C_series, distinto bias)
             for fidx in range(feature_index_start, feature_index_end):
                 b = float(biases[fidx])
-                sigma = (C_series > b).astype(np.int8)
+                sigma = _ppv_heaviside(C_series, b, HEAVYSIDE_K) if diff else (C_series > b).astype(np.int8)
                 traces_list.append(dict(
                     sigma=sigma,
                     bias_b=b,
@@ -487,7 +507,7 @@ import numpy as np
 MINIROCKET_PARAMETERS = None  # parámetros de MiniRocket tras fit(...)
 
 def fit_minirocket_parameters(X_train, L_train=None, reference_length=None,
-                              num_features=10_000, max_dilations_per_kernel=32):
+                              num_features=10_000, max_dilations_per_kernel=32, diff=False):
     """
     Ajusta MiniRocket y guarda los parámetros globalmente.
     X_train: (n, C, L)  |  L_train: (n,)
@@ -502,7 +522,7 @@ def fit_minirocket_parameters(X_train, L_train=None, reference_length=None,
     # Apilar para tu fit original (C, sum(L))
     X_stack = X_train.transpose(1,0,2).reshape(C, -1).astype(np.float32)
     MINIROCKET_PARAMETERS = fit(X_stack, L_train, reference_length,
-                                num_features, max_dilations_per_kernel)
+                                num_features, max_dilations_per_kernel, diff)
     return MINIROCKET_PARAMETERS
 
 def _transform_batch(X, parameters):
@@ -534,7 +554,8 @@ def transform_prime(X_in, parameters=None):
     if parameters is None:
         if MINIROCKET_PARAMETERS is None:
             raise RuntimeError("MINIROCKET_PARAMETERS es None. Llama fit_minirocket_parameters(...) primero.")
-        parameters = MINIROCKET_PARAMETERS
+        else:
+            parameters = MINIROCKET_PARAMETERS
 
     # Normaliza a (n,C,L)
     X = X_in if X_in.ndim == 3 else X_in.reshape(1, *X_in.shape)
@@ -549,7 +570,7 @@ def transform_prime(X_in, parameters=None):
         return {'phi': phi, 'traces': traces}
 
     # Si hay batch, mantenemos trazas ligeras como antes (metadatos globales)
-    num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases = parameters
+    num_channels_per_combination, channel_indices, dilations, num_features_per_dilation, biases, diff = parameters
     traces_meta = dict(
         num_channels_per_combination = num_channels_per_combination,
         channel_indices              = channel_indices,
@@ -558,18 +579,10 @@ def transform_prime(X_in, parameters=None):
         biases                       = biases,
         input_length                 = int(L),
         num_channels                 = int(C),
+        differentiable               = diff,
     )
     return {'phi': phi, 'traces': traces_meta}
 
-@njit(fastmath=True, cache=True)
-def _ppv_heaviside_mean(C, b, k):
-    """
-    Media de la 'Heaviside suavizada': s = sigmoid(k*(C-b)) y luego mean(s).
-    Mantiene el espíritu de PPV (proporción de activación), pero diferenciable.
-    """
-    z = k * (C - b)
-    s = 1.0 / (1.0 + np.exp(-z))
-    return s.mean()
 
 @njit(fastmath=True, parallel=True, cache=True)
 def transform_soft_heaviside(X, L, parameters, k):

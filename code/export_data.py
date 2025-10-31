@@ -30,11 +30,17 @@ DESCRIPTIONS = {
     "cognitive-circles": [COGNITIVE_CIRCLES_CHANNELS[x] for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
 }
 
-CHANNELS = {'ford-a': ['C'], 'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]}
+CHANNELS = {'ford-a': ['C'],
+            'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
+            'startlight-c1': ['B'], 'startlight-c2': ['B'], 'startlight-c3': ['B']
+            }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
 #                           ('DR', 'radial_velocity'), ('Y', 'Y'), ('D', 'radius'),  ('A', 'acceleration')
-CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'Difficult']}
+CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'Difficult'],
+           'startlight-c1': ['Star Type 1', 'Other'], 'startlight-c2': ['Star Type 2', 'Other'],
+           'startlight-c3': ['Star Type 3', 'Other']
+           }
 
 METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}
 
@@ -45,7 +51,7 @@ def get_group_id(dataset_name, instance_id) -> int:
 
 def get_annotation(dataset_name, instance_id) -> str:
     if dataset_name == "ford-a":
-        return "instance_id"
+        return f"{instance_id}"
 
 
 class DataExporter(object):
@@ -131,7 +137,7 @@ class DataExporter(object):
             metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
             metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
 
-        print(f'Flusing {metadata_dict} in {self.output_path}')
+        print(f'Flushing {metadata_dict} in {self.output_path}')
         flush_metadata(metadata_dict, self.output_path)
 
     def export_metametadata(self):
