@@ -55,10 +55,10 @@ def _ensure_sigma_in_traces(traces):
         if "sigma" not in tr:
             conv = np.asarray(tr["conv_sum"], dtype=np.float64)  # (d,)
             b    = float(tr["bias_b"])
-            tr["sigma"] = (conv > b).astype(np.int8)
+            tr["sigma"] = (conv > b).astype(np.float64)
     return traces
 
-def compute_sigma_ref_from_x0(x0_raw, transform_prime):
+def compute_sigma_ref_from_x0(x0_raw, transform_prime, *params):
     """
     x0_raw: (1, C, L) o (T, C) o (C, T).
     Devuelve lista de arrays sigma_ref[k] (cada uno de longitud d_k) alineada con las firmas de transform_prime(x0).
@@ -69,7 +69,7 @@ def compute_sigma_ref_from_x0(x0_raw, transform_prime):
     else:
         x0_batch = x0_raw  # ya (1,C,L)
 
-    out0 = transform_prime(x0_batch)
+    out0 = transform_prime(x0_batch, parameters=params)
     traces0 = _ensure_sigma_in_traces(out0["traces"])
     sigma_ref = [tr0["sigma"] for tr0 in traces0]
     return sigma_ref
@@ -373,7 +373,7 @@ def transform(X, L, parameters):
 
     return features
 
-def _compute_sigma_traces_one(Xi_CL, parameters):
+def _compute_sigma_traces_one(Xi_CL, *parameters):
     """
     Xi_CL: (C, L)  (una sola instancia)
     Devuelve: lista de dicts (len = num_features). Cada dict contiene:
@@ -482,7 +482,7 @@ def _compute_sigma_traces_one(Xi_CL, parameters):
             # Para cada feature de esta dilatación (misma C_series, distinto bias)
             for fidx in range(feature_index_start, feature_index_end):
                 b = float(biases[fidx])
-                sigma = _ppv_heaviside(C_series, b, HEAVYSIDE_K) if diff else (C_series > b).astype(np.int8)
+                sigma = _ppv_heaviside(C_series, b, HEAVYSIDE_K) if diff else (C_series > b).astype(np.float64)
                 traces_list.append(dict(
                     sigma=sigma,
                     bias_b=b,
@@ -566,7 +566,7 @@ def transform_prime(X_in, parameters=None):
 
     # Si es una sola instancia, devolvemos trazas “ricas” por feature (lo que necesita propagate_luis)
     if n == 1:
-        traces = _compute_sigma_traces_one(X[0].astype(np.float32), parameters)
+        traces = _compute_sigma_traces_one(X[0].astype(np.float32), *parameters)
         return {'phi': phi, 'traces': traces}
 
     # Si hay batch, mantenemos trazas ligeras como antes (metadatos globales)
@@ -735,7 +735,8 @@ def back_propagate_attribution(
     *,
     sigma_ref=None,
     per_channel=False,
-    dt=None
+    dt=None,
+    params
 ):
     """
     Fiel a la corrección:
@@ -793,7 +794,7 @@ def back_propagate_attribution(
 
     traces_x = _ensure_sigma_in_traces(traces_x)
     if sigma_ref is None:
-        sigma_ref = compute_sigma_ref_from_x0(x0_tc, transform_prime)
+        sigma_ref = compute_sigma_ref_from_x0(x0_tc, transform_prime, *params)
 
     T, C = x_tc.shape
     beta = np.zeros((T, C if per_channel else 1), dtype=np.float64)
@@ -811,7 +812,7 @@ def back_propagate_attribution(
 
     traces0_all = None
     if per_channel:
-        traces0_all = transform_prime(x0_tc[None, ...])["traces"]
+        traces0_all = transform_prime(x0_tc[None, ...], parameters=params)["traces"]
 
     idx = np.arange(T, dtype=np.int64)
 
@@ -820,8 +821,10 @@ def back_propagate_attribution(
         if alpha_k == 0.0:
             continue
 
-        sigma_x  = np.asarray(tr["sigma"], dtype=np.int8)
-        sigma_0  = np.asarray(sigma_ref[k], dtype=np.int8)
+        #sigma_x  = np.asarray(tr["sigma"], dtype=np.int8)
+        #sigma_0  = np.asarray(sigma_ref[k], dtype=np.int8)
+        sigma_x = np.asarray(tr["sigma"], dtype=np.float64)
+        sigma_0  = np.asarray(sigma_ref[k], dtype=np.float64)
         delta_sig = sigma_x - sigma_0
         if not np.any(delta_sig):
             continue

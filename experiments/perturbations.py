@@ -84,17 +84,15 @@ if __name__ == '__main__':
     EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
     BUDGET = 100
     PERTURBATIONS = {
-                    'instance_to_reference': {'percentile_cut': [90, 75, 50],
-                                  'interpolation': [0.5, 1.0],
-                                  'noise_level': [0.2, 0.4, 0.6, 0.8, 1.0], 'budget': [1]
+                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
+                                  'interpolation': [0.2, 0.4, 0.6, 0.8, 1.0], 'budget': [1]
                     },
                     'gaussian' : {'percentile_cut': [90, 75, 50],
                                    'sigma' : [0.05, 0.1, 0.2],
                                   'budget': [BUDGET]
                     },
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
-                                               'interpolation': [0.5, 1.0],
-                                               'noise_level': [0.2, 0.4, 0.6, 0.8, 1.0],
+                                               'interpolation': [0.2, 0.4, 0.6, 0.8, 1.0],
                                                'budget': [1]
                     }
     }
@@ -119,15 +117,18 @@ if __name__ == '__main__':
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
+            print('Classifier', classifier_name)
             for label in LABELS:
                 for explainer_method in EXPLAINERS:
                     metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label)
                     X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict, segmented_explanations_dict = (
                         DataImporter.get_series_from_metadata(metadata_df)
                     )
+                    print('Label, explainer_method: ', label, explainer_method)
                     for perturbation_policy, all_args in PERTURBATIONS.items():
                         for combo in itertools.product(*all_args.values()):
                             args = dict(zip(all_args.keys(), combo))
+                            print('Perturbation', perturbation_policy, 'Args: ', args)
                             for reference_policy in REFERENCE_POLICIES:
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]

@@ -104,14 +104,14 @@ if __name__ == '__main__':
 #                              [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
 #                            )
     }
-    EXPLAINERS = ['extreme_feature_coalitions', 'gradients', 'shap', 'stratoshap-k1']
+    EXPLAINERS = ['gradients', 'extreme_feature_coalitions', 'shap', 'stratoshap-k1']
     MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 1000}, 'startlight-c1': {'num_features': 1000},
                               'startlight-c2': {'num_features': 1000}, 'startlight-c3': {'num_features': 1000},
                               'cognitive-circles': {'num_features': 5000}
                               }
 
     # In[42]:
-    OUTPUT_FILE = 'approximation-results-old.csv'
+    OUTPUT_FILE = 'approximation-results.csv'
     
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
         explanation_vector = explanation.get_attributions_as_single_vector()
@@ -142,6 +142,7 @@ if __name__ == '__main__':
             classifier = MinirocketClassifier(minirocket_features_classifier=mr_classifier)
             classifier.fit(X_train, y_train, **MINIROCKET_PARAMS_DICT[dataset_name])
             y_test_pred = classifier.predict(X_test)
+            print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")
             DataExporter.save_classifier(classifier, dataset_name)
 
             for explainer_method in EXPLAINERS:

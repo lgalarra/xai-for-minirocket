@@ -199,7 +199,7 @@ class MinirocketExplainer:
         if alpha_mask is not None:
             alphas = alphas * alpha_mask
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
-                                          per_channel=is_multichannel)
+                                          per_channel=is_multichannel, params=self.minirocket_params)
         if beta.shape[0] > 1:
             beta = beta.T
 
