@@ -92,26 +92,36 @@ def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmen
 
 if __name__ == '__main__':
     should_export_data = len(sys.argv) > 1 and sys.argv[1].lower() in ('1', "true", "yes")
+    datasets = None
+    if len(sys.argv) > 2:
+        datasets = sys.argv[2].split(',')
+
     MR_CLASSIFIERS = [LogisticRegression(), RandomForestClassifier()]
 
-    LABELS = ['training', 'predicted']
+    LABELS = ['predicted', 'training']
     DATASET_FETCH_FUNCTIONS = {
-#        "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
+        "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
         "startlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
         "startlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
         "startlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
-#        "cognitive-circles": ("get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
-#                              [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
-#                            )
+        "cognitive-circles": ("get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+                              [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
+                            )
     }
-    EXPLAINERS = ['gradients', 'extreme_feature_coalitions', 'shap', 'stratoshap-k1']
-    MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 1000}, 'startlight-c1': {'num_features': 1000},
-                              'startlight-c2': {'num_features': 1000}, 'startlight-c3': {'num_features': 1000},
-                              'cognitive-circles': {'num_features': 5000}
+    if datasets is not None:
+        DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets }
+
+    EXPLAINERS = ['shap', 'gradients', 'extreme_feature_coalitions', 'stratoshap-k1']
+    MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'startlight-c1': {'num_features': 500},
+                              'startlight-c2': {'num_features': 500}, 'startlight-c3': {'num_features': 500},
+                              'cognitive-circles': {'num_features': 1000}
                               }
 
     # In[42]:
-    OUTPUT_FILE = 'approximation-results.csv'
+    if datasets is None:
+        OUTPUT_FILE = 'approximation-results.csv'
+    else:
+        OUTPUT_FILE = f'approximation-results-{",".join(datasets)}.csv'
     
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
         explanation_vector = explanation.get_attributions_as_single_vector()
@@ -164,7 +174,8 @@ if __name__ == '__main__':
                     for reference_policy in REFERENCE_POLICIES:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
-                    for idx in range(2, 3): #range(len(X_test)):
+                    for idx in range(len(X_test)):
+                        print(f'Instance {idx} out of {len(X_test)}')
                         measures_for_instance = {}
                         explanations_for_instance = {}
                         x_target = X_test[idx]

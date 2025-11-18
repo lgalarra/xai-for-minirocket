@@ -105,7 +105,7 @@ class Explanation:
         return np.concatenate(results)
 
     def get_distributed_explanations_in_original_space(self):
-        print(self.explanation['coefficients'].shape, self.explanation['instance'].shape)
+        #print(self.explanation['coefficients'].shape, self.explanation['instance'].shape)
         if self.explanation['coefficients'].shape[-1] < self.explanation['instance'].shape[-1]:
             result = list()
             for channel in self.explanation['instance']:
@@ -203,14 +203,17 @@ class MinirocketExplainer:
         if beta.shape[0] > 1:
             beta = beta.T
 
+        y_ref_pred = self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0]
+        y_pred = self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0]
+
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
                 'instance': x_target, 'instance_transformed': out_x['phi'][0],
                 'traces': out_x['traces'][0], 'reference': reference,
                 'instance_label': y_label,
-                'reference_prediction': self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0],
-                'instance_prediction': self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0],
-                'reference_logit': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_label],
-                'instance_logit': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_label],
+                'reference_prediction': y_ref_pred,
+                'instance_prediction': y_pred,
+                'reference_logit': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_pred],
+                'instance_logit': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_pred],
                 'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
                 }
 

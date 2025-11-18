@@ -815,9 +815,11 @@ def back_propagate_attribution(
         traces0_all = transform_prime(x0_tc[None, ...], parameters=params)["traces"]
 
     idx = np.arange(T, dtype=np.int64)
-
+    #differences = 0.0
     for k, tr in enumerate(traces_x):
         alpha_k = float(alphas[k])
+        #print(f'alpha_{k} = {alpha_k}')
+        #cake = 0.0
         if alpha_k == 0.0:
             continue
 
@@ -870,6 +872,7 @@ def back_propagate_attribution(
                 contrib_t[pos] = alpha_k * (w_eff[pos] * dt_vec[pos]) / Wp
 
         if not per_channel:
+            #cake += contrib_t
             beta[:, 0] += contrib_t
         else:
             chans = tr.get("channels", list(range(C)))
@@ -900,10 +903,15 @@ def back_propagate_attribution(
                 if Ej <= 0:
                     share = contrib_t[j] / max(len(chans), 1)
                     for i_ch in chans:
+                        #cake += share
                         beta[j, i_ch] += share
                 else:
                     for i_ch in chans:
+                        #cake += contrib_t[j] * (e[j, i_ch] / Ej)
                         beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
+        #print(f'cake_{k}={cake}, difference : {alphas[k] - cake}')
+        #differences += alphas[k] - cake
+    #print(f'Differences: {differences}')
 
     return beta.T
 

@@ -85,14 +85,14 @@ if __name__ == '__main__':
     BUDGET = 100
     PERTURBATIONS = {
                     'instance_to_reference': {'percentile_cut': [50, 75, 90],
-                                  'interpolation': [0.2, 0.4, 0.6, 0.8, 1.0], 'budget': [1]
+                                  'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
                     'gaussian' : {'percentile_cut': [90, 75, 50],
-                                   'sigma' : [0.05, 0.1, 0.2],
+                                    'sigma' : [0.25, 0.5, 0.75, 1.0],
                                   'budget': [BUDGET]
                     },
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
-                                               'interpolation': [0.2, 0.4, 0.6, 0.8, 1.0],
+                                               'interpolation': [0.25, 0.5, 0.75, 1.0],
                                                'budget': [1]
                     }
     }
