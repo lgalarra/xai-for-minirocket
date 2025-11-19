@@ -32,13 +32,13 @@ DESCRIPTIONS = {
 
 CHANNELS = {'ford-a': ['C'],
             'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
-            'startlight-c1': ['B'], 'startlight-c2': ['B'], 'startlight-c3': ['B']
+            'starlight-c1': ['B'], 'starlight-c2': ['B'], 'startlight-c3': ['B']
             }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
 #                           ('DR', 'radial_velocity'), ('Y', 'Y'), ('D', 'radius'),  ('A', 'acceleration')
 CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'Difficult'],
-           'startlight-c1': ['Star Type 1', 'Other'], 'startlight-c2': ['Star Type 2', 'Other'],
+           'starlight-c1': ['Star Type 1', 'Other'], 'starlight-c2': ['Star Type 2', 'Other'],
            'startlight-c3': ['Star Type 3', 'Other']
            }
 
@@ -72,6 +72,11 @@ class DataExporter(object):
                                                      label_type)
         os.makedirs(output_folder, exist_ok=True)
         return output_folder
+
+    @staticmethod
+    def get_classifier_path(mr_classifier_name: str, dataset_name: str = None):
+        os.makedirs(f'data/{dataset_name}/', exist_ok=True)
+        return f'data/{dataset_name}/{mr_classifier_name}.pkl'
 
     @staticmethod
     def save_classifier(classifier: MinirocketClassifier, dataset_name: str = None):

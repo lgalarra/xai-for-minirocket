@@ -45,18 +45,19 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
     probs_after = classifier.predict_proba(X_perturbed)
     probs_reference = classifier.predict_proba(X_reference_expanded)
     delta = probs_before[np.arange(len(y)), y] - probs_after[np.arange(len(y)), y]
-    delta_norm = delta / (probs_before[np.arange(len(y)), y]  - probs_reference[np.arange(len(y)), y])
+    delta_instance_ref = (probs_before[np.arange(len(y)), y]  - probs_reference[np.arange(len(y)), y])
+    delta_norm = delta / delta_instance_ref
     delta_bin = np.abs(classifier.predict(X_test_expanded) - classifier.predict(X_perturbed))
     return delta, delta_norm, np.mean(delta_bin)
 
 
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
-        "startlight-c1": [pickle.load(open("data/startlight-c1/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/startlight-c1/RandomForestClassifier.pkl", "rb"))
+        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
                           ],
-#        "startlight-c2": [pickle.load(open("data/startlight-c2/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/startlight-c2/RandomForestClassifier.pkl", "rb"))
+#        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
 #                          ],
 #        "startlight-c3": [pickle.load(open("data/startlight-c3/LogisticRegression.pkl", "rb")),
 #                          pickle.load(open("data/startlight-c3/RandomForestClassifier.pkl", "rb"))
@@ -76,8 +77,8 @@ if __name__ == '__main__':
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
         "ford-a": "get_forda_for_classification()",
-        "startlight-c1": "get_starlightcurves_for_classification('1')",
-        "startlight-c2": "get_starlightcurves_for_classification('2')",
+        "starlight-c1": "get_starlightcurves_for_classification('1')",
+        "starlight-c2": "get_starlightcurves_for_classification('2')",
         "startlight-c3": "get_starlightcurves_for_classification('3')",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
@@ -87,10 +88,10 @@ if __name__ == '__main__':
                     'instance_to_reference': {'percentile_cut': [50, 75, 90],
                                   'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
-                    'gaussian' : {'percentile_cut': [90, 75, 50],
-                                    'sigma' : [0.25, 0.5, 0.75, 1.0],
-                                  'budget': [BUDGET]
-                    },
+                    #'gaussian' : {'percentile_cut': [90, 75, 50],
+                    #                'sigma' : [0.25, 0.5, 0.75, 1.0],
+                    #              'budget': [BUDGET]
+                    #},
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
                                                'interpolation': [0.25, 0.5, 0.75, 1.0],
                                                'budget': [1]
@@ -98,7 +99,7 @@ if __name__ == '__main__':
     }
 
     # In[42]:
-    OUTPUT_FILE = 'perturbation-results-old.csv'
+    OUTPUT_FILE = 'perturbation-results.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
