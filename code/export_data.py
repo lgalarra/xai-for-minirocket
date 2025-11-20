@@ -32,14 +32,14 @@ DESCRIPTIONS = {
 
 CHANNELS = {'ford-a': ['C'],
             'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
-            'starlight-c1': ['B'], 'starlight-c2': ['B'], 'startlight-c3': ['B']
+            'starlight-c1': ['B'], 'starlight-c2': ['B'], 'starlight-c3': ['B']
             }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
 #                           ('DR', 'radial_velocity'), ('Y', 'Y'), ('D', 'radius'),  ('A', 'acceleration')
 CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'Difficult'],
            'starlight-c1': ['Star Type 1', 'Other'], 'starlight-c2': ['Star Type 2', 'Other'],
-           'startlight-c3': ['Star Type 3', 'Other']
+           'starlight-c3': ['Star Type 3', 'Other']
            }
 
 METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}

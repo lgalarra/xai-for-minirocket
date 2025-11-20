@@ -121,8 +121,8 @@ MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = {
     "starlight-c2": {"LogisticRegression": 'pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb"))',
                       "RandomForestClassifier": 'pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))'
                       },
-    "startlight-c3": {"LogisticRegression": 'pickle.load(open("data/startlight-c3/LogisticRegression.pkl", "rb"))',
-                      "RandomForestClassifier": 'pickle.load(open("data/startlight-c3/RandomForestClassifier.pkl", "rb"))'
+    "starlight-c3": {"LogisticRegression": 'pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb"))',
+                      "RandomForestClassifier": 'pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))'
                       },
     "cognitive-circles": {"LogisticRegression": 'pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb"))',
                          "RandomForestClassifier": 'pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))'
@@ -133,7 +133,7 @@ MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = {
 }
 
 MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
-                          'starlight-c2': {'num_features': 500}, 'startlight-c3': {'num_features': 500},
+                          'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
                           'cognitive-circles': {'num_features': 1000}
                           }
 
@@ -152,7 +152,7 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                                                    reference_policy=reference_policy
                                                    )
     ## Segmented explanation
-    segmented_explanation = MinirocketSegmentedClassifier(mr_classifier, explanation.get_instance(),
+    segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, explanation.get_instance(),
                                                           explanation.get_reference()).explain_instances(
         explanation.get_instance(),
         explanation.get_reference(),
@@ -189,13 +189,16 @@ def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmen
     local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
     error[reference_policy].append(delta)
 
-def get_classifier(mr_classifier_name: str, dataset_name: str):
+def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClassifier:
     mr_params = MINIROCKET_PARAMS_DICT[dataset_name]
     mr_params['diff'] = (mr_classifier_name == 'LogisticRegression')
     model_path = DataExporter.get_classifier_path(mr_classifier_name, dataset_name)
     if os.path.exists(model_path):
+        print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
+        mmv.MINIROCKET_PARAMETERS = classifier.minirocket_params
     else:
+        print('Training new classifier...')
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
         classifier = MinirocketClassifier(minirocket_features_classifier=mr_classifier)
         classifier.fit(X_train, y_train, **MINIROCKET_PARAMS_DICT[dataset_name])
@@ -293,7 +296,7 @@ if __name__ == '__main__':
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
                     for idx in range(start, end_dataset):
-                        print(f'Instance {idx} out of {end_dataset - start}')
+                        print(f'Instance {idx} out of {end_dataset - start} (end={end_dataset})')
                         measures_for_instance = {}
                         explanations_for_instance = {}
                         x_target = X_test[idx]
