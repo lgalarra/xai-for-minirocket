@@ -3,6 +3,7 @@
 
 # In[41]:
 import os
+import random
 import sys
 
 import numpy as np
@@ -97,6 +98,21 @@ def parse_args():
         default=sys.maxsize-1,
         help="End index (default: -1)."
     )
+
+    parser.add_argument(
+        "--job_id",
+        type=int,
+        default=random.randint(1_000_000, 9_999_999),
+        help="Job identifier (int). Default: random."
+    )
+
+    parser.add_argument(
+        "--run_id",
+        type=int,
+        default=random.randint(1_000_000, 9_999_999),
+        help="Run identifier (int). Default: random."
+    )
+
 
     args = parser.parse_args()
 
