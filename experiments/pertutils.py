@@ -2,17 +2,18 @@ import numpy as np
 
 
 def get_gaussian_perturbation(X_target: np.ndarray, explanation: np.ndarray, **kwargs):
-    new_shape = list(X_target.shape)
     budget = kwargs['budget']
+    new_shape = list(explanation.shape)
     new_shape[0] = new_shape[0] * budget
-    if new_shape[0] == 1:
+    if X_target.shape[0] == 1:
         std = X_target.std()
     else:
         std = X_target.std(axis=0)
     X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
     threshold = np.percentile(np.abs(explanation), kwargs['percentile_cut'])
     percentile_mask = np.vectorize(lambda x: x if np.abs(x) > threshold else 0.0)
-    return X_target + percentile_mask(explanation)*X_perturb
+    explanation_mask = percentile_mask(explanation)
+    return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb
 
 
 def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,

@@ -5,6 +5,7 @@ import itertools
 # In[41]:
 import os
 import pickle
+import joblib
 import sys
 
 import numpy as np
@@ -56,12 +57,12 @@ if __name__ == '__main__':
         "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
                           pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
                           ],
-#        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
-#                          ],
-#        "startlight-c3": [pickle.load(open("data/startlight-c3/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/startlight-c3/RandomForestClassifier.pkl", "rb"))
-#                          ],
+        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
+                          ],
+        #"starlight-c3": [pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb")),
+        #                  pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))
+        #                  ],
 #        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
 #                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
 #                          ],
@@ -79,23 +80,23 @@ if __name__ == '__main__':
         "ford-a": "get_forda_for_classification()",
         "starlight-c1": "get_starlightcurves_for_classification('1')",
         "starlight-c2": "get_starlightcurves_for_classification('2')",
-        "startlight-c3": "get_starlightcurves_for_classification('3')",
+        "starlight-c3": "get_starlightcurves_for_classification('3')",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
     EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
-    BUDGET = 100
+    BUDGET = 10
     PERTURBATIONS = {
-                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
-                                  'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
-                    },
-                    #'gaussian' : {'percentile_cut': [90, 75, 50],
-                    #                'sigma' : [0.25, 0.5, 0.75, 1.0],
-                    #              'budget': [BUDGET]
+                    #'instance_to_reference': {'percentile_cut': [50, 75, 90],
+                    #              'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     #},
-                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
-                                               'interpolation': [0.25, 0.5, 0.75, 1.0],
-                                               'budget': [1]
-                    }
+                    'gaussian' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [0.25, 0.5, 0.75, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    # 'reference_to_instance': {'percentile_cut': [90, 75, 50],
+                    #                           'interpolation': [0.25, 0.5, 0.75, 1.0],
+                    #                           'budget': [1]
+                    #}
     }
 
     # In[42]:
@@ -133,14 +134,15 @@ if __name__ == '__main__':
                             for reference_policy in REFERENCE_POLICIES:
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]
+                                print('Backpropagated explanations')
                                 X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 explanations_dict[reference_policy],
                                                                 policy=perturbation_policy, **args)
-
+                                print('P2p explanations')
                                 X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 p2p_explanations_dict[reference_policy],
                                                                     policy=perturbation_policy, **args)
-
+                                print('Segmented explanations')
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 segmented_explanations_dict[reference_policy],
                                                                           policy=perturbation_policy, **args)
