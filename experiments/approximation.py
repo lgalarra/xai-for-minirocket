@@ -352,7 +352,7 @@ if __name__ == '__main__':
                              runtimes_p2p, runtimes_segmented,
                              complexity_backpropagated, complexity_p2p,
                              complexity_segmented, local_accuracy, error) = instance_measures[reference_policy]
-                            results_df_rp = results_df_dict[reference_policy]
+                            results_df_rp = copy.deepcopy(results_df_dict[reference_policy])
                             results_df_rp['reference_policy'].append(reference_policy)
                             results_df_rp['complexity'].append(to_sep_list(complexity_backpropagated))
                             results_df_rp['complexity-mean'].append(np.mean(complexity_backpropagated))
