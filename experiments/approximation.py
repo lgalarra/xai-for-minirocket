@@ -180,16 +180,17 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
 
 def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
            complexity_p2p, complexity_segmented, local_accuracy, error, reference_policy):
-    r2s[reference_policy] = []
-    error[reference_policy] = []
-    kendalls[reference_policy] = []
-    runtimes_backpropagated[reference_policy] = []
-    runtimes_p2p[reference_policy] = []
-    runtimes_segmented[reference_policy] = []
-    complexity_backpropagated[reference_policy] = []
-    complexity_p2p[reference_policy] = []
-    complexity_segmented[reference_policy] = []
-    local_accuracy[reference_policy] = 0
+    if reference_policy not in r2s:
+        r2s[reference_policy] = []
+        error[reference_policy] = []
+        kendalls[reference_policy] = []
+        runtimes_backpropagated[reference_policy] = []
+        runtimes_p2p[reference_policy] = []
+        runtimes_segmented[reference_policy] = []
+        complexity_backpropagated[reference_policy] = []
+        complexity_p2p[reference_policy] = []
+        complexity_segmented[reference_policy] = []
+        local_accuracy[reference_policy] = 0
 
     r2, kendall = compare_explanations(explanation, explanation_p2p)
     r2s[reference_policy].append(r2)
@@ -250,9 +251,11 @@ if __name__ == '__main__':
                             )
     }
     if datasets is not None:
-        DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets }
+        DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets}
     if labels is not None:
         LABELS = labels
+    if models is None:
+        models = MR_CLASSIFIERS.keys()
 
     EXPLAINERS = ['shap', 'gradients', 'extreme_feature_coalitions', 'stratoshap-k1']
 
@@ -288,7 +291,7 @@ if __name__ == '__main__':
     for dataset_name, (dataset_fetch_function, features) in DATASET_FETCH_FUNCTIONS.items():
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         end_dataset = min(len(X_test), end)
-        for mr_classifier_name in MR_CLASSIFIERS.keys():
+        for mr_classifier_name in models:
             classifier = get_classifier(mr_classifier_name, dataset_name)
             y_test_pred = classifier.predict(X_test)
             print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")
@@ -311,22 +314,22 @@ if __name__ == '__main__':
                     for reference_policy in REFERENCE_POLICIES:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
+                    r2s = {}
+                    kendalls = {}
+                    runtimes_backpropagated = {}
+                    runtimes_p2p = {}
+                    runtimes_segmented = {}
+                    complexity_backpropagated = {}
+                    complexity_p2p = {}
+                    complexity_segmented = {}
+                    local_accuracy = {}
+                    error = {}
                     for idx in range(start, end_dataset):
                         print(f'Instance {idx} out of {end_dataset - start} (end={end_dataset})')
                         measures_for_instance = {}
                         explanations_for_instance = {}
                         x_target = X_test[idx]
                         y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
-                        r2s = {}
-                        kendalls = {}
-                        runtimes_backpropagated = {}
-                        runtimes_p2p = {}
-                        runtimes_segmented = {}
-                        complexity_backpropagated = {}
-                        complexity_p2p = {}
-                        complexity_segmented = {}
-                        local_accuracy = {}
-                        error = {}
                         for reference_policy in REFERENCE_POLICIES:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
                             explanation, explanation_p2p, segmented_explanation = (
@@ -335,9 +338,12 @@ if __name__ == '__main__':
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
                                                                            segmented_explanation)
 
-                            update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated, complexity_p2p, complexity_segmented, local_accuracy, error, reference_policy)
+                            update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented,
+                                   complexity_backpropagated, complexity_p2p, complexity_segmented,
+                                   local_accuracy, error, reference_policy)
 
-                            measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy], runtimes_backpropagated[reference_policy],
+                            measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy],
+                                                                       runtimes_backpropagated[reference_policy],
                                                                    runtimes_p2p[reference_policy], runtimes_segmented[reference_policy],
                                                                    complexity_backpropagated[reference_policy], complexity_p2p[reference_policy],
                                                                    complexity_segmented[reference_policy], local_accuracy[reference_policy], error[reference_policy])
