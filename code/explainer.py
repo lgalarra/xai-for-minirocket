@@ -172,7 +172,7 @@ class MinirocketExplainer:
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
-                                 reference_policy, reference=None, alpha_mask=None) -> dict:
+                                 reference_policy, reference=None, top_alpha=None) -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -196,8 +196,12 @@ class MinirocketExplainer:
         alphas = classifier_explainer_fn(out_x['phi'])
         if alphas.shape[0] == 1:
             alphas = alphas[0]
-        if alpha_mask is not None:
-            alphas = alphas * alpha_mask
+        if top_alpha is not None: ## Just focus on the top alpha scores
+            maxids = (-alphas).argsort()[:top_alpha]
+            mask = np.zeros_like(alphas, dtype=np.float64)
+            for mid in maxids:
+                mask[mid] = alphas[mid]
+            alphas = mask
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel, params=self.minirocket_params)
         if beta.shape[0] > 1:
@@ -234,7 +238,7 @@ class MinirocketExplainer:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
-                          reference_policy = 'global_centroid', reference=None, alpha_mask=None) -> Generator:
+                          reference_policy = 'global_centroid', reference=None, top_alpha=None) -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
@@ -250,12 +254,12 @@ class MinirocketExplainer:
             yield Explanation(self._explain_single_instance(X, y, classifier_explainer,
                                                             reference_policy,
                                                             reference,
-                                                            alpha_mask=alpha_mask))
+                                                            top_alpha=top_alpha))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],
-                                                    classifier_explainer, reference_policy,
-                                                    reference, alpha_mask=alpha_mask))
+                                                                classifier_explainer, reference_policy,
+                                                                reference, top_alpha=top_alpha))
 
 class SegmentedMinirocketExplainer(MinirocketExplainer):
 

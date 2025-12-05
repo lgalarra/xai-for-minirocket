@@ -95,7 +95,9 @@ class DataExporter(object):
 
     def export_instance_and_explanations(self, instance_id, y_i,
                                          features: list,
-                                         explanations_dict: dict):
+                                         explanations_dict: dict,
+                                         studied_reference_policies=REFERENCE_POLICIES,
+                                         topk=None):
         (dataset_name, mr_classifier_name, explainer_method, label_type) = \
             (self.dataset_name, self.mr_classifier_name, self.explainer_method, self.label_type)
         metadata_dict = copy.deepcopy(METADATA_SCHEMA)
@@ -104,11 +106,15 @@ class DataExporter(object):
         (explanation, _, _) = explanations_dict[some_reference_policy]
         instance = explanation.get_instance()
         for channel_idx, channel in enumerate(instance):
-            for idx, reference_policy in enumerate(REFERENCE_POLICIES):
+            for idx, reference_policy in enumerate(studied_reference_policies):
                 (explanation, explanation_p2p, segmented_explanation) = explanations_dict[reference_policy]
                 betas = explanation.get_attributions_in_original_dimensions()
-                betas_p2p = explanation_p2p.get_attributions_in_original_dimensions()
-                betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
+                betas_p2p = None
+                betas_segmented = None
+                if explanation_p2p is not None:
+                    betas_p2p = explanation_p2p.get_attributions_in_original_dimensions()
+                if segmented_explanation is not None:
+                    betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
                 reference = explanation.explanation['reference']
                 reference_code = hash(reference[channel_idx].data.tobytes())
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
@@ -120,15 +126,36 @@ class DataExporter(object):
                 metadata_dict[f'reference_{idx}_label'].append(explanation.explanation['reference_prediction'])
                 metadata_dict[f'reference_{idx}_label_probability'].append(explanation.explanation['reference_logit'])
 
-                attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}.csv'
+                if topk is None:
+                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}.csv'
+                else:
+                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}-topk-{topk}.csv'
+
                 pd.Series(betas[channel_idx]).to_csv(attr_channel_filename, header=False)
                 metadata_dict[f'beta_{idx}_attributions'].append(attr_channel_filename)
-                attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}_{idx}.csv'
-                pd.Series(betas_p2p[channel_idx]).to_csv(attr_p2p_channel_filename, header=False)
+
+                if betas_p2p is not None:
+                    attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}_{idx}.csv'
+                    pd.Series(betas_p2p[channel_idx]).to_csv(attr_p2p_channel_filename, header=False)
+                else:
+                    attr_p2p_channel_filename = None
                 metadata_dict[f'beta_p2p_{idx}_attributions'].append(attr_p2p_channel_filename)
-                attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
-                pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
+
+                if betas_segmented is not None:
+                    attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
+                    pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
+                else:
+                    attr_segmented_channel_filename = None
                 metadata_dict[f'beta_segmented_{idx}_attributions'].append(attr_segmented_channel_filename)
+
+            for idx, _ in enumerate(REFERENCE_POLICIES):
+                if len(metadata_dict[f'reference_{idx}']) == 0:
+                    metadata_dict[f'reference_{idx}'].append(None)
+                    metadata_dict[f'reference_{idx}_label'].append(None)
+                    metadata_dict[f'reference_{idx}_label_probability'].append(None)
+                    metadata_dict[f'beta_{idx}_attributions'].append(None)
+                    metadata_dict[f'beta_p2p_{idx}_attributions'].append(None)
+                    metadata_dict[f'beta_segmented_{idx}_attributions'].append(None)
 
             channel_filename = f'{self.output_dataset_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_instance_{instance_id}.csv'
             metadata_dict['series'].append(channel_filename)

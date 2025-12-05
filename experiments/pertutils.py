@@ -10,8 +10,8 @@ def get_gaussian_perturbation(X_target: np.ndarray, explanation: np.ndarray, **k
     else:
         std = X_target.std(axis=0)
     X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
-    threshold = np.percentile(np.abs(explanation), kwargs['percentile_cut'])
-    percentile_mask = np.vectorize(lambda x: x if np.abs(x) > threshold else 0.0)
+    threshold = np.percentile(explanation, kwargs['percentile_cut'])
+    percentile_mask = np.vectorize(lambda x: x if x > max(threshold, 0.0) else 0.0)
     explanation_mask = percentile_mask(explanation)
     return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb
 

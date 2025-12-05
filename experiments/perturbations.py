@@ -42,33 +42,35 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
     X_test_expanded = np.repeat(X_test, budget, axis=0)
     X_reference_expanded = np.repeat(X_reference, budget, axis=0)
     y = classifier.predict(X_test_expanded)
+    y_pert = classifier.predict(X_perturbed)
     probs_before = classifier.predict_proba(X_test_expanded)
     probs_after = classifier.predict_proba(X_perturbed)
     probs_reference = classifier.predict_proba(X_reference_expanded)
     delta = probs_before[np.arange(len(y)), y] - probs_after[np.arange(len(y)), y]
     delta_instance_ref = (probs_before[np.arange(len(y)), y]  - probs_reference[np.arange(len(y)), y])
     delta_norm = delta / delta_instance_ref
-    delta_bin = np.abs(classifier.predict(X_test_expanded) - classifier.predict(X_perturbed))
+    delta_bin = np.abs(y - y_pert)
     return delta, delta_norm, np.mean(delta_bin)
 
 
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
-        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
-                          ],
-        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
-                          ],
+#        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
+#                          ],
+#        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
+#                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
+#                          ],
         #"starlight-c3": [pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb")),
         #                  pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))
         #                  ],
 #        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
 #                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
 #                          ],
-        "ford-a": [pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
+        "ford-a": [
+            #pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
                    pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
-                   ]
+        ]
     }
     ## We will restrict to one or two
     REFERENCE_POLICIES = ['opposite_class_medoid', 'opposite_class_centroid',
@@ -78,25 +80,25 @@ if __name__ == '__main__':
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
         "ford-a": "get_forda_for_classification()",
-        "starlight-c1": "get_starlightcurves_for_classification('1')",
-        "starlight-c2": "get_starlightcurves_for_classification('2')",
-        "starlight-c3": "get_starlightcurves_for_classification('3')",
-        "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        #"starlight-c1": "get_starlightcurves_for_classification('1')",
+        #"starlight-c2": "get_starlightcurves_for_classification('2')",
+        #"starlight-c3": "get_starlightcurves_for_classification('3')",
+        #"cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
     EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
     BUDGET = 10
     PERTURBATIONS = {
-                    #'instance_to_reference': {'percentile_cut': [50, 75, 90],
-                    #              'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
-                    #},
-                    'gaussian' : {'percentile_cut': [90, 75, 50],
-                                    'sigma' : [0.25, 0.5, 0.75, 1.0],
+#                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
+#                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
+#                    },
+                    'gaussian' : {'percentile_cut': [50, 75, 90],
+                                    'sigma' : [1.0, 0.75, 0.5, 0.25],
                                   'budget': [BUDGET]
                     },
-                    # 'reference_to_instance': {'percentile_cut': [90, 75, 50],
-                    #                           'interpolation': [0.25, 0.5, 0.75, 1.0],
-                    #                           'budget': [1]
-                    #}
+#                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
+#                                               'interpolation': [0.25, 0.5, 0.75, 1.0],
+#                                               'budget': [1]
+#                    }
     }
 
     # In[42]:

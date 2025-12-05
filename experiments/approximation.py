@@ -84,6 +84,22 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--propagate_top_features",
+        "-t",
+        type=int,
+        default=None,
+        help="A positive integer that defines whether only the top-k."
+    )
+
+    parser.add_argument(
+        "--reference_policy",
+        "-r",
+        type=lambda s: s.split(','),
+        default=None,
+        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance'"
+    )
+
+    parser.add_argument(
         "--start",
         "-s",
         type=int,
@@ -124,6 +140,8 @@ def parse_args():
         args.datasets,
         args.labels,
         args.models,
+        args.propagate_top_features,
+        args.reference_policy,
         args.start,
         args.end,
     )
@@ -154,27 +172,31 @@ MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num
                           }
 
 
-def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple, reference_policy: str):
+def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
+                         reference_policy: str, compute_all_explanations=False, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
                                                    classifier_explainer=explainer_method,
-                                                   reference_policy=reference_policy))[0]
+                                                   reference_policy=reference_policy, top_alpha=top_alpha))[0]
 
     ## Point to point explanation
-    explanation_p2p = classifier.explain_instances(explanation.get_instance(),
-                                                   explanation.get_reference(),
-                                                   explainer=explainer_method,
-                                                   reference_policy=reference_policy
-                                                   )
-    ## Segmented explanation
-    segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, explanation.get_instance(),
-                                                          explanation.get_reference()).explain_instances(
-        explanation.get_instance(),
-        explanation.get_reference(),
-        explainer=explainer_method,
-        reference_policy=reference_policy
-    )
+    explanation_p2p = None
+    segmented_explanation = None
+    if compute_all_explanations:
+        explanation_p2p = classifier.explain_instances(explanation.get_instance(),
+                                                       explanation.get_reference(),
+                                                       explainer=explainer_method,
+                                                       reference_policy=reference_policy
+                                                       )
+        ## Segmented explanation
+        segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, explanation.get_instance(),
+                                                              explanation.get_reference()).explain_instances(
+            explanation.get_instance(),
+            explanation.get_reference(),
+            explainer=explainer_method,
+            reference_policy=reference_policy
+        )
     return explanation, explanation_p2p, segmented_explanation
 
 
@@ -192,16 +214,16 @@ def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmen
         complexity_segmented[reference_policy] = []
         local_accuracy[reference_policy] = 0
 
-    r2, kendall = compare_explanations(explanation, explanation_p2p)
+    r2, kendall = (0.0, 0.0) if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
     r2s[reference_policy].append(r2)
     kendalls[reference_policy].append(kendall)
     runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
-    runtimes_p2p[reference_policy].append(explanation_p2p.get_runtime())
-    runtimes_segmented[reference_policy].append(segmented_explanation.get_runtime())
+    runtimes_p2p[reference_policy].append(-1.0 if explanation_p2p is None else explanation_p2p.get_runtime())
+    runtimes_segmented[reference_policy].append(-1.0 if segmented_explanation is None else segmented_explanation.get_runtime())
     complexity_backpropagated[reference_policy].append(np.count_nonzero(explanation.explanation['coefficients']))
-    complexity_p2p[reference_policy].append(np.count_nonzero(explanation_p2p.explanation['coefficients']))
+    complexity_p2p[reference_policy].append(-1.0 if explanation_p2p is None else np.count_nonzero(explanation_p2p.explanation['coefficients']))
     complexity_segmented[reference_policy].append(
-        np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space()))
+        -1.0 if segmented_explanation is None else np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space()))
     (respects_local_accuracy, delta) = explanation.check_explanation_local_accuracy_wrt_minirocket()
     local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
     error[reference_policy].append(delta)
@@ -228,6 +250,8 @@ if __name__ == '__main__':
         datasets,
         labels,
         models,
+        topk,
+        reference_policy,
         start,
         end
     ) = parse_args()
@@ -236,6 +260,8 @@ if __name__ == '__main__':
     print("datasets:", datasets)
     print("labels:", labels)
     print("models:", models)
+    print("topk:", topk)
+    print("reference_policy:", reference_policy)
     print("start:", start)
     print("end:", end)
 
@@ -256,6 +282,10 @@ if __name__ == '__main__':
         LABELS = labels
     if models is None:
         models = MR_CLASSIFIERS.keys()
+    if reference_policy is not None:
+        studied_reference_policies = reference_policy
+    else:
+        studied_reference_policies = REFERENCE_POLICIES
 
     EXPLAINERS = ['shap', 'gradients', 'extreme_feature_coalitions', 'stratoshap-k1']
 
@@ -267,6 +297,9 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(labels)}.csv')
     if models is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(models)}.csv')
+    if topk is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'topk-{topk}.csv')
+
     OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
     
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
@@ -311,7 +344,7 @@ if __name__ == '__main__':
                     results_df['mr_classifier'].append(mr_classifier_name)
                     results_df['label'].append(label)
                     results_df['dataset'].append(dataset_name)
-                    for reference_policy in REFERENCE_POLICIES:
+                    for reference_policy in studied_reference_policies:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
                     r2s = {}
@@ -333,7 +366,9 @@ if __name__ == '__main__':
                         for reference_policy in REFERENCE_POLICIES:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
                             explanation, explanation_p2p, segmented_explanation = (
-                                compute_explanations(x_target, y_target, classifier, explainer, configuration, reference_policy)
+                                compute_explanations(x_target, y_target, classifier, explainer, configuration,
+                                                     reference_policy, compute_all_explanations=(topk is None),
+                                                     top_alpha=topk)
                             )
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
                                                                            segmented_explanation)
@@ -350,9 +385,11 @@ if __name__ == '__main__':
                         dataset_measures.append(measures_for_instance)
                         if should_export_data:
                             print(f"Exporting instance {idx} to {exporter.output_path} ({configuration})")
-                            exporter.export_instance_and_explanations(idx, y_target, features, explanations_for_instance)
+                            exporter.export_instance_and_explanations(idx, y_target, features, explanations_for_instance,
+                                                                      studied_reference_policies=studied_reference_policies,
+                                                                      topk=topk)
 
-                    for reference_policy in REFERENCE_POLICIES:
+                    for reference_policy in studied_reference_policies:
                         for instance_measures in dataset_measures:
                             (kendalls, r2s, runtimes_backpropagated,
                              runtimes_p2p, runtimes_segmented,
