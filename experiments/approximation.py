@@ -297,8 +297,11 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(labels)}.csv')
     if models is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(models)}.csv')
+    if reference_policy is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(studied_reference_policies)}.csv')
     if topk is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'topk-{topk}.csv')
+        DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'{topk}.csv')
 
     OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
     

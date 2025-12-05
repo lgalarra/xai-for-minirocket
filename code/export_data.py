@@ -55,6 +55,8 @@ def get_annotation(dataset_name, instance_id) -> str:
 
 
 class DataExporter(object):
+
+    METADATA_FILE = 'metadata.csv'
     def __init__(self, dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str):
         self.output_path = DataExporter.create_output_folder_for_export(dataset_name,
                                                                         mr_classifier_name, explainer_method,
@@ -90,7 +92,7 @@ class DataExporter(object):
             os.makedirs(f'{self.output_path}/' + f, exist_ok=True)
             os.makedirs(f'{self.output_dataset_path}/' + f, exist_ok=True)
 
-        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.output_path}/metadata.csv', mode='w',
+        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.output_path}/{DataExporter.METADATA_FILE}', mode='a',
                                              index=False, header=True)
 
     def export_instance_and_explanations(self, instance_id, y_i,

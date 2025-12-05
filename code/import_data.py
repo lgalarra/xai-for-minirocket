@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from export_data import CHANNELS
 from reference import REFERENCE_POLICIES
+from export_data import DataExporter
 
 
 class DataImporter:
@@ -17,12 +18,8 @@ class DataImporter:
 
     def get_metadata(self, classifier_name, explainer_method, label) -> pd.DataFrame:
         attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
-        return pd.read_csv(f"{attributions_path}/metadata.csv")
+        return pd.read_csv(f"{attributions_path}/{DataExporter.METADATA_FILE}")
 
-    def fetch_computed_attributions(self, instance_id, classifier_name, label, reference_policy,
-                                    explainer_method, type='backpropagated'):
-        attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
-        metadata_path = f"{attributions_path}/metadata.csv"
 
     @staticmethod
     def get_series_from_metadata(metadata_df):
