@@ -61,6 +61,7 @@ class DataExporter(object):
         self.output_path = DataExporter.create_output_folder_for_export(dataset_name,
                                                                         mr_classifier_name, explainer_method,
                                                                         label_type)
+        self.metadata_file = f'{self.output_path}/{DataExporter.METADATA_FILE}'
         self.output_dataset_path = 'data/' + dataset_name
         self.dataset_name = dataset_name
         self.mr_classifier_name = mr_classifier_name
@@ -92,7 +93,7 @@ class DataExporter(object):
             os.makedirs(f'{self.output_path}/' + f, exist_ok=True)
             os.makedirs(f'{self.output_dataset_path}/' + f, exist_ok=True)
 
-        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.output_path}/{DataExporter.METADATA_FILE}', mode='a',
+        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.metadata_file}', mode='w',
                                              index=False, header=True)
 
     def export_instance_and_explanations(self, instance_id, y_i,
@@ -171,8 +172,8 @@ class DataExporter(object):
             metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
             metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
 
-        print(f'Flushing {metadata_dict} in {self.output_path}')
-        flush_metadata(metadata_dict, self.output_path)
+        print(f'Flushing {metadata_dict} in {self.metadata_file}')
+        flush_metadata(metadata_dict, self.metadata_file)
 
     def export_metametadata(self):
         metametadata = {}
@@ -188,8 +189,8 @@ def extract_dataset_name(dataset_name: str) -> str:
     return re.sub(r'-c\d+$', '',  dataset_name)
 
 
-def flush_metadata(metadata_entries: dict, folder_path: str):
-    pd.DataFrame(metadata_entries).to_csv(f'{folder_path}/metadata.csv', mode='a', index=False, header=False)
+def flush_metadata(metadata_entries: dict, output_path: str):
+    pd.DataFrame(metadata_entries).to_csv(output_path, mode='a', index=False, header=False)
 
 def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str) -> str:
     return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type

@@ -301,9 +301,11 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(studied_reference_policies)}.csv')
     if topk is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'topk-{topk}.csv')
-        DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'{topk}.csv')
+        DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'-{topk}.csv')
 
-    OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
+    if end != -1:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
+        DataExporter.METADATA_FILE.replace('.csv', f'-{start}-{end}.csv')
     
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
         explanation_vector = explanation.get_attributions_as_single_vector()
