@@ -296,7 +296,7 @@ if __name__ == '__main__':
     else:
         studied_reference_policies = REFERENCE_POLICIES
 
-    EXPLAINERS = ['shap', 'gradients', 'extreme_feature_coalitions', 'stratoshap-k1']
+    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
 
     # In[42]:
     OUTPUT_FILE = 'approximation-results.csv'
