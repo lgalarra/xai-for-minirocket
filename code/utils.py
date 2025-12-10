@@ -19,6 +19,9 @@ from sktime.datasets import load_UCR_UEA_dataset
 COGNITIVE_CIRCLES_CHANNELS = dict([('X', 'X coordinate'), ('V', 'Velocity'), ('VA', 'Angular Velocity'),
  ('DR', 'Radial Velocity'), ('Y', 'Y'), ('D', 'Radius'), ('A', 'Acceleration')])
 
+COGNITIVE_CIRCLES_BASIC_CHANNELS = dict([('X', 'X coordinate'), ('V', 'Velocity')])
+
+
 COGNITIVE_CIRCLES_UNITS = {'X': 'pixel', 'Y': 'pixel', 'V': 'pixel/s', 'VA': 'radians/s^2', 'DR': 'pixel/s^2',
                            'D': 'pixel', 'A': 'pixel/s^2'}
 
@@ -71,6 +74,14 @@ def export_univ_tmc(s, columns, suffix, folder='data'):
 
 def univariate_series_transform(X):
     return X.to_numpy().astype(np.float32).reshape(-1, 1, X.shape[1])
+
+def get_abnormal_hearbeat_for_classification(target_class=None):
+    X, y = load_UCR_UEA_dataset(name="AbnormalHeartbeat", return_X_y=True)
+    X = X.iloc[:, 0].apply(pd.Series)
+    y = np.where(y != target_class, 0, 1)  # Asegura etiquetas 0/1
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return (univariate_series_transform(X_train), y_train), (univariate_series_transform(X_test), y_test)
+
 
 def get_starlightcurves_for_classification(target_class=None):
     X, y = load_UCR_UEA_dataset(name="StarLightCurves", return_X_y=True)

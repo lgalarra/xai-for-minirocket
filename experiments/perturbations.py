@@ -27,6 +27,7 @@ import importlib
 
 import minirocket_multivariate_variable as mmv
 from import_data import DataImporter
+from reference import REFERENCE_POLICIES
 
 importlib.reload(mmv)
 from sklearn.linear_model import LogisticRegression
@@ -72,10 +73,6 @@ if __name__ == '__main__':
                    pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
         ]
     }
-    ## We will restrict to one or two
-    REFERENCE_POLICIES = ['opposite_class_medoid', 'opposite_class_centroid',
-                          'global_medoid', 'global_centroid', 'opposite_class_farthest_instance',
-                          'opposite_class_closest_instance']
 
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {

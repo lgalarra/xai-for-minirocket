@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import os
 import re
 
@@ -119,7 +120,7 @@ class DataExporter(object):
                 if segmented_explanation is not None:
                     betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
                 reference = explanation.explanation['reference']
-                reference_code = hash(reference[channel_idx].data.tobytes())
+                reference_code = hashlib.md5(reference[channel_idx].data.tobytes())
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
                 metadata_dict[f'reference_{idx}'].append(reference_filename)
 

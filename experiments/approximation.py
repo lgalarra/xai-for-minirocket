@@ -33,7 +33,8 @@ importlib.reload(mmv)
 from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
-                   get_starlightcurves_for_classification, COGNITIVE_CIRCLES_CHANNELS,
+                   get_starlightcurves_for_classification,
+                   get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS, COGNITIVE_CIRCLES_BASIC_CHANNELS,
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
@@ -148,27 +149,44 @@ def parse_args():
 
 MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression, 'RandomForestClassifier': RandomForestClassifier}
 
-MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = {
-    "starlight-c1": {"LogisticRegression": 'pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb"))',
-                      "RandomForestClassifier": 'pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))'
-                      },
-    "starlight-c2": {"LogisticRegression": 'pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb"))',
-                      "RandomForestClassifier": 'pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))'
-                      },
-    "starlight-c3": {"LogisticRegression": 'pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb"))',
-                      "RandomForestClassifier": 'pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))'
-                      },
-    "cognitive-circles": {"LogisticRegression": 'pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb"))',
-                         "RandomForestClassifier": 'pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))'
-                         },
-    "ford-a": {"LogisticRegression": 'pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb"))',
-               "RandomForestClassifier": 'pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))'
-               }
+DATASET_FETCH_FUNCTIONS = {
+    "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
+    "abnormal-heartbeat-c0": ("get_abnormal_hearbeat_for_classification('0')", [('A', 'Amplitude Change')]),
+    "abnormal-heartbeat-c1": ("get_abnormal_hearbeat_for_classification('1')", [('A', 'Amplitude Change')]),
+    "abnormal-heartbeat-c2": ("get_abnormal_hearbeat_for_classification('2')", [('A', 'Amplitude Change')]),
+    "abnormal-heartbeat-c3": ("get_abnormal_hearbeat_for_classification('3')", [('A', 'Amplitude Change')]),
+    "abnormal-heartbeat-c4": ("get_abnormal_hearbeat_for_classification('4')", [('A', 'Amplitude Change')]),
+    "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
+    "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
+    "starlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
+    "cognitive-circles": (
+        "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        [(x, COGNITIVE_CIRCLES_BASIC_CHANNELS[x]) for x in
+         cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles') if x in COGNITIVE_CIRCLES_BASIC_CHANNELS]
+        )
 }
+
+def build_map_of_already_trained_classifiers(datasets: list, classifiers):
+    return {dataset : {classifier : f'pickle.load(open("data/{dataset}/{classifier}.pkl", "rb"))'
+                       for classifier in classifiers}
+            for dataset in datasets
+            }
+
+MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(['starlight-c1', 'starlight-c2', 'starlight-c3',
+                                             'abnormal-hearbeat-c0', 'abnormal-hearbeat-c1'
+                                          'abnormal-hearbeat-c2', 'abnormal-hearbeat-c3',
+                                          'abnormal-hearbeat-c4', 'ford-a', 'cognitive-circles'],
+                                                                                     ['LogisticRegression', 'RandomForestClassifier'])
+
 
 MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
                           'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
-                          'cognitive-circles': {'num_features': 1000}
+                          'cognitive-circles': {'num_features': 1000},
+                          'abnormal-heartbeat-c0' : {'num_features': 1000},
+                          'abnormal-heartbeat-c1' : {'num_features': 1000},
+                          'abnormal-heartbeat-c2' : {'num_features': 1000},
+                          'abnormal-heartbeat-c3' : {'num_features': 1000},
+                            'abnormal-heartbeat-c4' : {'num_features': 1000},
                           }
 
 
@@ -267,15 +285,6 @@ if __name__ == '__main__':
 
 
     LABELS = ['predicted', 'training']
-    DATASET_FETCH_FUNCTIONS = {
-        "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
-        "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
-        "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
-        "starlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
-        "cognitive-circles": ("get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
-                              [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
-                            )
-    }
     if datasets is not None:
         DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets}
     if labels is not None:
