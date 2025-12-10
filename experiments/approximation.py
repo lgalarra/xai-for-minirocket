@@ -85,6 +85,14 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--explainers",
+        "-E",
+        type=lambda s: s.split(','),
+        default=None,
+        help="Comma-separated list of explainers."
+    )
+
+    parser.add_argument(
         "--propagate_top_features",
         "-t",
         type=int,
@@ -141,6 +149,7 @@ def parse_args():
         args.datasets,
         args.labels,
         args.models,
+        args.explainers,
         args.propagate_top_features,
         args.reference_policy,
         args.start,
@@ -268,6 +277,7 @@ if __name__ == '__main__':
         datasets,
         labels,
         models,
+        explainers,
         topk,
         reference_policy,
         start,
@@ -278,6 +288,7 @@ if __name__ == '__main__':
     print("datasets:", datasets)
     print("labels:", labels)
     print("models:", models)
+    print("explainers:", explainers)
     print("topk:", topk)
     print("reference_policy:", reference_policy)
     print("start:", start)
@@ -285,18 +296,21 @@ if __name__ == '__main__':
 
 
     LABELS = ['predicted', 'training']
+    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
+
     if datasets is not None:
         DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets}
     if labels is not None:
         LABELS = labels
     if models is None:
         models = MR_CLASSIFIERS.keys()
+    if explainers is None:
+        explainers = EXPLAINERS
     if reference_policy is not None:
         studied_reference_policies = reference_policy
     else:
         studied_reference_policies = REFERENCE_POLICIES
 
-    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
 
     # In[42]:
     OUTPUT_FILE = 'approximation-results.csv'
@@ -308,6 +322,9 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(models)}.csv')
     if reference_policy is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(studied_reference_policies)}.csv')
+    if explainers is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(explainers)}.csv')
+
     if topk is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'topk-{topk}.csv')
         DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'-{topk}.csv')
@@ -342,7 +359,7 @@ if __name__ == '__main__':
             classifier = get_classifier(mr_classifier_name, dataset_name)
             y_test_pred = classifier.predict(X_test)
             print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")
-            for explainer_method in EXPLAINERS:
+            for explainer_method in explainers:
                 for label in LABELS:
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
                     print(f"Evaluating configuration {configuration}")
