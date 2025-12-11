@@ -211,16 +211,16 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
     explanation_p2p = None
     segmented_explanation = None
     if compute_all_explanations:
-        explanation_p2p = classifier.explain_instances(explanation.get_instance(),
-                                                       explanation.get_reference(),
+        reference = explanation.get_reference()
+        instance = explanation.get_instance()
+        explanation_p2p = classifier.explain_instances(instance,
+                                                       reference,
                                                        explainer=explainer_method,
                                                        reference_policy=reference_policy
                                                        )
         ## Segmented explanation
-        segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, explanation.get_instance(),
-                                                              explanation.get_reference()).explain_instances(
-            explanation.get_instance(),
-            explanation.get_reference(),
+        segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, instance,
+                                                              reference).explain_instances(instance, reference,
             explainer=explainer_method,
             reference_policy=reference_policy
         )

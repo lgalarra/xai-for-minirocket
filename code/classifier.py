@@ -70,9 +70,10 @@ class MinirocketClassifier:
     def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray,
                                            explainer='shap', reference_policy = 'global_centroid'):
         start = time.perf_counter()
-        y_label = self.classifier.predict(self.minirocket_transform(x_target)['phi'])[0]
+        phi = self.minirocket_transform(x_target)['phi']
+        y_label = self.classifier.predict(phi)[0]
 
-
+        instance_logits = self.classifier.predict_proba(phi)
         classifier_explainer_fn = get_classifier_explainer(explainer,
                                                            lambda x: self.predict_proba(np.array([xi.reshape(x_target.shape) for xi in x]))[:,y_label],
                                                            X_background=np.array([reference.reshape(-1)]),
@@ -81,12 +82,12 @@ class MinirocketClassifier:
 
         return {'coefficients': alphas.reshape(x_target.shape), 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
-                'instance_logits': self.predict_proba(x_target.reshape(1, -1))[:,y_label],
+                'instance_logits': instance_logits[:,y_label],
                 'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
                 }
 
     def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap',
-                          reference_policy = 'global_centroid'):
+                          reference_policy='global_centroid'):
         explanations = []
         if len(X.shape) == 2:
             return Explanation(self.explain_instance_on_original_space(X, X_reference, explainer, reference_policy))
