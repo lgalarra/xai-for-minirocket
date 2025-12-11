@@ -1,14 +1,14 @@
 import numpy as np
 
 
-def get_gaussian_perturbation(X_target: np.ndarray, explanation: np.ndarray, **kwargs):
+def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanation: np.ndarray, **kwargs):
     budget = kwargs['budget']
     new_shape = list(explanation.shape)
     new_shape[0] = new_shape[0] * budget
     if X_target.shape[0] == 1:
-        std = X_target.std()
+        std = (X_target - X_to).std()
     else:
-        std = X_target.std(axis=0)
+        std = (X_target - X_to).std(axis=0)
     X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
     threshold = np.percentile(explanation, kwargs['percentile_cut'])
     percentile_mask = np.vectorize(lambda x: x if x > max(threshold, 0.0) else 0.0)
@@ -34,7 +34,7 @@ def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, *
 
 def get_perturbations(X_target, X_references, X_explanations, policy='gaussian', **args):
     if policy == 'gaussian':
-        return get_gaussian_perturbation(X_target=X_target, explanation=X_explanations, **args)
+        return get_gaussian_perturbation(X_target=X_target, X_to=X_references, explanation=X_explanations, **args)
     elif policy == 'instance_to_reference':
         return get_reference_perturbation(xfrom=X_target, xto=X_references, explanation=X_explanations,
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)
