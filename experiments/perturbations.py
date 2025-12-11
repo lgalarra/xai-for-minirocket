@@ -69,8 +69,8 @@ if __name__ == '__main__':
 #                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
 #                          ],
         "ford-a": [
-            #pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
-                   pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
+            pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
+            #       pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
         ]
     }
 
@@ -82,7 +82,7 @@ if __name__ == '__main__':
         #"starlight-c3": "get_starlightcurves_for_classification('3')",
         #"cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
-    EXPLAINERS = ['shap', 'extreme_feature_coalitions', 'stratoshap-k1']
+    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
     BUDGET = 10
     PERTURBATIONS = {
 #                    'instance_to_reference': {'percentile_cut': [50, 75, 90],

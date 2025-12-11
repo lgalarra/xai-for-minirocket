@@ -195,7 +195,7 @@ MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num
                           'abnormal-heartbeat-c1' : {'num_features': 1000},
                           'abnormal-heartbeat-c2' : {'num_features': 1000},
                           'abnormal-heartbeat-c3' : {'num_features': 1000},
-                            'abnormal-heartbeat-c4' : {'num_features': 1000},
+                          'abnormal-heartbeat-c4' : {'num_features': 1000},
                           }
 
 
