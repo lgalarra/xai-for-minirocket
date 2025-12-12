@@ -138,11 +138,21 @@ def parse_args():
         help="Run identifier (int). Default: random."
     )
 
+    parser.add_argument(
+        "--p2p_explanations",
+        "-p",
+        type=str,
+        default="yes",
+        choices=["yes", "no", "true", "false", "1", "0"],
+        help="Whether to compute the p2p explanations (yes/no)."
+    )
+
 
     args = parser.parse_args()
 
     # post-processing for boolean
     should_export_data = args.dump_data.lower() in ("yes", "true", "1")
+    compute_p2p_explanations = args.p2p_explanations.lower() in ("yes", "true", "1")
 
     return (
         should_export_data,
@@ -154,6 +164,7 @@ def parse_args():
         args.reference_policy,
         args.start,
         args.end,
+        compute_p2p_explanations
     )
 
 MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression, 'RandomForestClassifier': RandomForestClassifier}
@@ -200,7 +211,7 @@ MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num
 
 
 def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
-                         reference_policy: str, compute_all_explanations=False, top_alpha=None):
+                         reference_policy: str, compute_p2p_explanations=True, compute_segmented_explanations=True, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
@@ -208,22 +219,27 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                                                    reference_policy=reference_policy, top_alpha=top_alpha))[0]
 
     ## Point to point explanation
-    explanation_p2p = None
-    segmented_explanation = None
-    if compute_all_explanations:
-        reference = explanation.get_reference()
-        instance = explanation.get_instance()
+    reference = explanation.get_reference()
+    instance = explanation.get_instance()
+    if compute_p2p_explanations:
         explanation_p2p = classifier.explain_instances(instance,
                                                        reference,
                                                        explainer=explainer_method,
                                                        reference_policy=reference_policy
                                                        )
+    else:
+        explanation_p2p = None
+
+    if compute_segmented_explanations:
         ## Segmented explanation
         segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, instance,
                                                               reference).explain_instances(instance, reference,
             explainer=explainer_method,
             reference_policy=reference_policy
         )
+    else:
+        segmented_explanation = None
+
     return explanation, explanation_p2p, segmented_explanation
 
 
@@ -281,7 +297,8 @@ if __name__ == '__main__':
         topk,
         reference_policy,
         start,
-        end
+        end,
+        compute_p2p_explanations
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -293,6 +310,7 @@ if __name__ == '__main__':
     print("reference_policy:", reference_policy)
     print("start:", start)
     print("end:", end)
+    print("compute_p2p_explanations:", compute_p2p_explanations)
 
 
     LABELS = ['predicted', 'training']
@@ -398,7 +416,9 @@ if __name__ == '__main__':
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
                             explanation, explanation_p2p, segmented_explanation = (
                                 compute_explanations(x_target, y_target, classifier, explainer, configuration,
-                                                     reference_policy, compute_all_explanations=(topk is None),
+                                                     reference_policy,
+                                                     compute_p2p_explanations=(topk is None and compute_p2p_explanations),
+                                                     compute_segmented_explanations=(topk is None),
                                                      top_alpha=topk)
                             )
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,

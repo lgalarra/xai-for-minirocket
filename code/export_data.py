@@ -49,11 +49,12 @@ METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}
 def get_group_id(dataset_name, instance_id) -> int:
     if dataset_name == "ford-a":
         return -1
+    return None
 
 def get_annotation(dataset_name, instance_id) -> str:
     if dataset_name == "ford-a":
         return f"{instance_id}"
-
+    return None
 
 class DataExporter(object):
 
@@ -105,11 +106,11 @@ class DataExporter(object):
         (dataset_name, mr_classifier_name, explainer_method, label_type) = \
             (self.dataset_name, self.mr_classifier_name, self.explainer_method, self.label_type)
         metadata_dict = copy.deepcopy(METADATA_SCHEMA)
-        metadata_dict['instance_id'].append(instance_id)
         some_reference_policy = next(iter(explanations_dict))
         (explanation, _, _) = explanations_dict[some_reference_policy]
         instance = explanation.get_instance()
         for channel_idx, channel in enumerate(instance):
+            metadata_dict['instance_id'].append(instance_id)
             for idx, reference_policy in enumerate(studied_reference_policies):
                 (explanation, explanation_p2p, segmented_explanation) = explanations_dict[reference_policy]
                 betas = explanation.get_attributions_in_original_dimensions()
@@ -120,7 +121,7 @@ class DataExporter(object):
                 if segmented_explanation is not None:
                     betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
                 reference = explanation.explanation['reference']
-                reference_code = hashlib.md5(reference[channel_idx].data.tobytes())
+                reference_code = hashlib.md5(reference[channel_idx].data.tobytes()).hexdigest()
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
                 metadata_dict[f'reference_{idx}'].append(reference_filename)
 

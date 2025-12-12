@@ -209,7 +209,8 @@ class MinirocketExplainer:
 
         y_ref_pred = self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0]
         y_pred = self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0]
-
+        time_elapsed = time.perf_counter() - start
+        print('Time elapsed (retropropagated): ', time_elapsed)
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
                 'instance': x_target, 'instance_transformed': out_x['phi'][0],
                 'traces': out_x['traces'][0], 'reference': reference,
@@ -218,7 +219,7 @@ class MinirocketExplainer:
                 'instance_prediction': y_pred,
                 'reference_logit': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_pred],
                 'instance_logit': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_pred],
-                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
+                'time_elapsed': time_elapsed, 'reference_policy': reference_policy
                 }
 
     def get_reference(self, x_target, y, reference_policy) -> np.ndarray:

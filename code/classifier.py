@@ -80,10 +80,13 @@ class MinirocketClassifier:
                                                            target=x_target)
         alphas = classifier_explainer_fn(np.array([x_target.reshape(-1)]))
 
+        time_elapsed = time.perf_counter() - start
+        print('Time elapsed: ', time_elapsed)
+
         return {'coefficients': alphas.reshape(x_target.shape), 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
                 'instance_logits': instance_logits[:,y_label],
-                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
+                'time_elapsed': time_elapsed, 'reference_policy': reference_policy
                 }
 
     def explain_instances(self, X: np.ndarray, X_reference: np.ndarray, explainer='shap',
@@ -163,8 +166,10 @@ class MinirocketSegmentedClassifier(MinirocketClassifier):
                                                            X_background=np.array([x_reference_discretized.reshape(-1)]),
                                                            target=x_target_discretized)
         alphas = classifier_explainer_fn(np.array([x_target_discretized.reshape(-1)]))
+        time_elapsed = time.perf_counter() - start
+        print('Time elapsed (segmented): ', time_elapsed)
         return {'coefficients': alphas.reshape(x_target_discr_shape), 'instance': x_target, 'reference': reference,
                 'instance_prediction': y_label,
                 'instance_logits': self.predict_proba(x_target_discretized.reshape(1, -1))[:,y_label],
-                'time_elapsed': time.perf_counter() - start, 'reference_policy': reference_policy
+                'time_elapsed': time_elapsed, 'reference_policy': reference_policy
                 }

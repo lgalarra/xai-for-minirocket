@@ -40,7 +40,6 @@ MR_CLASSIFIERS = {
 LABELS = ['training', 'predicted']
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": "get_forda_for_classification()",
-    "mosquito-sound-c1": "get_mosquito_sound_for_classification('1')",
     "starlight-c1": "get_starlightcurves_for_classification('1')",
     "starlight-c2": "get_starlightcurves_for_classification('2')",
     "starlight-c3": "get_starlightcurves_for_classification('3')",
@@ -60,7 +59,7 @@ def populate_metadata_entry(metadata_dict, x, y_label, y_i, y_pred, reference_po
                             exp_path, exp_p2p_path, exp_segmented_path,
                             explainer, classifier) -> dict:
     reference = explainer.get_reference(x, y_label, REFERENCE_POLICIES[reference_policy_idx])
-    reference_code = hashlib.md5(x[channel_id].data.tobytes())
+    reference_code = hashlib.md5(x[channel_id].data.tobytes()).hexdigest()
     reference_filename = f'{os.path.dirname(exp_path)}/{channel}_reference_{reference_code}.csv'
     if not os.path.exists(reference_filename):
         print(f'File {reference_filename} for {exp_path} does not exists', file=sys.stderr)
