@@ -1,7 +1,11 @@
+from typing import Callable
+
 import numpy as np
 
 
-def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanation: np.ndarray, **kwargs):
+def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanation: np.ndarray,
+                              filter_explanation_fn: Callable,
+                              **kwargs):
     budget = kwargs['budget']
     new_shape = list(explanation.shape)
     new_shape[0] = new_shape[0] * budget
@@ -10,8 +14,7 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
     else:
         std = (X_target - X_to).std(axis=0)
     X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
-    threshold = np.percentile(explanation, kwargs['percentile_cut'])
-    percentile_mask = np.vectorize(lambda x: 1.0 if x > max(threshold, 0.0) else 0.0)
+    percentile_mask = np.vectorize(filter_explanation_fn)
     explanation_mask = percentile_mask(explanation)
     return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb
 
@@ -32,9 +35,22 @@ def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, *
     percentile_vector = percentile_mask(masked_explanation)
     return apply_explanation_mask(xto, xfrom, percentile_vector, kwargs['interpolation'])
 
-def get_perturbations(X_target, X_references, X_explanations, policy='gaussian', **args):
+def get_perturbations(X_target, X_references, X_explanations, explainer_method, policy='gaussian', **args):
     if policy == 'gaussian':
-        return get_gaussian_perturbation(X_target=X_target, X_to=X_references, explanation=X_explanations, **args)
+        if explainer_method == 'gradients' and 'p2p' in args and args['p2p']:
+            ## Here check that we (a) make a distinction between our explanations and the  explanations
+            ## Get the right label to cut the gradient explanation
+            ## TODO: 0 must become -1
+            X_adjusted_explanations = X_explanations * (1 - args['y'])
+            threshold = np.percentile(X_adjusted_explanations, args['percentile_cut'])
+            X_e = X_adjusted_explanations
+        else:
+            threshold = np.percentile(X_explanations, args['percentile_cut'])
+            X_e = X_explanations
+        percentile_fn = lambda x: 1.0 if x > max(threshold, 0.0) else 0.0
+        return get_gaussian_perturbation(X_target=X_target, X_to=X_references, explanation=X_e,
+                                             filter_explanation_fn=percentile_fn,
+                                             **args)
     elif policy == 'instance_to_reference':
         return get_reference_perturbation(xfrom=X_target, xto=X_references, explanation=X_explanations,
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)

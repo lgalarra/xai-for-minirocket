@@ -14,6 +14,7 @@ import pandas as pd
 
 from experiments.exputils import to_sep_list
 from experiments.pertutils import get_perturbations
+from export_data import DataExporter
 from exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -82,7 +83,8 @@ if __name__ == '__main__':
         #"starlight-c3": "get_starlightcurves_for_classification('3')",
         #"cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
-    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
+    #EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
+    EXPLAINERS = ['gradients']
     BUDGET = 10
     PERTURBATIONS = {
 #                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
@@ -100,6 +102,7 @@ if __name__ == '__main__':
 
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
+    DataExporter.METADATA_FILE = 'metadata-fixed.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -122,7 +125,8 @@ if __name__ == '__main__':
             for label in LABELS:
                 for explainer_method in EXPLAINERS:
                     metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label)
-                    X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict, segmented_explanations_dict = (
+                    (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
+                     segmented_explanations_dict) = (
                         DataImporter.get_series_from_metadata(metadata_df)
                     )
                     print('Label, explainer_method: ', label, explainer_method)
@@ -136,14 +140,21 @@ if __name__ == '__main__':
                                 print('Backpropagated explanations')
                                 X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 explanations_dict[reference_policy],
+                                                                explainer_method=explainer_method,
                                                                 policy=perturbation_policy, **args)
                                 print('P2p explanations')
+                                args['p2p'] = True
+                                args['y'] = y_test if label == 'training' else classifier.predict(X_test)
                                 X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 p2p_explanations_dict[reference_policy],
+                                                                    explainer_method=explainer_method,
                                                                     policy=perturbation_policy, **args)
+                                del args['p2p']
+                                del args['y']
                                 print('Segmented explanations')
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 segmented_explanations_dict[reference_policy],
+                                                                          explainer_method=explainer_method,
                                                                           policy=perturbation_policy, **args)
 
                                 metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
