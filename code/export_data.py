@@ -23,24 +23,41 @@ METADATA_COLUMNS =(['instance_id', 'series', 'label', 'label_type', 'label_proba
 
 UNITS = {
     "ford-a": ["dB"],
-    "cognitive-circles": [COGNITIVE_CIRCLES_UNITS[x] for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
+    "cognitive-circles": [COGNITIVE_CIRCLES_UNITS[x] for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
+    "starlight-c1": ["m"], "starlight-c2": ["m"], "starlight-c3": ["m"],
+    "abnormal-heartbeat-c0": ["m"], "abnormal-heartbeat-c1": ["m"],
+    "abnormal-heartbeat-c2": ["m"], "abnormal-heartbeat-c3": ["m"],
+    "abnormal-heartbeat-c4": ["m"],
 }
 
 DESCRIPTIONS = {
     "ford-a": ["Noise intensity"],
-    "cognitive-circles": [COGNITIVE_CIRCLES_CHANNELS[x] for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
+    "cognitive-circles": [COGNITIVE_CIRCLES_CHANNELS[x] for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
+    "starlight-c1": ["Amplitude Change"], "starlight-c2": ["Amplitude Change"], "starlight-c3": ["Amplitude Change"],
+    "abnormal-heartbeat-c0": ["Amplitude Change"],
+    "abnormal-heartbeat-c1": ["Amplitude Change"],
+    "abnormal-heartbeat-c2": ["Amplitude Change"],
+    "abnormal-heartbeat-c3": ["Amplitude Change"],
+    "abnormal-heartbeat-c4": ["Amplitude Change"]
 }
 
 CHANNELS = {'ford-a': ['C'],
             'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
-            'starlight-c1': ['B'], 'starlight-c2': ['B'], 'starlight-c3': ['B']
+            'starlight-c1': ['B'], 'starlight-c2': ['B'], 'starlight-c3': ['B'],
+            'abnormal-heartbeat-c0': ['A'], 'abnormal-heartbeat-c1': ['A'], 'abnormal-heartbeat-c2': ['A'],
+            'abnormal-heartbeat-c3': ['A'], 'abnormal-heartbeat-c4': ['A']
             }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
 #                           ('DR', 'radial_velocity'), ('Y', 'Y'), ('D', 'radius'),  ('A', 'acceleration')
 CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'Difficult'],
            'starlight-c1': ['Star Type 1', 'Other'], 'starlight-c2': ['Star Type 2', 'Other'],
-           'starlight-c3': ['Star Type 3', 'Other']
+           'starlight-c3': ['Star Type 3', 'Other'],
+           'abnormal-heartbeat-c0': ['Artifact', 'Other'],
+           'abnormal-heartbeat-c1': ['Extra Stole', 'Other'],
+           'abnormal-heartbeat-c2': ['Murmur', 'Other'],
+           'abnormal-heartbeat-c3': ['Normal', 'Other'],
+           'abnormal-heartbeat-c4': ['ExtraHLS', 'Other']
            }
 
 METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}
@@ -173,6 +190,11 @@ class DataExporter(object):
             metadata_dict['channel'].append(CHANNELS[dataset_name][channel_idx])
             metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
             metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
+
+        alphas = explanation.explanation['instance_transformed']
+        alphas_file = f'{self.output_dataset_path}/{mr_classifier_name}/alphas_instance_{instance_id}.csv'
+        if not os.path.exists(alphas_file):
+            pd.Series(alphas).to_csv(alphas_file, header=False)
 
         print(f'Flushing {metadata_dict} in {self.metadata_file}')
         flush_metadata(metadata_dict, self.metadata_file)

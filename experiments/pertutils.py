@@ -37,11 +37,11 @@ def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, *
 
 def get_perturbations(X_target, X_references, X_explanations, explainer_method, policy='gaussian', **args):
     if policy == 'gaussian':
-        if explainer_method == 'gradients' and 'p2p' in args and args['p2p']:
+        if explainer_method == 'gradients' and 'y' in args:
             ## Here check that we (a) make a distinction between our explanations and the  explanations
             ## Get the right label to cut the gradient explanation
-            ## TODO: 0 must become -1
-            X_adjusted_explanations = X_explanations * (1 - args['y'])
+            y_factor = (2 * args['y'] - 1)[:, None, None] # shape (no_of_instances, 1, 1)
+            X_adjusted_explanations = X_explanations * y_factor
             threshold = np.percentile(X_adjusted_explanations, args['percentile_cut'])
             X_e = X_adjusted_explanations
         else:

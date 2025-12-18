@@ -71,7 +71,7 @@ if __name__ == '__main__':
 #                          ],
         "ford-a": [
             pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
-            #       pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
+            pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
         ]
     }
 
@@ -83,26 +83,26 @@ if __name__ == '__main__':
         #"starlight-c3": "get_starlightcurves_for_classification('3')",
         #"cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
-    #EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
-    EXPLAINERS = ['gradients']
+    EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
+    #EXPLAINERS = ['gradients']
     BUDGET = 10
     PERTURBATIONS = {
-#                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
-#                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
-#                    },
+                    'instance_to_reference': {'percentile_cut': [50, 75, 90],
+                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
+                    },
                     'gaussian' : {'percentile_cut': [50, 75, 90],
                                     'sigma' : [1.0, 0.75, 0.5, 0.25],
                                   'budget': [BUDGET]
                     },
-#                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
-#                                               'interpolation': [0.25, 0.5, 0.75, 1.0],
-#                                               'budget': [1]
-#                    }
+                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
+                                               'interpolation': [0.25, 0.5, 0.75, 1.0],
+                                               'budget': [1]
+                    }
     }
 
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
-    DataExporter.METADATA_FILE = 'metadata-fixed.csv'
+    DataExporter.METADATA_FILE = 'metadata.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -138,25 +138,24 @@ if __name__ == '__main__':
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]
                                 print('Backpropagated explanations')
+                                args['y'] = y_test if label == 'training' else classifier.predict(X_test)
+
                                 X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 explanations_dict[reference_policy],
                                                                 explainer_method=explainer_method,
                                                                 policy=perturbation_policy, **args)
                                 print('P2p explanations')
-                                args['p2p'] = True
-                                args['y'] = y_test if label == 'training' else classifier.predict(X_test)
                                 X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 p2p_explanations_dict[reference_policy],
                                                                     explainer_method=explainer_method,
                                                                     policy=perturbation_policy, **args)
-                                del args['p2p']
-                                del args['y']
+
                                 print('Segmented explanations')
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
                                                                 segmented_explanations_dict[reference_policy],
                                                                           explainer_method=explainer_method,
                                                                           policy=perturbation_policy, **args)
-
+                                del args['y']
                                 metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
                                                                                        X_reference,
                                                                                        PERTURBATIONS[perturbation_policy]['budget'][0])
