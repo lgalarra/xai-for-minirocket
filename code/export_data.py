@@ -192,7 +192,7 @@ class DataExporter(object):
             metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
 
         alphas = explanation.explanation['minirocket_coefficients']
-        alphas_file = f'{self.output_dataset_path}/{mr_classifier_name}/alphas_instance_{instance_id}.csv'
+        alphas_file = f'{self.output_dataset_path}/{mr_classifier_name}/{explainer_method}/alphas_instance_{instance_id}.csv'
         if not os.path.exists(alphas_file):
             pd.Series(alphas).to_csv(alphas_file, header=False)
 
