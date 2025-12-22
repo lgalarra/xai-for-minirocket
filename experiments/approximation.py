@@ -121,7 +121,7 @@ def parse_args():
         "-e",
         type=int,
         default=sys.maxsize-1,
-        help="End index (default: -1)."
+        help="End index (default: biggest possible integer)."
     )
 
     parser.add_argument(
@@ -347,10 +347,14 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'topk-{topk}.csv')
         DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'-{topk}.csv')
 
-    if end != -1:
+    if end != sys.maxsize-1:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
         DataExporter.METADATA_FILE.replace('.csv', f'-{start}-{end}.csv')
-    
+
+    if not should_export_data:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-NOTDUMPED.csv')
+
+
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
         explanation_vector = explanation.get_attributions_as_single_vector()
         explanation_p2p_vector = explanation_p2p.get_attributions_as_single_vector()

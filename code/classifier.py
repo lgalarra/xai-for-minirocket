@@ -36,16 +36,36 @@ class MinirocketClassifier:
     def minirocket_transform(self, X) -> dict:
         return mmv.transform_prime(X, parameters=self.minirocket_params)
 
+    def minirocket_transform_wo_traces(self, X) -> dict:
+        Xp = None
+        if X.dtype != np.float32:
+            Xp = X.astype(np.float32)
+        else:
+            Xp = X
+        if len(Xp.shape) == 3:
+            return mmv._transform_batch(Xp, parameters=self.minirocket_params)
+        else:
+            L = Xp.shape[1]
+            L = np.array([L], dtype=np.int32)
+            return mmv.transform(Xp, L, parameters=self.minirocket_params)
+
     def get_minirocket_representation(self):
         return self.traces_obj["phi"]
 
     def predict(self, X):
         out = mmv.transform_prime(X, parameters=self.minirocket_params)
         return self.classifier.predict(out["phi"])
+    def predict_wo_traces(self, X):
+        out = mmv._transform_batch(X, parameters=self.minirocket_params)
+        return self.classifier.predict(out)
 
     def predict_proba(self, X):
         out = mmv.transform_prime(X, parameters=self.minirocket_params)
         return self.classifier.predict_proba(out["phi"])
+
+    def predict_proba_wo_traces(self, X):
+        out = mmv._transform_batch(X, parameters=self.minirocket_params)
+        return self.classifier.predict_proba(out)
 
     def get_explainer(self, X=None, y=None) -> MinirocketExplainer:
         """
@@ -70,12 +90,12 @@ class MinirocketClassifier:
     def explain_instance_on_original_space(self, x_target: np.ndarray, reference: np.ndarray,
                                            explainer='shap', reference_policy = 'global_centroid'):
         start = time.perf_counter()
-        phi = self.minirocket_transform(x_target)['phi']
+        phi = self.minirocket_transform_wo_traces(x_target)
         y_label = self.classifier.predict(phi)[0]
 
         instance_logits = self.classifier.predict_proba(phi)
         classifier_explainer_fn = get_classifier_explainer(explainer,
-                                                           lambda x: self.predict_proba(np.array([xi.reshape(x_target.shape) for xi in x]))[:,y_label],
+                                                           lambda x: self.predict_proba_wo_traces(np.array([xi.reshape(x_target.shape) for xi in x]))[:,y_label],
                                                            X_background=np.array([reference.reshape(-1)]),
                                                            target=x_target)
         alphas = classifier_explainer_fn(np.array([x_target.reshape(-1)]))
