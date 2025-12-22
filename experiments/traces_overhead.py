@@ -80,22 +80,22 @@ if __name__ == '__main__':
     #final_df = pd.DataFrame(df_schema.copy())
     #pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
+    print('Dataset\tInstance\tTime RT\tTime NRT')
     for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
         import minirocket_multivariate as mv
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         minirocket_params = mmv.fit_minirocket_parameters(X_train, **MINIROCKET_PARAMS_DICT[dataset_name])
         n, C, L = X_train.shape
-        for x_train in X_train:
+        for idx, x_train in enumerate(X_train):
             start = time.perf_counter()
             mmv.transform_prime(x_train, parameters=minirocket_params)
-            time_elapsed = time.perf_counter() - start
-            print('Augmented:', time_elapsed)
+            time_elapsed1 = time.perf_counter() - start
             Xi = x_train.astype(np.float32)  # (C, L)
             Li = np.array([L], dtype=np.int32)
             start = time.perf_counter()
             mmv.transform(Xi, Li, minirocket_params)
-            time_elapsed = time.perf_counter() - start
-            print('Non-augmented:', time_elapsed)
+            time_elapsed2 = time.perf_counter() - start
+            print(f'{dataset_name}\t{idx}\t{time_elapsed1}\t{time_elapsed2}')
 
     for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
         import minirocket_multivariate as mv
@@ -103,10 +103,11 @@ if __name__ == '__main__':
         minirocket_params = mmv.fit_minirocket_parameters(X_train, **MINIROCKET_PARAMS_DICT[dataset_name])
         start = time.perf_counter()
         mmv.transform_prime(X_train, parameters=minirocket_params)
-        time_elapsed = time.perf_counter() - start
-        print('Augmented:', time_elapsed)
+        time_elapsed1 = time.perf_counter() - start
+        print('Augmented:', time_elapsed1)
         start = time.perf_counter()
         mmv._transform_batch(X_train, minirocket_params)
-        time_elapsed = time.perf_counter() - start
-        print('Non-augmented:', time_elapsed)
+        time_elapsed2 = time.perf_counter() - start
+        print('Non-augmented:', time_elapsed2)
+        print(f'{dataset_name}\tBATCH\t{time_elapsed1}\t{time_elapsed2}')
 
