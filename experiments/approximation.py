@@ -193,7 +193,7 @@ def build_map_of_already_trained_classifiers(datasets: list, classifiers):
             }
 
 MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(['starlight-c1', 'starlight-c2', 'starlight-c3',
-                                             'abnormal-heartbeat-c0', 'abnormal-heartbeat-c1'
+                                             'abnormal-heartbeat-c0', 'abnormal-heartbeat-c1',
                                           'abnormal-heartbeat-c2', 'abnormal-heartbeat-c3',
                                           'abnormal-heartbeat-c4', 'ford-a', 'cognitive-circles'],
                                                                                      ['LogisticRegression', 'RandomForestClassifier'])
