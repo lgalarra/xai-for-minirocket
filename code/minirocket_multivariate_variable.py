@@ -975,6 +975,8 @@ def get_feature_signature(fidx, parameters, *, fast=True):
             feature_in_block = int(within - kernel_index * nfd)
             break
         start = end
+    
+    combination_index = dilation_index * num_kernels + kernel_index
     if fast:
         starts, ends = _get_channel_offsets_cached(num_channels_per_combination)
         ch_start = int(starts[combination_index])
@@ -1055,6 +1057,7 @@ def inspect_feature_activations(X1, fidx, parameters=None, top=20):
         "top_rows": rows
     }
     return summary
+
 
 
 
