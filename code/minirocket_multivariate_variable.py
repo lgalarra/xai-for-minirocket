@@ -915,10 +915,146 @@ def back_propagate_attribution(
 
     return beta.T
 
+MINIROCKET_INDICES = np.array((
+    0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
+    0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
+    0,3,5,0,3,6,0,3,7,0,3,8,0,4,5,0,4,6,0,4,7,
+    0,4,8,0,5,6,0,5,7,0,5,8,0,6,7,0,6,8,0,7,8,
+    1,2,3,1,2,4,1,2,5,1,2,6,1,2,7,1,2,8,1,3,4,
+    1,3,5,1,3,6,1,3,7,1,3,8,1,4,5,1,4,6,1,4,7,
+    1,4,8,1,5,6,1,5,7,1,5,8,1,6,7,1,6,8,1,7,8,
+    2,3,4,2,3,5,2,3,6,2,3,7,2,3,8,2,4,5,2,4,6,
+    2,4,7,2,4,8,2,5,6,2,5,7,2,5,8,2,6,7,2,6,8,
+    2,7,8,3,4,5,3,4,6,3,4,7,3,4,8,3,5,6,3,5,7,
+    3,5,8,3,6,7,3,6,8,3,7,8,4,5,6,4,5,7,4,5,8,
+    4,6,7,4,6,8,4,7,8,5,6,7,5,6,8,5,7,8,6,7,8
+), dtype=np.int32).reshape(84, 3)
+
+_SIGNATURE_CACHE = {}
+
+def _get_channel_offsets_cached(num_channels_per_combination):
+    key = id(num_channels_per_combination)
+    cached = _SIGNATURE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    ends = np.cumsum(num_channels_per_combination, dtype=np.int64)
+    starts = np.empty_like(ends)
+    starts[0] = 0
+    starts[1:] = ends[:-1]
+    _SIGNATURE_CACHE[key] = (starts, ends)
+    return starts, ends
 
 
+def get_feature_signature(fidx, parameters, *, fast=True):
+  
+    (num_channels_per_combination,
+     channel_indices,
+     dilations,
+     num_features_per_dilation,
+     biases,
+     diff) = parameters
+
+    num_kernels = 84
+    fidx = int(fidx)
+
+    F = int(num_kernels * np.sum(num_features_per_dilation))
+    if fidx < 0 or fidx >= F:
+        raise IndexError(f"fidx={fidx} fuera de rango [0, {F-1}]")
+
+    start = 0
+    dilation_index = kernel_index = feature_in_block = None
+
+    for d_i, nfd in enumerate(num_features_per_dilation):
+        nfd = int(nfd)
+        block = num_kernels * nfd
+        end = start + block
+        if fidx < end:
+            dilation_index = int(d_i)
+            within = fidx - start
+            kernel_index = int(within // nfd)
+            feature_in_block = int(within - kernel_index * nfd)
+            break
+        start = end
+    if fast:
+        starts, ends = _get_channel_offsets_cached(num_channels_per_combination)
+        ch_start = int(starts[combination_index])
+        ch_end   = int(ends[combination_index])
+    else:
+        ch_start = int(np.sum(num_channels_per_combination[:combination_index])) if combination_index > 0 else 0
+        ch_end   = ch_start + int(num_channels_per_combination[combination_index])
+
+    channels = list(map(int, channel_indices[ch_start:ch_end]))
+    idx0, idx1, idx2 = MINIROCKET_INDICES[kernel_index]
+    triplet = (int(idx0), int(idx1), int(idx2))
+    bias_b = float(biases[fidx])
+    dilation = int(dilations[dilation_index])
+
+    return dict(
+        fidx=fidx,
+        triplet=triplet,         
+        bias_b=bias_b,
+        dilation=dilation,
+        channels=channels,
+        differentiable=bool(diff),
+
+        # información de auditoría (útil para Luis)
+        dilation_index=dilation_index,
+        kernel_index=kernel_index,
+        feature_in_block=feature_in_block,
+        combination_index=int(combination_index),
+    )
+def get_feature_trace_by_index(X1, fidx, parameters=None):
+    out = transform_prime(X1, parameters=parameters)
+    tr = out["traces"][int(fidx)]
+    sig = get_feature_signature(int(fidx), parameters if parameters is not None else MINIROCKET_PARAMETERS)
+    return {
+        "fidx": int(fidx),
+        "phi_value": float(out["phi"][0, int(fidx)]),
+        "signature": sig,
+        "trace": tr
+    }
 
 
+def inspect_feature_activations(X1, fidx, parameters=None, top=20):
+    res = get_feature_trace_by_index(X1, fidx, parameters=parameters)
+    tr = res["trace"]
+    sig = res["signature"]
+
+    sigma = np.asarray(tr["sigma"])
+    conv  = np.asarray(tr["conv_sum"])
+    b     = float(tr["bias_b"])
+    chans = list(tr["channels"])
+    cbc   = tr.get("conv_by_channel", {})
+
+    on_idx = np.where(sigma > 0.5)[0]  # sigma==1
+    # ordena activaciones por conv_sum desc (las más fuertes primero)
+    order = np.argsort(conv[on_idx])[::-1]
+    on_sorted = on_idx[order]
+
+    rows = []
+    for t in on_sorted[:top]:
+        row = {
+            "t": int(t),
+            "conv_sum": float(conv[t]),
+            "bias_b": b,
+            "margin": float(conv[t] - b),
+        }
+        # contribución por canal en ese t
+        for ch in chans:
+            v = np.asarray(cbc[int(ch)])
+            row[f"conv_ch{ch}"] = float(v[t])
+        rows.append(row)
+
+    summary = {
+        "fidx": int(fidx),
+        "phi_value": float(res["phi_value"]),
+        "sigma_sum": float(sigma.sum()),
+        "sigma_mean": float(sigma.mean()),
+        "num_activations": int(len(on_idx)),
+        "signature": sig,
+        "top_rows": rows
+    }
+    return summary
 
 
 
