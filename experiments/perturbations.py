@@ -57,18 +57,18 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
 
 if __name__ == '__main__':
     MR_CLASSIFIERS = {
-#        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
-#                          ],
-#        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
-#                          ],
-        #"starlight-c3": [pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb")),
-        #                  pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))
-        #                  ],
-#        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
-#                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
-#                          ],
+        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
+                          ],
+        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
+                          ],
+        "starlight-c3": [pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))
+                          ],
+        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
+                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
+                          ],
         "ford-a": [
             pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
             pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
@@ -78,10 +78,10 @@ if __name__ == '__main__':
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
         "ford-a": "get_forda_for_classification()",
-        #"starlight-c1": "get_starlightcurves_for_classification('1')",
-        #"starlight-c2": "get_starlightcurves_for_classification('2')",
-        #"starlight-c3": "get_starlightcurves_for_classification('3')",
-        #"cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        "starlight-c1": "get_starlightcurves_for_classification('1')",
+        "starlight-c2": "get_starlightcurves_for_classification('2')",
+        "starlight-c3": "get_starlightcurves_for_classification('3')",
+        "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
     #EXPLAINERS = ['gradients']
