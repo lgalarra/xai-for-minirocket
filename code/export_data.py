@@ -112,7 +112,7 @@ class DataExporter(object):
             os.makedirs(f'{self.output_path}/' + f, exist_ok=True)
             os.makedirs(f'{self.output_dataset_path}/' + f, exist_ok=True)
 
-        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.metadata_file}', mode='w',
+        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.metadata_file}', mode='a',
                                              index=False, header=True)
 
     def export_instance_and_explanations(self, instance_id, y_i,

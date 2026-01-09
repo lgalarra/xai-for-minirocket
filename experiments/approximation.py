@@ -349,7 +349,6 @@ if __name__ == '__main__':
 
     if end != sys.maxsize-1:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
-        DataExporter.METADATA_FILE.replace('.csv', f'-{start}-{end}.csv')
 
     if not should_export_data:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-NOTDUMPED.csv')
