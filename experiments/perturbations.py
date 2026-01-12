@@ -35,7 +35,7 @@ from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification, COGNITIVE_CIRCLES_CHANNELS,
-                   cognitive_circles_get_sorted_channels_from_df)
+                   cognitive_circles_get_sorted_channels_from_df, get_abnormal_hearbeat_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 
@@ -76,6 +76,10 @@ if __name__ == '__main__':
         "ford-a": [
             pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
             pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
+        ],
+        "abnormal-heartbeat-c1": [
+            pickle.load(open("data/abnormal-heartbeat-c1/LogisticRegression.pkl", "rb")),
+            pickle.load(open("data/abnormal-heartbeat-c1/RandomForestClassifier.pkl", "rb"))
         ]
     }
 
@@ -85,6 +89,7 @@ if __name__ == '__main__':
         "starlight-c1": "get_starlightcurves_for_classification('1')",
         "starlight-c2": "get_starlightcurves_for_classification('2')",
         "starlight-c3": "get_starlightcurves_for_classification('3')",
+		"abnormal-heartbeat-c1": "get_abnormal_hearbeat_for_classification('1')",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
     }
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
