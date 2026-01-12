@@ -56,6 +56,10 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
 
 
 if __name__ == '__main__':
+    DATASET = None
+    if len(sys.argv) > 1:
+        DATASET = sys.argv[1]
+
     MR_CLASSIFIERS = {
         "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
                           pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
@@ -103,6 +107,8 @@ if __name__ == '__main__':
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
     DataExporter.METADATA_FILE = 'metadata.csv'
+    if DATASET is not None:
+        OUTPUT_FILE = f'perturbation-results-{DATASET}.csv'
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -116,7 +122,8 @@ if __name__ == '__main__':
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
-    for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
+    for dataset_name in DATASET_FETCH_FUNCTIONS.keys() if DATASET is None else [DATASET]:
+        dataset_fetch_function = DATASET_FETCH_FUNCTIONS[dataset_name]
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
