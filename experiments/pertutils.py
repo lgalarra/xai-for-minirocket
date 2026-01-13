@@ -22,6 +22,10 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
 def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,
                            percentile_vector: np.ndarray, interpolation_level: float) -> np.ndarray:
     delta = xfrom - xto
+    if percentile_vector.shape[-1] < delta.shape[-1]:
+        percentile_vector = np.pad(percentile_vector,
+                                pad_width=((0, 0), (0, 0), (0, delta.shape[-1] - percentile_vector.shape[-1])),
+                                mode="edge")
     delta = percentile_vector * delta
     delta = interpolation_level * delta
     return xto + delta

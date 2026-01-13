@@ -59,11 +59,14 @@ class DataImporter:
                                                       header=None, index_col=0).iloc[:, 0]
                     explanations[REFERENCE_POLICIES[i]][len(explanations[REFERENCE_POLICIES[i]]) - 1].append(
                         beta_channel_values.values)
+                    
+                    beta_p2p_channel_values = None
+                    if not df_instance_id_channel[f'beta_p2p_{i}_attributions'].isnull().values.any():
+                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].values[0],
+                                                              header=None, index_col=0).iloc[:, 0]
+                    
 
-                    beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].values[0],
-                                                          header=None, index_col=0).iloc[:, 0]
-
-                    p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values.values)
+                    p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values.values if beta_p2p_channel_values is not None else None)
 
                     beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].values[0],
                                                                 header=None, index_col=0).iloc[:, 0]

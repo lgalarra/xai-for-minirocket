@@ -156,11 +156,13 @@ if __name__ == '__main__':
                                                                 explanations_dict[reference_policy],
                                                                 explainer_method=explainer_method,
                                                                 policy=perturbation_policy, **args)
-                                print('P2p explanations')
-                                X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
-                                                                p2p_explanations_dict[reference_policy],
-                                                                    explainer_method=explainer_method,
-                                                                    policy=perturbation_policy, **args)
+                                X_p2p_perturbed = None
+                                if p2p_explanations_dict[reference_policy][0][0] is not None:
+                                    print('P2p explanations')
+                                    X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                                                    p2p_explanations_dict[reference_policy],
+                                                                        explainer_method=explainer_method,
+                                                                        policy=perturbation_policy, **args)
 
                                 print('Segmented explanations')
                                 X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
@@ -179,7 +181,9 @@ if __name__ == '__main__':
                                 df_results['f_minus_f0_norm-std'].append(np.std(norm_metric))
                                 df_results['f_minus_f0-change_ratio'].append(change_ratio)
 
-                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                metric = norm_metric = change_ratio = [-1.0]
+                                if X_p2p_perturbed is not None:
+                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
                                 df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['p2p_f_minus_f0-std'].append(np.std(metric))
