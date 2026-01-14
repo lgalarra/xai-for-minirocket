@@ -204,8 +204,8 @@ class MinirocketExplainer:
             alphas = mask
         beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel, params=self.minirocket_params)
-        if beta.shape[0] > 1:
-            beta = beta.T
+        #if beta.shape[0] > 1:
+        #    beta = beta.T
 
         y_ref_pred = self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0]
         y_pred = self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0]
