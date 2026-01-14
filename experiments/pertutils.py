@@ -7,7 +7,11 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
                               filter_explanation_fn: Callable,
                               **kwargs):
     budget = kwargs['budget']
-    new_shape = list(explanation.shape)
+    padded_explanation = explanation
+    if explanation.shape[-1] < X_target.shape[-1]:
+        padded_explanation = np.pad(explanation, pad_width=((0, 0), (0, 0), (0, X_target.shape[-1] - explanation.shape[-1])),
+                                   mode="edge")
+    new_shape = list(padded_explanation.shape)
     new_shape[0] = new_shape[0] * budget
     if X_target.shape[0] == 1:
         std = (X_target - X_to).std()
@@ -15,7 +19,7 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
         std = (X_target - X_to).std(axis=0)
     X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
     percentile_mask = np.vectorize(filter_explanation_fn)
-    explanation_mask = percentile_mask(explanation)
+    explanation_mask = percentile_mask(padded_explanation)
     return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb
 
 
