@@ -415,7 +415,7 @@ if __name__ == '__main__':
                         explanations_for_instance = {}
                         x_target = X_test[idx]
                         y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
-                        for reference_policy in REFERENCE_POLICIES:
+                        for reference_policy in studied_reference_policies:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
                             explanation, explanation_p2p, segmented_explanation = (
                                 compute_explanations(x_target, y_target, classifier, explainer, configuration,

@@ -8,7 +8,7 @@ import numdifftools as nd
 
 
 import minirocket_multivariate_variable as mmv
-from minirocket_multivariate_variable import back_propagate_attribution
+from minirocket_multivariate_variable import back_propagate_attribution, get_feature_signature
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class, \
     farthest_series_euclidean, closest_series_euclidean
 from stratoshap.StratoShap import SHAPStratum
@@ -156,6 +156,35 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
     else:
         raise ValueError("classifier_explainer must be a string or a function or a class object with an 'explain' method.")
 
+def print_dilated_triplet_array(d, base_size=9, on_value=2, off_value=-1):
+    triplet = d["triplet"]
+    dilation = d["dilation"]
+
+    # Build base array
+    base = [off_value] * base_size
+    for idx in triplet:
+        base[idx] = on_value
+
+    gap = 2 ** dilation
+    marker = f"<- {gap} ->"
+
+    dilated = []
+    for i, v in enumerate(base):
+        dilated.append(str(v))
+        if i < len(base) - 1:
+            if i == 0:
+                dilated.append(marker)
+            else:
+                dilated.extend([" "] * dilation)
+
+    # Pretty printing
+    print(d)
+    print("Base array:")
+    print(base)
+    print("\nDilated array:")
+    print("".join(f"{x:>8}" for x in dilated))
+
+
 class MinirocketExplainer:
     def __init__(self, X, y, minirocket_classifier, minirocket_params):
         self.minirocket_params = minirocket_params
@@ -198,6 +227,7 @@ class MinirocketExplainer:
             alphas = alphas[0]
         if top_alpha is not None: ## Just focus on the top alpha scores
             maxids = (-alphas).argsort()[:top_alpha]
+            print('Features:', print_dilated_triplet_array(get_feature_signature(maxids[0], self.minirocket_params)))
             mask = np.zeros_like(alphas, dtype=np.float64)
             for mid in maxids:
                 mask[mid] = alphas[mid]
