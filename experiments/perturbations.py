@@ -11,6 +11,7 @@ import sys
 import numpy as np
 import pandas
 import pandas as pd
+from pandas.conftest import other_closed
 
 from exputils import to_sep_list
 from pertutils import get_perturbations
@@ -56,9 +57,21 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
 
 
 if __name__ == '__main__':
-    DATASET = None
+    THE_DATASET = None
     if len(sys.argv) > 1:
-        DATASET = sys.argv[1]
+        THE_DATASET = sys.argv[1]
+
+    THE_LABEL = None
+    if len(sys.argv) > 2:
+        THE_LABEL = sys.argv[2]
+
+    THE_EXPLAINER = None
+    if len(sys.argv) > 3:
+        THE_EXPLAINER = sys.argv[3]
+
+    THE_REFERENCE_POLICY = None
+    if len(sys.argv) > 4:
+        THE_REFERENCE_POLICY = sys.argv[4]
 
     MR_CLASSIFIERS = {
         "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
@@ -112,8 +125,14 @@ if __name__ == '__main__':
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
     DataExporter.METADATA_FILE = 'metadata.csv'
-    if DATASET is not None:
-        OUTPUT_FILE = f'perturbation-results-{DATASET}.csv'
+    if THE_DATASET is not None:
+        OUTPUT_FILE = f'perturbation-results-{THE_DATASET}.csv'
+    if THE_LABEL is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_LABEL}.csv')
+    if THE_EXPLAINER is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_EXPLAINER}.csv')
+    if THE_REFERENCE_POLICY is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_REFERENCE_POLICY}.csv')
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -127,15 +146,15 @@ if __name__ == '__main__':
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
-    for dataset_name in DATASET_FETCH_FUNCTIONS.keys() if DATASET is None else [DATASET]:
+    for dataset_name in DATASET_FETCH_FUNCTIONS.keys() if THE_DATASET is None else [THE_DATASET]:
         dataset_fetch_function = DATASET_FETCH_FUNCTIONS[dataset_name]
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
             print('Classifier', classifier_name)
-            for label in LABELS:
-                for explainer_method in EXPLAINERS:
+            for label in LABELS if THE_LABEL is None else [THE_LABEL]:
+                for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
                     metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label)
                     (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
                      segmented_explanations_dict) = (
@@ -146,7 +165,7 @@ if __name__ == '__main__':
                         for combo in itertools.product(*all_args.values()):
                             args = dict(zip(all_args.keys(), combo))
                             print('Perturbation', perturbation_policy, 'Args: ', args)
-                            for reference_policy in REFERENCE_POLICIES:
+                            for reference_policy in REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]:
                                 df_results = copy.deepcopy(df_schema)
                                 X_reference = explanations_dict[reference_policy]
                                 print('Backpropagated explanations')

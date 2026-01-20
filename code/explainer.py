@@ -165,24 +165,23 @@ def print_dilated_triplet_array(d, base_size=9, on_value=2, off_value=-1):
     for idx in triplet:
         base[idx] = on_value
 
-    gap = 2 ** dilation
+    gap = dilation
     marker = f"<- {gap} ->"
 
     dilated = []
     for i, v in enumerate(base):
         dilated.append(str(v))
         if i < len(base) - 1:
-            if i == 0:
-                dilated.append(marker)
-            else:
-                dilated.extend([" "] * dilation)
+            dilated.append(marker)
 
     # Pretty printing
     print(d)
     print("Base array:")
     print(base)
     print("\nDilated array:")
-    print("".join(f"{x:>8}" for x in dilated))
+    print("|" + "|".join(f"{x:^2}" for x in dilated) + "|")
+
+    #print("".join(f"{x:^2}" for x in dilated))
 
 
 class MinirocketExplainer:
@@ -231,8 +230,10 @@ class MinirocketExplainer:
             mask = np.zeros_like(alphas, dtype=np.float64)
             for mid in maxids:
                 mask[mid] = alphas[mid]
-            alphas = mask
-        beta = back_propagate_attribution(alphas, out_x["traces"], x_target, reference,
+            alphas_to_backpropagate = mask
+        else:
+            alphas_to_backpropagate = alphas
+        beta = back_propagate_attribution(alphas_to_backpropagate, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel, params=self.minirocket_params)
         #if beta.shape[0] > 1:
         #    beta = beta.T

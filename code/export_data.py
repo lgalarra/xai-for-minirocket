@@ -126,6 +126,11 @@ class DataExporter(object):
         some_reference_policy = next(iter(explanations_dict))
         (explanation, _, _) = explanations_dict[some_reference_policy]
         instance = explanation.get_instance()
+
+        mr_filename = f'{self.output_dataset_path}/mr_embeddings_instance_{instance_id}.csv'
+        if not os.path.exists(mr_filename):
+            pd.Series(explanation.explanation['minirocket_coefficients']).to_csv(mr_filename, header=False)
+
         for channel_idx, channel in enumerate(instance):
             metadata_dict['instance_id'].append(instance_id)
             for idx, reference_policy in enumerate(studied_reference_policies):
