@@ -9,11 +9,8 @@ import joblib
 import sys
 
 import numpy as np
-import pandas
 import pandas as pd
-from pandas.conftest import other_closed
 
-from exputils import to_sep_list
 from pertutils import get_perturbations
 from export_data import DataExporter
 from exputils import to_sep_list
@@ -73,28 +70,24 @@ if __name__ == '__main__':
     if len(sys.argv) > 4:
         THE_REFERENCE_POLICY = sys.argv[4]
 
-    MR_CLASSIFIERS = {
-        "starlight-c1": [pickle.load(open("data/starlight-c1/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/starlight-c1/RandomForestClassifier.pkl", "rb"))
-                          ],
-        "starlight-c2": [pickle.load(open("data/starlight-c2/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/starlight-c2/RandomForestClassifier.pkl", "rb"))
-                          ],
-        "starlight-c3": [pickle.load(open("data/starlight-c3/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/starlight-c3/RandomForestClassifier.pkl", "rb"))
-                          ],
-        "cognitive-circles": [pickle.load(open("data/cognitive-circles/LogisticRegression.pkl", "rb")),
-                          pickle.load(open("data/cognitive-circles/RandomForestClassifier.pkl", "rb"))
-                          ],
-        "ford-a": [
-            pickle.load(open("data/ford-a/LogisticRegression.pkl", "rb")),
-            pickle.load(open("data/ford-a/RandomForestClassifier.pkl", "rb"))
-        ],
-        "abnormal-heartbeat-c1": [
-            pickle.load(open("data/abnormal-heartbeat-c1/LogisticRegression.pkl", "rb")),
-            pickle.load(open("data/abnormal-heartbeat-c1/RandomForestClassifier.pkl", "rb"))
+    THE_PERTURBATION = None
+    if len(sys.argv) > 5:
+        THE_PERTURBATION = sys.argv[5]
+
+    DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a']
+    if THE_DATASET is None:
+        MR_CLASSIFIERS = {dataset: [
+            [pickle.load(open(f"data/{dataset}/LogisticRegression.pkl", "rb")),
+             pickle.load(open(f"data/{dataset}/RandomForestClassifier.pkl", "rb"))
+             ]
         ]
-    }
+                          for dataset in DATASETS}
+    else:
+        MR_CLASSIFIERS = {
+            THE_DATASET: [pickle.load(open(f"data/{THE_DATASET}/LogisticRegression.pkl", "rb")),
+                          pickle.load(open(f"data/{THE_DATASET}/RandomForestClassifier.pkl", "rb"))
+                        ]
+        }
 
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
@@ -113,7 +106,7 @@ if __name__ == '__main__':
                      'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
                     'gaussian' : {'percentile_cut': [50, 75, 90],
-                                    'sigma' : [1.0, 0.75, 0.5, 0.25],
+                                    'sigma' : [2.0, 1.5, 1.25, 1.0, 0.75, 0.5, 0.25],
                                   'budget': [BUDGET]
                     },
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
@@ -133,6 +126,9 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_EXPLAINER}.csv')
     if THE_REFERENCE_POLICY is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_REFERENCE_POLICY}.csv')
+    if THE_PERTURBATION is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_PERTURBATION}.csv')
+        PERTURBATIONS = {THE_PERTURBATION : PERTURBATIONS[THE_PERTURBATION]}
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],

@@ -129,7 +129,7 @@ class DataExporter(object):
 
         mr_filename = f'{self.output_dataset_path}/mr_embeddings_instance_{instance_id}.csv'
         if not os.path.exists(mr_filename):
-            pd.Series(explanation.explanation['minirocket_coefficients']).to_csv(mr_filename, header=False)
+            pd.Series(explanation.explanation['instance_transformed']).to_csv(mr_filename, header=False)
 
         for channel_idx, channel in enumerate(instance):
             metadata_dict['instance_id'].append(instance_id)
