@@ -105,8 +105,8 @@ if __name__ == '__main__':
                     'instance_to_reference': {'percentile_cut': [50, 75, 90],
                      'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
-                    'gaussian' : {'percentile_cut': [50, 75, 90],
-                                    'sigma' : [2.0, 1.5, 1.25, 1.0, 0.75, 0.5, 0.25],
+                    'gaussian' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
                                   'budget': [BUDGET]
                     },
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
@@ -167,24 +167,26 @@ if __name__ == '__main__':
                                 print('Backpropagated explanations')
                                 args['y'] = y_test if label == 'training' else classifier.predict(X_test)
 
-                                X_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                X_perturbed, n_perturbed_points = get_perturbations(X_test, references_dict[reference_policy],
                                                                 explanations_dict[reference_policy],
                                                                 explainer_method=explainer_method,
                                                                 policy=perturbation_policy, **args)
                                 X_p2p_perturbed = None
                                 if p2p_explanations_dict[reference_policy][0][0] is not None:
                                     print('P2p explanations')
-                                    X_p2p_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                    X_p2p_perturbed, _ = get_perturbations(X_test, references_dict[reference_policy],
                                                                     p2p_explanations_dict[reference_policy],
                                                                         explainer_method=explainer_method,
                                                                         policy=perturbation_policy, **args)
 
                                 print('Segmented explanations')
-                                X_segmented_perturbed = get_perturbations(X_test, references_dict[reference_policy],
+                                args['n_perturbed_points'] = n_perturbed_points
+                                X_segmented_perturbed, _ = get_perturbations(X_test, references_dict[reference_policy],
                                                                 segmented_explanations_dict[reference_policy],
                                                                           explainer_method=explainer_method,
                                                                           policy=perturbation_policy, **args)
                                 del args['y']
+                                del args['n_perturbed_points']
                                 metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
                                                                                        X_reference,
                                                                                        PERTURBATIONS[perturbation_policy]['budget'][0])

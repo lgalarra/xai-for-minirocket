@@ -2,6 +2,20 @@ from typing import Callable
 
 import numpy as np
 
+def zero_out_random_ones(arr, x, rng=None):
+    arr = arr.copy()
+    rng = np.random.default_rng(rng)
+
+    flat_indices = np.flatnonzero(arr)
+    if x > flat_indices.size:
+        raise ValueError("x is larger than the number of 1s")
+
+    chosen = rng.choice(flat_indices, size=x, replace=False)
+    coords = np.unravel_index(chosen, arr.shape)
+
+    arr[coords] = 0
+    return arr
+
 
 def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanation: np.ndarray,
                               filter_explanation_fn: Callable,
@@ -14,13 +28,23 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
     new_shape = list(padded_explanation.shape)
     new_shape[0] = new_shape[0] * budget
     if X_target.shape[0] == 1:
-        std = (X_target - X_to).std()
+        std = (X_to - X_target).std()
+        avg = (X_to - X_target).mean()
     else:
-        std = (X_target - X_to).std(axis=0)
-    X_perturb = np.random.normal(0.0, kwargs['sigma'] * std, size=new_shape)
+        std = (X_to - X_target).std(axis=0)
+        avg = (X_to - X_target).mean(axis=0)
+    X_perturb = np.random.normal(avg, kwargs['sigma'] * std, size=new_shape)
     percentile_mask = np.vectorize(filter_explanation_fn)
     explanation_mask = percentile_mask(padded_explanation)
-    return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb
+    explanation_size = np.count_nonzero(explanation_mask)
+    #print('Original explanation size:', explanation_size)
+    #if 'n_perturbed_points' in kwargs and kwargs['n_perturbed_points'] < explanation_size:
+    #    n_zeros =  explanation_size - kwargs['n_perturbed_points']
+    #    explanation_mask = zero_out_random_ones(explanation_mask, n_zeros, rng=np.random.default_rng())
+    #    explanation_size = np.count_nonzero(explanation_mask)
+    #    print('New explanation size:', explanation_size)
+
+    return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb, explanation_size
 
 
 def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,
@@ -32,7 +56,7 @@ def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,
                                 mode="edge")
     delta = percentile_vector * delta
     delta = interpolation_level * delta
-    return xto + delta
+    return xto + delta, np.count_nonzero(percentile_vector)
 
 def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, **kwargs):
     first_mask = np.vectorize(filter_explanation_fn)
