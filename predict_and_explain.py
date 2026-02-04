@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+import json
 # In[41]:
 import os
 import random
@@ -13,8 +13,8 @@ import pickle
 
 from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
-
-from code.explainer import Explanation
+sys.path.append('code/')
+from explainer import Explanation, get_dilated_triplet_array
 from experiments.exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -26,11 +26,11 @@ from sklearn.linear_model import LogisticRegression
 
 import importlib
 
-import code.minirocket_multivariate_variable as mmv
+import minirocket_multivariate_variable as mmv
 
 importlib.reload(mmv)
 from sklearn.linear_model import LogisticRegression
-from code.utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
+from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification,
                    get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS,
@@ -38,8 +38,7 @@ from code.utils import (get_cognitive_circles_data, get_cognitive_circles_data_f
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
-from code.export_data import DataExporter
-from code.reference import REFERENCE_POLICIES
+from reference import REFERENCE_POLICIES
 
 import argparse
 
@@ -148,6 +147,14 @@ def parse_args():
         help="Whether to compute the p2p explanations (yes/no)."
     )
 
+    parser.add_argument(
+        "--output_path",
+        "-o",
+        type=str,
+        default="output",
+        help="Directory to save the prediction and explanation results."
+    )
+
     args = parser.parse_args()
 
     # post-processing for boolean
@@ -164,7 +171,8 @@ def parse_args():
         args.reference_policy,
         args.start,
         args.end,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        args.output_path,
     )
 
 
@@ -237,42 +245,10 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
     return explanation, explanation_p2p, segmented_explanation
 
 
-def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
-           complexity_p2p, complexity_segmented, local_accuracy, error, reference_policy):
-    if reference_policy not in r2s:
-        r2s[reference_policy] = []
-        error[reference_policy] = []
-        kendalls[reference_policy] = []
-        runtimes_backpropagated[reference_policy] = []
-        runtimes_p2p[reference_policy] = []
-        runtimes_segmented[reference_policy] = []
-        complexity_backpropagated[reference_policy] = []
-        complexity_p2p[reference_policy] = []
-        complexity_segmented[reference_policy] = []
-        local_accuracy[reference_policy] = 0
-
-    r2, kendall = (0.0, 0.0) if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
-    r2s[reference_policy].append(r2)
-    kendalls[reference_policy].append(kendall)
-    runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
-    runtimes_p2p[reference_policy].append(-1.0 if explanation_p2p is None else explanation_p2p.get_runtime())
-    runtimes_segmented[reference_policy].append(
-        -1.0 if segmented_explanation is None else segmented_explanation.get_runtime())
-    complexity_backpropagated[reference_policy].append(np.count_nonzero(explanation.explanation['coefficients']))
-    complexity_p2p[reference_policy].append(
-        -1.0 if explanation_p2p is None else np.count_nonzero(explanation_p2p.explanation['coefficients']))
-    complexity_segmented[reference_policy].append(
-        -1.0 if segmented_explanation is None else np.count_nonzero(
-            segmented_explanation.get_distributed_explanations_in_original_space()))
-    (respects_local_accuracy, delta) = explanation.check_explanation_local_accuracy_wrt_minirocket()
-    local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
-    error[reference_policy].append(delta)
-
-
 def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClassifier:
     mr_params = MINIROCKET_PARAMS_DICT[dataset_name]
     mr_params['diff'] = (mr_classifier_name == 'LogisticRegression')
-    model_path = 'experiments/data/{mr_classifier_name}.pkl'
+    model_path = f'experiments/data/{dataset_name}/{mr_classifier_name}.pkl'
     if os.path.exists(model_path):
         print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
@@ -282,9 +258,57 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
         classifier = MinirocketClassifier(minirocket_features_classifier=mr_classifier)
         classifier.fit(X_train, y_train, **MINIROCKET_PARAMS_DICT[dataset_name])
-        DataExporter.save_classifier(classifier, dataset_name)
+        mr_classifier_name = classifier.classifier.__class__.__name__
+        os.makedirs(f'experiments/data/{dataset_name}/', exist_ok=True)
+        classifier.save(f'experiments/data/{dataset_name}/{mr_classifier_name}.pkl')
     return classifier
 
+def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier, base_path: str, root_path: str):
+    reference_policy = explanation.explanation['reference_policy']
+    betas = explanation.explanation["coefficients"]
+    pd.DataFrame(betas).T.to_csv(f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
+    alphas = explanation.explanation["minirocket_coefficients"]
+    pd.DataFrame(alphas).to_csv(f"{base_path}/alphas_mr_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
+    instance = explanation.explanation["instance"]
+    pd.DataFrame(instance).T.to_csv(f"{base_path}/instance_{idx}.csv", header=False)
+    instance_transformed = explanation.explanation["instance_transformed"]
+    pd.DataFrame(instance_transformed).to_csv(f"{base_path}/mr_instance_{idx}.csv", header=False)
+    reference = explanation.explanation["reference"]
+    pd.DataFrame(reference).T.to_csv(f"{base_path}/reference_ref_policy_{reference_policy}_for_instance_{idx}.csv", header=False)
+    reference_transformed = explanation.explanation["reference_transformed"]
+    pd.DataFrame(reference_transformed).to_csv(f"{base_path}/mr_reference_ref_policy_{reference_policy}_for_instance_{idx}.csv", header=False)
+    biases = []
+    dilations = []
+    for tridx, trace in enumerate(explanation.explanation['traces']):
+        base_mask, dilated_mask = get_dilated_triplet_array(mmv.get_feature_signature(tridx, classifier.minirocket_params))
+        if not os.path.exists(f"{base_path}/base_mask_feature_{tridx}.csv"):
+            pd.Series(base_mask).T.to_csv(f"{root_path}/base_mask_feature_{tridx}.csv", header=False)
+        if not os.path.exists(f"{base_path}/dilated_mask_feature_{tridx}.csv"):
+            pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
+
+        convolved_instance = trace['conv_sum']
+        pd.DataFrame(convolved_instance).to_csv(f"{base_path}/convolved_instance_{idx}_feature_{tridx}.csv", header=False)
+        convolved_instance_after_sigma = trace['sigma']
+        pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)
+        biases.append(trace['bias_b'])
+        dilations.append(trace['dilation'])
+
+    biases_path = f"{root_path}/biases.csv"
+    if not os.path.exists(biases_path):
+        pd.Series(biases).T.to_csv(biases_path, header=False)
+
+    dilations_path = f"{root_path}/dilations.csv"
+    if not os.path.exists(dilations_path):
+        pd.Series(dilations).T.to_csv(dilations_path, header=False)
+
+    metadata_dict = {'instance_prediction': int(explanation.explanation['instance_prediction']),
+                     'instance_predicted_probability': float(explanation.explanation['instance_logit']),
+                     'reference_predicted_probability': float(explanation.explanation['reference_logit']),
+                     'reference_prediction': int(explanation.explanation['reference_prediction']),
+                     'instance_label': int(explanation.explanation['instance_label'])
+                    }
+    with open(f"{base_path}/metadata_ref_policy_{reference_policy}_instance_{idx}.json", "w") as fp:
+        json.dump(metadata_dict, fp)
 
 if __name__ == '__main__':
     (
@@ -297,7 +321,8 @@ if __name__ == '__main__':
         reference_policy,
         start,
         end,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        output_path
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -310,7 +335,9 @@ if __name__ == '__main__':
     print("start:", start)
     print("end:", end)
     print("compute_p2p_explanations:", compute_p2p_explanations)
+    print("output_path:", output_path)
 
+    os.makedirs(output_path, exist_ok=True)
     LABELS = ['predicted', 'training']
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
 
@@ -358,8 +385,9 @@ if __name__ == '__main__':
                                                          compute_segmented_explanations=False,
                                                          top_alpha=None)
                                 )
-                                explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
-                                                                               segmented_explanation)
+                                instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
+                                os.makedirs(instance_output_path, exist_ok=True)
+                                export(idx, explanation, classifier, instance_output_path, output_path + f'/{dataset_name}/{mr_classifier_name}')
 
 
 
