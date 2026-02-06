@@ -221,7 +221,7 @@ class MinirocketExplainer:
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
-                                 reference_policy, reference=None, top_alpha=None) -> dict:
+                                 reference_policy, reference=None, top_alpha=None, top_alpha_that_change_class=None) -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -242,16 +242,28 @@ class MinirocketExplainer:
                                                            lambda x : self.minirocket_classifier.predict_proba(x)[:,y_label],
                                                            X_background=np.array([reference_mr['phi'][0]]),
                                                            target=out_x['phi'][0])
+        y_ref_pred = self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0]
+        y_pred = self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0]
+
+        reference_logit = self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_pred]
+        instance_logit = self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_pred]
+
         alphas = classifier_explainer_fn(out_x['phi'])
         if alphas.shape[0] == 1:
             alphas = alphas[0]
-        if top_alpha is not None: ## Just focus on the top alpha scores
-            maxids = (-alphas).argsort()[:top_alpha]
+
+        backprogration = False
+        if top_alpha_that_change_class is not None:
+            alphas_to_backpropagate = self._retain_attributions_that_change_class(alphas, reference_logit, instance_logit)
+            backprogration = True
+        elif top_alpha is not None: ## Just focus on the top alpha scores
+            maxids = (-alphas).argsort()[:top_alpha] if reference_logit < instance_logit else alphas.argsort()[:top_alpha]
             print('Features:', print_dilated_triplet_array(get_feature_signature(maxids[0], self.minirocket_params)))
             mask = np.zeros_like(alphas, dtype=np.float64)
             for mid in maxids:
                 mask[mid] = alphas[mid]
             alphas_to_backpropagate = mask
+            backprogration = True
         else:
             alphas_to_backpropagate = alphas
         beta = back_propagate_attribution(alphas_to_backpropagate, out_x["traces"], x_target, reference,
@@ -259,8 +271,6 @@ class MinirocketExplainer:
         #if beta.shape[0] > 1:
         #    beta = beta.T
 
-        y_ref_pred = self.minirocket_classifier.predict(reference_mr['phi'][0].reshape(1, -1))[0]
-        y_pred = self.minirocket_classifier.predict(out_x['phi'][0].reshape(1, -1))[0]
         time_elapsed = time.perf_counter() - start
         print('Time elapsed (retropropagated): ', time_elapsed)
         return {'coefficients': beta, 'minirocket_coefficients': alphas,
@@ -270,9 +280,10 @@ class MinirocketExplainer:
                 'instance_label': y_label,
                 'reference_prediction': y_ref_pred,
                 'instance_prediction': y_pred,
-                'reference_logit': self.minirocket_classifier.predict_proba(reference_mr['phi'][0].reshape(1, -1))[0][y_pred],
-                'instance_logit': self.minirocket_classifier.predict_proba(out_x['phi'][0].reshape(1, -1))[0][y_pred],
-                'time_elapsed': time_elapsed, 'reference_policy': reference_policy
+                'reference_logit': reference_logit,
+                'instance_logit': instance_logit,
+                'time_elapsed': time_elapsed, 'reference_policy': reference_policy,
+                'backpropagated_features': alphas_to_backpropagate if backprogration else None,
                 }
 
     def get_reference(self, x_target, y, reference_policy) -> np.ndarray:
@@ -292,7 +303,7 @@ class MinirocketExplainer:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
-                          reference_policy = 'global_centroid', reference=None, top_alpha=None) -> Generator:
+                          reference_policy = 'global_centroid', reference=None, top_alpha=None, top_alpha_that_change_class=None) -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
@@ -308,12 +319,37 @@ class MinirocketExplainer:
             yield Explanation(self._explain_single_instance(X, y, classifier_explainer,
                                                             reference_policy,
                                                             reference,
-                                                            top_alpha=top_alpha))
+                                                            top_alpha=top_alpha,
+                                                            top_alpha_that_change_class=top_alpha_that_change_class))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],
                                                                 classifier_explainer, reference_policy,
-                                                                reference, top_alpha=top_alpha))
+                                                                reference, top_alpha=top_alpha,
+                                                                top_alpha_that_change_class=top_alpha_that_change_class))
+
+    def _retain_attributions_that_change_class(self, alphas, reference_logit, instance_logit):
+        sum = reference_logit
+        indexes = []
+        if reference_logit < instance_logit:
+            for idx in (-alphas).argsort():
+                if sum > 0.5:
+                    break
+                sum += alphas[idx]
+                indexes.append(idx)
+        else:
+            for idx in alphas.argsort():
+                if sum < 0.5:
+                    break
+                sum += alphas[idx]
+                indexes.append(idx)
+
+        mask = np.zeros_like(alphas, dtype=np.float64)
+        for mid in indexes:
+            mask[mid] = alphas[mid]
+        return mask
+
+
 
 class SegmentedMinirocketExplainer(MinirocketExplainer):
 

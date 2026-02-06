@@ -155,6 +155,15 @@ def parse_args():
         help="Directory to save the prediction and explanation results."
     )
 
+    parser.add_argument(
+        "--change_class_propagation",
+        "-c",
+        type=str,
+        default="yes",
+        choices=["yes", "no", "true", "false", "1", "0"],
+        help="Back-propagate attributions in decreasing order of importance until we switch class."
+    )
+
     args = parser.parse_args()
 
     # post-processing for boolean
@@ -173,6 +182,7 @@ def parse_args():
         args.end,
         compute_p2p_explanations,
         args.output_path,
+        args.change_class_propagation,
     )
 
 
@@ -213,12 +223,13 @@ MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num
 
 def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
                          reference_policy: str, compute_p2p_explanations=True, compute_segmented_explanations=True,
-                         top_alpha=None):
+                         top_alpha=None, top_alpha_that_change_class=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
                                                    classifier_explainer=explainer_method,
-                                                   reference_policy=reference_policy, top_alpha=top_alpha))[0]
+                                                   reference_policy=reference_policy,
+                                                   top_alpha=top_alpha, top_alpha_that_change_class=top_alpha_that_change_class))[0]
 
     ## Point to point explanation
     reference = explanation.get_reference()
@@ -266,7 +277,13 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
 def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier, base_path: str, root_path: str):
     reference_policy = explanation.explanation['reference_policy']
     betas = explanation.explanation["coefficients"]
-    pd.DataFrame(betas).T.to_csv(f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
+    betas_filename = f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv"
+    trace_ids = None
+    if explanation.explanation['backpropagated_features'] is not None:
+        trace_ids = np.nonzero(explanation.explanation['backpropagated_features'])[0]
+        betas_filename = betas_filename.replace('.csv', f'-top-{len(trace_ids)}.csv')
+
+    pd.DataFrame(betas).T.to_csv(betas_filename, header=False)
     alphas = explanation.explanation["minirocket_coefficients"]
     pd.DataFrame(alphas).to_csv(f"{base_path}/alphas_mr_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
     instance = explanation.explanation["instance"]
@@ -279,7 +296,12 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
     pd.DataFrame(reference_transformed).to_csv(f"{base_path}/mr_reference_ref_policy_{reference_policy}_for_instance_{idx}.csv", header=False)
     biases = []
     dilations = []
-    for tridx, trace in enumerate(explanation.explanation['traces']):
+
+    if trace_ids is None:
+        trace_ids = [i for i in range(len(explanation.explanation["traces"]))]
+
+    for tridx in trace_ids:
+        trace = explanation.explanation['traces'][tridx]
         base_mask, dilated_mask = get_dilated_triplet_array(mmv.get_feature_signature(tridx, classifier.minirocket_params))
         if not os.path.exists(f"{base_path}/base_mask_feature_{tridx}.csv"):
             pd.Series(base_mask).T.to_csv(f"{root_path}/base_mask_feature_{tridx}.csv", header=False)
@@ -322,7 +344,8 @@ if __name__ == '__main__':
         start,
         end,
         compute_p2p_explanations,
-        output_path
+        output_path,
+        change_class_propagation,
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -336,6 +359,7 @@ if __name__ == '__main__':
     print("end:", end)
     print("compute_p2p_explanations:", compute_p2p_explanations)
     print("output_path:", output_path)
+    print("change_class_propagation:", change_class_propagation)
 
     os.makedirs(output_path, exist_ok=True)
     LABELS = ['predicted', 'training']
@@ -383,7 +407,7 @@ if __name__ == '__main__':
                                                          reference_policy,
                                                          compute_p2p_explanations=False,
                                                          compute_segmented_explanations=False,
-                                                         top_alpha=None)
+                                                         top_alpha=topk, top_alpha_that_change_class=change_class_propagation)
                                 )
                                 instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
                                 os.makedirs(instance_output_path, exist_ok=True)
