@@ -252,10 +252,11 @@ class MinirocketExplainer:
         if alphas.shape[0] == 1:
             alphas = alphas[0]
 
-        backprogration = False
-        if top_alpha_that_change_class is not None:
-            alphas_to_backpropagate = self._retain_attributions_that_change_class(alphas, reference_logit, instance_logit)
-            backprogration = True
+        if top_alpha_that_change_class:
+            alphas_to_backpropagate = self._retain_attributions_that_change_class(alphas,
+                                                                                        reference_logit,
+                                                                                        instance_logit)
+            mask = alphas_to_backpropagate
         elif top_alpha is not None: ## Just focus on the top alpha scores
             maxids = (-alphas).argsort()[:top_alpha] if reference_logit < instance_logit else alphas.argsort()[:top_alpha]
             print('Features:', print_dilated_triplet_array(get_feature_signature(maxids[0], self.minirocket_params)))
@@ -263,9 +264,9 @@ class MinirocketExplainer:
             for mid in maxids:
                 mask[mid] = alphas[mid]
             alphas_to_backpropagate = mask
-            backprogration = True
         else:
             alphas_to_backpropagate = alphas
+            mask = None
         beta = back_propagate_attribution(alphas_to_backpropagate, out_x["traces"], x_target, reference,
                                           per_channel=is_multichannel, params=self.minirocket_params)
         #if beta.shape[0] > 1:
@@ -283,7 +284,7 @@ class MinirocketExplainer:
                 'reference_logit': reference_logit,
                 'instance_logit': instance_logit,
                 'time_elapsed': time_elapsed, 'reference_policy': reference_policy,
-                'backpropagated_features': alphas_to_backpropagate if backprogration else None,
+                'backpropagated_features': mask,
                 }
 
     def get_reference(self, x_target, y, reference_policy) -> np.ndarray:
@@ -345,9 +346,10 @@ class MinirocketExplainer:
                 indexes.append(idx)
 
         mask = np.zeros_like(alphas, dtype=np.float64)
+        filled_mask = mask.copy()
         for mid in indexes:
-            mask[mid] = alphas[mid]
-        return mask
+            filled_mask[mid] = alphas[mid]
+        return filled_mask
 
 
 

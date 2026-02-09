@@ -159,7 +159,7 @@ def parse_args():
         "--change_class_propagation",
         "-c",
         type=str,
-        default="yes",
+        default="no",
         choices=["yes", "no", "true", "false", "1", "0"],
         help="Back-propagate attributions in decreasing order of importance until we switch class."
     )
@@ -169,7 +169,7 @@ def parse_args():
     # post-processing for boolean
     should_export_data = args.dump_data.lower() in ("yes", "true", "1")
     compute_p2p_explanations = args.p2p_explanations.lower() in ("yes", "true", "1")
-
+    change_class_propagation = args.change_class_propagation in ("yes", "true", "1")
     return (
         should_export_data,
         args.datasets,
@@ -182,7 +182,7 @@ def parse_args():
         args.end,
         compute_p2p_explanations,
         args.output_path,
-        args.change_class_propagation,
+        change_class_propagation,
     )
 
 
@@ -281,7 +281,7 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
     trace_ids = None
     if explanation.explanation['backpropagated_features'] is not None:
         trace_ids = np.nonzero(explanation.explanation['backpropagated_features'])[0]
-        betas_filename = betas_filename.replace('.csv', f'-top-{len(trace_ids)}.csv')
+        betas_filename = betas_filename.replace('.csv', f'-changeclass-top-{len(trace_ids)}.csv')
 
     pd.DataFrame(betas).T.to_csv(betas_filename, header=False)
     alphas = explanation.explanation["minirocket_coefficients"]
