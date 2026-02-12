@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+
 
 
 # =========================
@@ -13,7 +15,7 @@ DATA_DIR = Path("perturbation-results")
 OUT_DIR = Path("./bar_charts_reference_policy")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPLAINER = "gradients"
+EXPLAINER = "stratoshap-k1"
 METRIC = "f_minus_f0-mean"
 #METRIC = "p2p_f_minus_f0-mean"
 LABEL = "predicted"
@@ -57,6 +59,7 @@ if PERTURBATION_POLICY != "gaussian":
         & (data["base_explainer"] == EXPLAINER) 
 	    & (data["label"] == LABEL) 
         & (data["perturbation_policy"] == PERTURBATION_POLICY)
+        & (data["mr_classifier"] == "LogisticRegression")
 	    
     ]
 else:
@@ -65,10 +68,18 @@ else:
         & (data["sigma"] == 3.0)
         & (data["base_explainer"] == EXPLAINER) 
 	    & (data["label"] == LABEL) 
-        & (data["perturbation_policy"] == PERTURBATION_POLICY)	    
+        & (data["perturbation_policy"] == PERTURBATION_POLICY)
+        & (data["mr_classifier"] == "LogisticRegression")
     ]
 
 # Normalize dataset names
+data["dataset"] = data["dataset"].str.replace(
+    r"^starlight-c.*",
+    "starlight",
+    regex=True,
+)
+REFERENCE_POLICIES = {'global_centroid': 'centroid', 'global_medoid': 'medoid'}
+
 data["dataset"] = data["dataset"].str.replace(
     r"^starlight-c.*",
     "starlight",
@@ -78,40 +89,63 @@ data["dataset"] = data["dataset"].str.replace(
 # -------------------------
 # Aggregate across runs
 # -------------------------
-agg = (
-    data
-    .groupby(["dataset", "reference_policy"])[METRIC]
-    .agg(["mean", "std"])
-    .reset_index()
-)
+#agg = (
+#    data
+#    .groupby(["dataset", "reference_policy"])[METRIC]
+#    .agg(["mean", "std"])
+#    .reset_index()
+#)
 
+
+
+# Use a clean style suitable for papers
+sns.set(style="whitegrid", context="paper")
 
 # =========================
-# Plot: one chart per dataset
+# Plot: one violin chart per dataset
 # =========================
-for dataset, g_ds in agg.groupby("dataset"):
-    g_ds = g_ds.sort_values("reference_policy")
+import seaborn as sns
 
-    x = np.arange(len(g_ds))
-    means = g_ds["mean"].values
-    stds = g_ds["std"].values
+sns.set(style="whitegrid", context="paper")
+
+# =========================
+# Plot: one boxplot per dataset
+# =========================
+for dataset, g_ds in data.groupby("dataset"):
 
     plt.figure(figsize=(7, 5))
 
-    plt.bar(
-        x,
-        means,
-        yerr=stds,
-        capsize=4,
+    order = sorted(g_ds["reference_policy"].unique())
+
+    ax = sns.boxplot(
+        data=g_ds,
+        x="reference_policy",
+        y=METRIC,
+        order=order,
+        width=0.6,
+        fliersize=3,        # size of outlier markers
+        linewidth=1.2,
     )
 
-    plt.xticks(x, g_ds["reference_policy"], rotation=20)
-    plt.ylabel(METRIC)
-    plt.title(f"{dataset} — {EXPLAINER}")
-    plt.grid(axis="y", alpha=0.3)
+    # Optional: overlay individual runs (recommended for small N)
+    sns.stripplot(
+        data=g_ds,
+        x="reference_policy",
+        y=METRIC,
+        order=order,
+        color="black",
+        size=3,
+        alpha=0.4,
+        jitter=0.15,
+    )
 
+    ax.set_ylabel(METRIC)
+    ax.set_xlabel("Reference policy")
+    ax.set_title(f"{dataset} — {EXPLAINER}")
+
+    plt.xticks(rotation=20)
     plt.tight_layout()
-    out_file = OUT_DIR / f"{dataset}_{EXPLAINER}_reference_policy.png"
+
+    out_file = OUT_DIR / f"{dataset}_{EXPLAINER}_reference_policy_boxplot.png"
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close()
-
