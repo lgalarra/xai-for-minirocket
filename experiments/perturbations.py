@@ -112,6 +112,10 @@ if __name__ == '__main__':
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
                                                'interpolation': [0.25, 0.5, 0.75, 1.0],
                                                'budget': [1]
+                    },
+                    'reference_to_instance_positive': {'percentile_cut': [90, 75, 50],
+                                  'interpolation': [0.25, 0.5, 0.75, 1.0],
+                                  'budget': [1]
                     }
     }
 
@@ -187,9 +191,14 @@ if __name__ == '__main__':
                                                                           policy=perturbation_policy, **args)
                                 del args['y']
                                 del args['n_perturbed_points']
-                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
-                                                                                       X_reference,
-                                                                                       PERTURBATIONS[perturbation_policy]['budget'][0])
+                                if perturbation_policy == 'reference_to_instance_positive':
+                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_reference, X_perturbed,
+                                                                                           X_test,
+                                                                                           PERTURBATIONS[perturbation_policy]['budget'][0])
+                                else:
+                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_perturbed,
+                                                                                           X_reference,
+                                                                                           PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['f_minus_f0'].append(to_sep_list(metric))
                                 df_results['f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['f_minus_f0-std'].append(np.std(metric))
@@ -200,7 +209,10 @@ if __name__ == '__main__':
 
                                 metric = norm_metric = change_ratio = [-1.0]
                                 if X_p2p_perturbed is not None:
-                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    if perturbation_policy == 'reference_to_instance_positive':
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_reference, X_p2p_perturbed, X_test, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    else:
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_p2p_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
                                 df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['p2p_f_minus_f0-std'].append(np.std(metric))
@@ -209,7 +221,11 @@ if __name__ == '__main__':
                                 df_results['p2p_f_minus_f0_norm-std'].append(np.std(norm_metric))
                                 df_results['p2p_f_minus_f0-change_ratio'].append(change_ratio)
 
-                                metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_segmented_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                if perturbation_policy == 'reference_to_instance_positive':
+                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_reference, X_segmented_perturbed, X_test, PERTURBATIONS[perturbation_policy]['budget'][0])
+
+                                else:
+                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test, X_segmented_perturbed, X_reference, PERTURBATIONS[perturbation_policy]['budget'][0])
                                 df_results['segmented_f_minus_f0'].append(to_sep_list(metric))
                                 df_results['segmented_f_minus_f0-mean'].append(np.mean(metric))
                                 df_results['segmented_f_minus_f0-std'].append(np.std(metric))

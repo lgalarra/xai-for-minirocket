@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import pyplot
 
 # =========================
 # Configuration
@@ -231,8 +232,10 @@ for dataset, g_ds in agg.groupby("dataset"):
             #     alpha=0.2,
             # )
 
-    plt.xlabel(EVOLUTION_FACTORS_LABELS[EVOLUTION_FACTOR])
-    plt.ylabel(Y_AXIS_LABEL)
+    plt.xlabel(EVOLUTION_FACTORS_LABELS[EVOLUTION_FACTOR], fontsize=24)
+    plt.ylabel(Y_AXIS_LABEL, fontsize=24)
+    plt.xticks(fontsize=24)
+    plt.yticks(fontsize=24)
     #plt.title(f"{dataset}")
     plt.grid(True, alpha=0.3)
     if dataset == 'ford-a':

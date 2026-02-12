@@ -89,5 +89,8 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
     elif policy == 'reference_to_instance':
         return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_explanations,
                                           filter_explanation_fn=lambda x: x if x<0.0 else 0.0, **args)
+    elif policy == 'reference_to_instance_positive':
+        return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_explanations,
+                                          filter_explanation_fn=lambda x: x if x>0.0 else 0.0, **args)
     else:
         raise ValueError(f"Unknown perturbation policy {policy}")
