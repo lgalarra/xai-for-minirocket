@@ -90,6 +90,14 @@ def get_starlightcurves_for_classification(target_class=None):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     return (univariate_series_transform(X_train), y_train), (univariate_series_transform(X_test), y_test)
 
+def get_handoutlines_for_classification(target_class=None):
+    X, y = load_UCR_UEA_dataset(name="HandOutlines", return_X_y=True)
+    X = X.iloc[:, 0].apply(pd.Series)
+    y = np.where(y != target_class, 0, 1)  # Asegura etiquetas 0/1
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    return (univariate_series_transform(X_train), y_train), (univariate_series_transform(X_test), y_test)
+
+
 def get_forda_for_classification():
     X, y = load_UCR_UEA_dataset(name="FordA", return_X_y=True)
     X = X.iloc[:, 0].apply(pd.Series)

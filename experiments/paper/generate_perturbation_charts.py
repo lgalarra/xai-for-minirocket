@@ -233,7 +233,7 @@ for dataset, g_ds in agg.groupby("dataset"):
 
     plt.xlabel(EVOLUTION_FACTORS_LABELS[EVOLUTION_FACTOR])
     plt.ylabel(Y_AXIS_LABEL)
-    plt.title(f"{dataset}")
+    #plt.title(f"{dataset}")
     plt.grid(True, alpha=0.3)
     if dataset == 'ford-a':
         plt.legend()
@@ -242,9 +242,9 @@ for dataset, g_ds in agg.groupby("dataset"):
             plt.legend(
              handles,
              labels,
-             fontsize=6,
-             ncol=3,
-             frameon=False, loc="upper right", handlelength=3.0, handleheight=1.5,
+             fontsize=14,
+             ncol=1,
+             frameon=False, loc="center right", handlelength=3.0, handleheight=1.5,
             )
 
     plt.tight_layout()
