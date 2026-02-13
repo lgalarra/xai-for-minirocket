@@ -1,9 +1,11 @@
 import ast
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import pyplot
+from matplotlib.ticker import MultipleLocator, MaxNLocator
 
 # =========================
 # Configuration
@@ -13,7 +15,7 @@ OUT_DIR = Path("./figures")       # output directory
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PERTURBATION_POLICY = 'gaussian'
 EVOLUTION_FACTOR = 'percentile_cut'
-EXPLANATION_METHOD = 'shap'
+EXPLANATION_METHOD = 'extreme_feature_coalitions'
 
 PROBABILITY_METRICS = [
     "f_minus_f0-mean",
@@ -184,7 +186,11 @@ EVOLUTION_FACTORS_LABELS = {"percentile_cut": "top-k% observations perturbed",
                             "sigma" : "perturbation scale (ρ)",
                             }
 
+min_y = np.min([data[m].min() for m in METRICS_LARGE_DATASETS ])
+max_y = np.min([data[m].max() for m in METRICS_LARGE_DATASETS ])
 
+min_x = data[EVOLUTION_FACTOR].min()
+max_x = data[EVOLUTION_FACTOR].max()
 
 for dataset, g_ds in agg.groupby("dataset"):
     g_ds = g_ds.sort_values(EVOLUTION_FACTOR)
@@ -211,44 +217,54 @@ for dataset, g_ds in agg.groupby("dataset"):
             std_col = metric.replace("mean", "std")
             x = g_exp[EVOLUTION_FACTOR]
             y = g_exp[metric]
-            # y_std = g_exp[std_col]
+            y_std = g_exp[std_col]
 
             # Plot mean curve
             plt.plot(
                 x,
                 y,
                 linestyle=LINESTYLES[metric],
+                linewidth=3,
                 marker=".",
                 color=color,
                 label=f"{explainer} | {METRICS_LABELS[metric]}" if EXPLANATION_METHOD is None else f"{METRICS_LABELS[metric]}",
             )
 
             # # Add variance band (mean ± std)
-            # plt.fill_between(
-            #     x,
-            #     y - y_std/2,
-            #     y + y_std/2,
+            #plt.fill_between(
+            #    x,
+            #     y - y_std,
+            #     y + y_std,
             #     color=color,
             #     alpha=0.2,
-            # )
+            #)
 
-    plt.xlabel(EVOLUTION_FACTORS_LABELS[EVOLUTION_FACTOR], fontsize=24)
-    plt.ylabel(Y_AXIS_LABEL, fontsize=24)
+    #plt.xlabel(EVOLUTION_FACTORS_LABELS[EVOLUTION_FACTOR], fontsize=24)
     plt.xticks(fontsize=24)
     plt.yticks(fontsize=24)
     #plt.title(f"{dataset}")
     plt.grid(True, alpha=0.3)
+    ax = plt.gca()
+    ax.set_ylim(min_y, max_y)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
     if dataset == 'ford-a':
+        plt.ylabel(Y_AXIS_LABEL, fontsize=24)
         plt.legend()
         handles, labels = plt.gca().get_legend_handles_labels()
         if handles:
             plt.legend(
              handles,
              labels,
-             fontsize=14,
-             ncol=1,
-             frameon=False, loc="center right", handlelength=3.0, handleheight=1.5,
+             fontsize=18,
+             ncol=2,
+             frameon=False, loc="upper left", handlelength=2.0, handleheight=1.5,
             )
+    else:
+        # Keep grid
+        ax.grid(True, axis="y")
+
+        # Remove tick marks and tick labels
+        ax.tick_params(axis='y', which='both', length=0, labelleft=False)
 
     plt.tight_layout()
     out_file = OUT_DIR / f"{dataset}_{explainer}_{EVOLUTION_FACTOR}.png"
