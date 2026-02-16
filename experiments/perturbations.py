@@ -74,18 +74,24 @@ if __name__ == '__main__':
     if len(sys.argv) > 5:
         THE_PERTURBATION = sys.argv[5]
 
+    THE_CLASSIFIER = None
+    if len(sys.argv) > 6:
+        THE_CLASSIFIER = sys.argv[6]
+
     DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a']
     if THE_DATASET is None:
         MR_CLASSIFIERS = {dataset: [
             [pickle.load(open(f"data/{dataset}/LogisticRegression.pkl", "rb")),
-             pickle.load(open(f"data/{dataset}/RandomForestClassifier.pkl", "rb"))
+             pickle.load(open(f"data/{dataset}/RandomForestClassifier.pkl", "rb")),
+             pickle.load(open(f"data/{dataset}/MLPClassifier.pkl", "rb"))
              ]
         ]
                           for dataset in DATASETS}
     else:
         MR_CLASSIFIERS = {
             THE_DATASET: [pickle.load(open(f"data/{THE_DATASET}/LogisticRegression.pkl", "rb")),
-                          pickle.load(open(f"data/{THE_DATASET}/RandomForestClassifier.pkl", "rb"))
+                          pickle.load(open(f"data/{THE_DATASET}/RandomForestClassifier.pkl", "rb")),
+                          pickle.load(open(f"data/{THE_DATASET}/MLPClassifier.pkl", "rb"))
                         ]
         }
 
@@ -97,6 +103,7 @@ if __name__ == '__main__':
         "starlight-c3": "get_starlightcurves_for_classification('3')",
 		"abnormal-heartbeat-c1": "get_abnormal_hearbeat_for_classification('1')",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        "handoutlines": "get_handoutlines_for_classification('1')"
     }
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
     #EXPLAINERS = ['gradients']
@@ -133,6 +140,8 @@ if __name__ == '__main__':
     if THE_PERTURBATION is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_PERTURBATION}.csv')
         PERTURBATIONS = {THE_PERTURBATION : PERTURBATIONS[THE_PERTURBATION]}
+    if THE_CLASSIFIER is not None:
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_CLASSIFIER}.csv')
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -152,6 +161,8 @@ if __name__ == '__main__':
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
+            if THE_CLASSIFIER is not None and classifier_name != THE_CLASSIFIER:
+                continue
             print('Classifier', classifier_name)
             for label in LABELS if THE_LABEL is None else [THE_LABEL]:
                 for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
