@@ -21,6 +21,7 @@ os.environ.setdefault("JOBLIB_START_METHOD", "threading")
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 
 import importlib
 
