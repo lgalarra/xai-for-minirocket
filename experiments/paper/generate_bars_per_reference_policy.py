@@ -17,11 +17,11 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 EXPLAINER = "shap"
 BASE_METRIC = "p2p_f_minus_f0"
-METRIC = BASE_METRIC + "-mean"
 #BASE_METRIC = "f_minus_f0"
+METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
-PERTURBATION_POLICY = "instance_to_reference"
-MODEL_NAME = "RandomForestClassifier"
+PERTURBATION_POLICY = "gaussian"
+#MODEL_NAME = "RandomForestClassifier"
 
 
 # =========================

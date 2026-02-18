@@ -278,10 +278,9 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
     reference_policy = explanation.explanation['reference_policy']
     betas = explanation.explanation["coefficients"]
     betas_filename = f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv"
-    trace_ids = None
-    if explanation.explanation['backpropagated_features'] is not None:
-        trace_ids = np.nonzero(explanation.explanation['backpropagated_features'])[0]
-        betas_filename = betas_filename.replace('.csv', f'-changeclass-top-{len(trace_ids)}.csv')
+    if explanation.explanation['selected_features'] is not None:
+        pd.Series(explanation.explanation['selected_features']).to_csv(f"{base_path}/selected_features_{idx}-top{len(explanation.explanation['selected_features'])}.csv")
+        betas_filename = betas_filename.replace('.csv', f'-changeclass-top-{len(explanation.explanation["selected_features"])}.csv')
 
     pd.DataFrame(betas).T.to_csv(betas_filename, header=False)
     alphas = explanation.explanation["minirocket_coefficients"]
@@ -297,8 +296,7 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
     biases = []
     dilations = []
 
-    if trace_ids is None:
-        trace_ids = [i for i in range(len(explanation.explanation["traces"]))]
+    trace_ids = [i for i in range(len(explanation.explanation["traces"]))]
 
     for tridx in trace_ids:
         trace = explanation.explanation['traces'][tridx]

@@ -252,16 +252,17 @@ class MinirocketExplainer:
         if alphas.shape[0] == 1:
             alphas = alphas[0]
 
+        selected_features = None
         if top_alpha_that_change_class:
-            alphas_to_backpropagate = self._retain_attributions_that_change_class(alphas,
+            alphas_to_backpropagate, selected_features = self._retain_attributions_that_change_class(alphas,
                                                                                         reference_logit,
                                                                                         instance_logit)
             mask = alphas_to_backpropagate
         elif top_alpha is not None: ## Just focus on the top alpha scores
-            maxids = (-alphas).argsort()[:top_alpha] if reference_logit < instance_logit else alphas.argsort()[:top_alpha]
-            print('Features:', print_dilated_triplet_array(get_feature_signature(maxids[0], self.minirocket_params)))
+            selected_features = (-alphas).argsort()[:top_alpha] if reference_logit < instance_logit else alphas.argsort()[:top_alpha]
+            print('Features:', print_dilated_triplet_array(get_feature_signature(selected_features[0], self.minirocket_params)))
             mask = np.zeros_like(alphas, dtype=np.float64)
-            for mid in maxids:
+            for mid in selected_features:
                 mask[mid] = alphas[mid]
             alphas_to_backpropagate = mask
         else:
@@ -285,6 +286,7 @@ class MinirocketExplainer:
                 'instance_logit': instance_logit,
                 'time_elapsed': time_elapsed, 'reference_policy': reference_policy,
                 'backpropagated_features': mask,
+                'selected_features': selected_features
                 }
 
     def get_reference(self, x_target, y, reference_policy) -> np.ndarray:
@@ -334,13 +336,13 @@ class MinirocketExplainer:
         indexes = []
         if reference_logit < instance_logit:
             for idx in (-alphas).argsort():
-                if sum > 0.5:
+                if sum > 0.5 or alphas[idx] == 0.0:
                     break
                 sum += alphas[idx]
                 indexes.append(idx)
         else:
             for idx in alphas.argsort():
-                if sum < 0.5:
+                if sum < 0.5 or alphas[idx] == 0.0:
                     break
                 sum += alphas[idx]
                 indexes.append(idx)
@@ -349,7 +351,7 @@ class MinirocketExplainer:
         filled_mask = mask.copy()
         for mid in indexes:
             filled_mask[mid] = alphas[mid]
-        return filled_mask
+        return filled_mask, indexes
 
 
 
