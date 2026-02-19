@@ -279,7 +279,7 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
     betas = explanation.explanation["coefficients"]
     betas_filename = f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv"
     if explanation.explanation['selected_features'] is not None:
-        pd.Series(explanation.explanation['selected_features']).to_csv(f"{base_path}/selected_features_{idx}-top{len(explanation.explanation['selected_features'])}.csv")
+        pd.Series(explanation.explanation['selected_features']).to_csv(f"{base_path}/selected_features_{idx}-top{len(explanation.explanation['selected_features'])}.csv", header=False)
         betas_filename = betas_filename.replace('.csv', f'-changeclass-top-{len(explanation.explanation["selected_features"])}.csv')
 
     pd.DataFrame(betas).T.to_csv(betas_filename, header=False)

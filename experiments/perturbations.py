@@ -34,7 +34,8 @@ from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification, COGNITIVE_CIRCLES_CHANNELS,
-                   cognitive_circles_get_sorted_channels_from_df, get_abnormal_hearbeat_for_classification)
+                   cognitive_circles_get_sorted_channels_from_df, get_abnormal_hearbeat_for_classification,
+                   get_handoutlines_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 
@@ -79,7 +80,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 6:
         THE_CLASSIFIER = sys.argv[6]
 
-    DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a']
+    DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a', 'handoutlines']
     if THE_DATASET is None:
         MR_CLASSIFIERS = {dataset: [
             [pickle.load(open(f"data/{dataset}/LogisticRegression.pkl", "rb")),
