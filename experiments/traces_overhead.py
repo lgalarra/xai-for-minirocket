@@ -37,7 +37,7 @@ from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification, COGNITIVE_CIRCLES_CHANNELS,
-                   cognitive_circles_get_sorted_channels_from_df)
+                   cognitive_circles_get_sorted_channels_from_df, get_handoutlines_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
 from approximation import MINIROCKET_PARAMS_DICT
@@ -63,9 +63,10 @@ if __name__ == '__main__':
     DATASET_FETCH_FUNCTIONS = {
         "ford-a": "get_forda_for_classification()",
         "starlight-c1": "get_starlightcurves_for_classification('1')",
-        #"starlight-c2": "get_starlightcurves_for_classification('2')",
-        #"starlight-c3": "get_starlightcurves_for_classification('3')",
+        "starlight-c2": "get_starlightcurves_for_classification('2')",
+        "starlight-c3": "get_starlightcurves_for_classification('3')",
         "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        "handoutlines": "get_handoutlines_for_classification('1')"
     }
 
     # In[42]:
