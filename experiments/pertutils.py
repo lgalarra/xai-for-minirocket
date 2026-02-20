@@ -67,6 +67,17 @@ def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, *
     percentile_vector = percentile_mask(masked_explanation)
     return apply_explanation_mask(xto, xfrom, percentile_vector, kwargs['interpolation'])
 
+def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray):
+    lengths = set([len(X[i][0]) for i in range(len(X)) if hasattr(X[i][0], "__len__")])
+    max_length = max(lengths)
+    print(f'Ensuring consistency, all series must have size {max_length}')
+    indices_to_remove = set([i for i in range(len(X)) if hasattr(X[i][0], "__len__") and len(X[i][0]) != max_length])
+    print(indices_to_remove, lengths)
+    X = np.array([x for x in X if hasattr(x[0], "__len__") and len(x[0]) == max_length])
+    X1 = np.array([x for idx, x in enumerate(X1) if idx not in indices_to_remove])
+    X2 = np.array([x for idx, x in enumerate(X2) if idx not in indices_to_remove])
+    return X, X1, X2
+
 def get_perturbations(X_target, X_references, X_explanations, explainer_method, policy='gaussian', **args):
     if policy == 'gaussian':
         if explainer_method == 'gradients' and 'y' in args:
