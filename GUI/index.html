@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MiniROCKET Kernel Explorer</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body class="noInstance">
+  <header>
+    <div class="top-bar">
+      <div class="top-actions" id="topActions">
+        <label class="inline">Dataset
+          <select class="select small" id="peDataset">
+            <option value="abnormal-heartbeat-c1" selected>abnormal-heartbeat-c1</option>
+          </select>
+        </label>
+        <label class="inline">Label
+          <select class="select small" id="peLabel">
+            <option value="predicted" selected>predicted</option>
+            <option value="true">true</option>
+          </select>
+        </label>
+        <label class="inline">Model
+          <select class="select small" id="peModel">
+            <option value="LogisticRegression" selected>LogisticRegression</option>
+          </select>
+        </label>
+        <label class="inline">Explainer
+          <select class="select small" id="peExplainer">
+            <option value="shap" selected>shap</option>
+          </select>
+        </label>
+        <label class="inline">Reference
+          <select class="select small" id="peRefPolicy">
+            <option value="opposite_class_farthest_instance" selected>opposite farthest</option>
+            <option value="same_class_nearest_instance">same nearest</option>
+          </select>
+        </label>
+        <label class="inline">Instance
+          <select class="select small" id="peInstance" disabled>
+            <option value="">—</option>
+          </select>
+        </label>
+        <button class="btn primary" id="peLoadBtn" disabled>Load</button>
+        <button class="btn" id="peOpenTabBtn" disabled title="Open this instance in a new tab">Open tab</button>
+      </div>
+      <div class="instanceTabs" id="instanceTabs" aria-label="Open instances"></div>
+    </div>
+  </header>
+
+  <details class="tpDetails" id="peAdvanced">
+    <summary>Generate new instance files</summary>
+    <div class="tpDetailsBody">
+      <div class="peRow2">
+        <label class="peField">
+          <span class="peLabel">Start</span>
+          <input id="peStartNum" type="number" min="0" step="1" value="22" />
+        </label>
+        <label class="peField">
+          <span class="peLabel">End (exclusive)</span>
+          <input id="peEndNum" type="number" min="1" step="1" value="23" />
+        </label>
+      </div>
+      <div class="peField">
+        <div class="peLabel">Propagate to change class (-c)</div>
+        <div class="radioRow">
+          <label class="radio"><input type="radio" name="pePropagate" value="yes" checked /> yes</label>
+          <label class="radio"><input type="radio" name="pePropagate" value="no" /> no</label>
+        </div>
+      </div>
+      <label class="peField" id="peTopTField">
+        <span class="peLabel">Top-t MiniROCKET features (-t)</span>
+        <input id="peTopT" type="number" min="1" step="1" placeholder="(optional)" disabled />
+        <div class="muted">Enabled only when propagate = no. If set, uses -t and omits -c.</div>
+      </label>
+      <div class="peActions">
+        <button class="btn primary" id="peRunBtn">Run</button>
+        <button class="btn" id="peCopyBtn" title="Copy CLI command">Copy</button>
+        <span class="kbd" id="peRunStatus">—</span>
+      </div>
+      <pre class="cmd" id="peCmd"></pre>
+      <div class="progressWrap" id="peProgressWrap" hidden>
+        <div class="progressTop">
+          <div class="muted" id="peProgressText">Running…</div>
+          <div class="kbd" id="peProgressPct">—</div>
+        </div>
+        <div class="progressBar indeterminate" id="peProgressBar">
+          <div class="progressFill" id="peProgressFillBar"></div>
+        </div>
+        <pre class="log" id="peLog"></pre>
+      </div>
+    </div>
+  </details>
+
+  <div class="layout">
+    <aside class="split">
+
+      <div class="card" id="instanceDetailsCard">
+        <h2>Reference vs Instance</h2>        
+
+        <div id="instanceMetaGrid" class="instanceMetaGrid" hidden>
+
+          <div class="slopeRow">
+            <svg id="instanceSlopeChart" class="slopeSvg"
+              aria-label="Reference vs instance prediction probabilities"></svg>
+          </div>
+
+          <!-- <div class="muted" id="instanceMetaFootnote"></div> -->
+
+        </div>
+      </div>
+
+      <div class="card" id="featureDetailsCard">
+        <h2>Feature</h2>
+        <div class="controls" style="margin-bottom:10px">
+          <label class="inline">Feature #
+            <input id="featureIdx" type="number" min="0" max="923" step="1" value="0" />
+          </label>
+          <button class="btn" id="goFeature">Go</button>
+          <span class="kbd" id="featureInfo"></span>
+        </div>
+        <div class="picker" id="kernelPickerCard" style="margin-top:8px;">
+          <div class="row" style="margin-bottom:6px">
+            <div class="muted"><b>Kernel</b></div>
+          </div>
+          <div class="picker-btn" id="kernelPickerBtn" aria-expanded="false" role="button" tabindex="0">
+            <div class="picker-top">
+              <div>
+                <span class="kid" id="selectedKernelId">K00</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span id="selectedKernelDesc">Local bump contrast (centered)</span>
+              </div>
+            </div>
+            <svg id="selectedKernelPlot" class="kernelMini" aria-label="Kernel plot preview"></svg>
+          </div>
+          <div class="dropdown" id="kernelDropdown">
+            <input id="kernelSearch" type="text" placeholder="Search by id or description..." />
+            <div id="kernelList"></div>
+            <div class="footer-note">
+              MiniROCKET uses the full set of 84 length-9 kernels with three <span class="kbd">2</span>s and six <span
+                class="kbd">-1</span>s
+              (i.e., all <span class="kbd">C(9,3)</span> combinations).
+            </div>
+          </div>
+        </div>
+        <div class="rangeRow">
+          <div class="rangeTop">
+            <div class="muted"><b>Dilation</b> <span class="kbd" id="dilationLabel">d = 1</span></div>
+          </div>
+          <div class="rangeBar" aria-label="Dilation slider">
+            <div class="rangeFill" id="dilationFill"></div>
+            <div class="rangeMarker" id="dilationMarker"></div>
+            <input id="dilationSlider" type="range" min="1" max="256" step="1" value="1" aria-label="Dilation slider" />
+          </div>
+        </div>
+        <div class="rangeRow">
+          <div class="rangeTop">
+            <div class="muted"><b>Threshold</b> <span class="kbd" id="thresholdLabel">thr = 0.00</span></div>
+            <div class="muted" id="thresholdBounds">—</div>
+          </div>
+          <div class="rangeBar" aria-label="Threshold slider">
+            <div class="rangeFill warnfill" id="thresholdFill"></div>
+            <div class="rangeMarker warnmarker" id="thresholdMarker"></div>
+            <input id="thresholdSlider" type="range" min="0" max="1" step="0.001" value="0"
+              aria-label="Threshold slider" />
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="muted" id="seriesInfo">—</div>
+      </div>
+      <button class="btn" id="resetZoom" style="width:100%; margin-top:10px;">Reset zoom</button>
+    </aside>
+
+    <main class="split tight">
+      <div class="card" id="featureCard" style="position:relative;">
+        <div class="row" style="margin-bottom:6px">
+          <h2>MiniROCKET embedding (top) and StratosSHAP α attributions (bottom)</h2>
+          <div class="legend">
+            <span style="font-weight: bold; color: black;">Embeddings</span>
+            <span><span class="dot" style="background: rgba(37,99,235,.70)"></span>higher attribution</span>
+            <span><span class="dot" style="background: rgba(17,24,39,.10)"></span>near zero</span>
+          </div>
+        </div>
+        <svg id="featureOverview" aria-label="MiniROCKET embedding and attributions overview"></svg>
+        <div class="tooltip" id="featureTooltip"></div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <h2>Time series</h2>
+          <label class="inline" style="gap:8px;">
+            <input id="showReference" type="checkbox" />
+            <span>Show reference</span>
+          </label>
+          <input id="align" type="range" min="0" max="0" step="1" value="0" style="display:none" aria-hidden="true"
+            tabindex="-1" />
+          <span class="kbd" id="alignLabel" style="width: 120px;">t = 0</span>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(37,99,235,.85)"></span>series</span>
+            <span><span class="dot" style="background: rgba(99,102,241,.85)"></span>reference</span>
+            <span><span class="dot" style="background: rgba(245,158,11,.65)"></span>alignment handle</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.60)"></span>positive taps (w=2)</span>
+            <span><span class="dot" style="background: rgba(239,68,68,.55)"></span>negative taps (w=-1)</span>
+          </div>
+        </div>
+        <svg id="seriesChart"></svg>
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:6px">
+          <h2>Convolution response</h2>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(16,185,129,.75)"></span>response</span>
+            <span><span class="dot" style="background: rgba(245,158,11,.75)"></span>threshold</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.18)"></span>area above threshold</span>
+          </div>
+        </div>
+        <svg id="convChart"></svg>
+        <div class="hint" id="summary"></div>
+      </div>
+    </main>
+  </div>
+
+  
+  <script src="./app.js"></script>
+  
+
+</body>
+
+</html>

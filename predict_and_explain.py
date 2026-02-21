@@ -196,8 +196,7 @@ DATASET_FETCH_FUNCTIONS = {
     "starlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
     "cognitive-circles": (
         "get_cognitive_circles_data_for_classification('data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
-        [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in
-         cognitive_circles_get_sorted_channels_from_df(data_dir='data/cognitive-circles')]
+        list(COGNITIVE_CIRCLES_CHANNELS.items())
     )
 }
 
@@ -426,3 +425,5 @@ if __name__ == '__main__':
 
 
 
+
+# %%
