@@ -27,7 +27,7 @@ UNITS = {
     "starlight-c1": ["m"], "starlight-c2": ["m"], "starlight-c3": ["m"],
     "abnormal-heartbeat-c0": ["m"], "abnormal-heartbeat-c1": ["m"],
     "abnormal-heartbeat-c2": ["m"], "abnormal-heartbeat-c3": ["m"],
-    "abnormal-heartbeat-c4": ["m"],
+    "abnormal-heartbeat-c4": ["m"], "handoutlines": ["cm"]
 }
 
 DESCRIPTIONS = {
@@ -38,14 +38,15 @@ DESCRIPTIONS = {
     "abnormal-heartbeat-c1": ["Amplitude Change"],
     "abnormal-heartbeat-c2": ["Amplitude Change"],
     "abnormal-heartbeat-c3": ["Amplitude Change"],
-    "abnormal-heartbeat-c4": ["Amplitude Change"]
+    "abnormal-heartbeat-c4": ["Amplitude Change"],
+    "handoutlines": ["X"]
 }
 
 CHANNELS = {'ford-a': ['C'],
             'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
             'starlight-c1': ['B'], 'starlight-c2': ['B'], 'starlight-c3': ['B'],
             'abnormal-heartbeat-c0': ['A'], 'abnormal-heartbeat-c1': ['A'], 'abnormal-heartbeat-c2': ['A'],
-            'abnormal-heartbeat-c3': ['A'], 'abnormal-heartbeat-c4': ['A']
+            'abnormal-heartbeat-c3': ['A'], 'abnormal-heartbeat-c4': ['A'], "handoutlines": ["X"]
             }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
@@ -57,7 +58,7 @@ CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'D
            'abnormal-heartbeat-c1': ['Extra Stole', 'Other'],
            'abnormal-heartbeat-c2': ['Murmur', 'Other'],
            'abnormal-heartbeat-c3': ['Normal', 'Other'],
-           'abnormal-heartbeat-c4': ['ExtraHLS', 'Other']
+           'abnormal-heartbeat-c4': ['ExtraHLS', 'Other'], 'handoutlines': ['Correct', 'Incorrect']
            }
 
 METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}

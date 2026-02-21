@@ -13,6 +13,7 @@ import pickle
 
 from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
+from sklearn.neural_network import MLPClassifier
 
 from explainer import Explanation
 from exputils import to_sep_list
@@ -33,7 +34,7 @@ importlib.reload(mmv)
 from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
-                   get_starlightcurves_for_classification,
+                   get_starlightcurves_for_classification, get_handoutlines_for_classification,
                    get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS, COGNITIVE_CIRCLES_BASIC_CHANNELS,
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
@@ -167,7 +168,9 @@ def parse_args():
         compute_p2p_explanations
     )
 
-MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression, 'RandomForestClassifier': RandomForestClassifier}
+MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
+                  'RandomForestClassifier': RandomForestClassifier,
+                  'MLPClassifier' : MLPClassifier}
 
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
@@ -183,7 +186,8 @@ DATASET_FETCH_FUNCTIONS = {
         "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
         [(x, COGNITIVE_CIRCLES_CHANNELS[x]) for x in
          cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')]
-        )
+        ),
+    "handoutlines" : ("get_handoutlines_for_classification('1')", [('X', 'X')])
 }
 
 def build_map_of_already_trained_classifiers(datasets: list, classifiers):
@@ -195,12 +199,13 @@ def build_map_of_already_trained_classifiers(datasets: list, classifiers):
 MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(['starlight-c1', 'starlight-c2', 'starlight-c3',
                                              'abnormal-heartbeat-c0', 'abnormal-heartbeat-c1',
                                           'abnormal-heartbeat-c2', 'abnormal-heartbeat-c3',
-                                          'abnormal-heartbeat-c4', 'ford-a', 'cognitive-circles'],
-                                                                                     ['LogisticRegression', 'RandomForestClassifier'])
+                                          'abnormal-heartbeat-c4', 'ford-a', 'cognitive-circles', 'handoutlines'],
+                                                                                     ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
 
 
 MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
                           'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
+                          'handoutlines': {'num_features': 500},
                           'cognitive-circles': {'num_features': 1000},
                           'abnormal-heartbeat-c0' : {'num_features': 1000},
                           'abnormal-heartbeat-c1' : {'num_features': 1000},

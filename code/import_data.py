@@ -77,7 +77,11 @@ class DataImporter:
 
         for series_dict in [references, explanations, p2p_explanations, segmented_explanations]:
             for _k, v in series_dict.items():
-                series_dict[_k] = np.array(v)
+                try:
+                    series_dict[_k] = np.array(v)
+                except:
+                    pass
+
 
         return np.array(instances), np.array(ys), references, explanations, p2p_explanations, segmented_explanations
 
