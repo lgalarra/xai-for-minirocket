@@ -15,12 +15,12 @@ DATA_DIR = Path("perturbation-results")
 OUT_DIR = Path("./bar_charts_reference_policy")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPLAINER = "shap"
-BASE_METRIC = "p2p_f_minus_f0"
-#BASE_METRIC = "f_minus_f0"
+EXPLAINER = "gradients"
+#BASE_METRIC = "p2p_f_minus_f0"
+BASE_METRIC = "f_minus_f0"
 METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
-PERTURBATION_POLICY = "gaussian"
+PERTURBATION_POLICY = "instance_to_reference"
 #MODEL_NAME = "RandomForestClassifier"
 
 
@@ -47,7 +47,7 @@ for csv_file in DATA_DIR.glob("*.csv"):
     dfs.append(df)
 
 data = pd.concat(dfs, ignore_index=True)
-data = data.drop(data[(data["mr_classifier"] == "RandomForestClassifier") 
+data = data.drop(data[(data["mr_classifier"] != "LogisticRegression")
 & (data["base_explainer"] == "gradients")].index)
 
 # -------------------------
