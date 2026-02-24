@@ -15,7 +15,9 @@ OUT_DIR = Path("./figures")       # output directory
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PERTURBATION_POLICY = 'gaussian'
 EVOLUTION_FACTOR = 'percentile_cut'
-EXPLANATION_METHOD = 'shap'
+EXPLANATION_METHOD = 'gradients'
+MODEL = None
+#MODEL = "MLPClassifier"
 
 PROBABILITY_METRICS = [
     "f_minus_f0-mean",
@@ -81,6 +83,9 @@ if EVOLUTION_FACTOR != "sigma":
 if EXPLANATION_METHOD is not None:
     data = data[data["base_explainer"] == EXPLANATION_METHOD]
 
+if MODEL is not None:
+    data = data[data["mr_classifier"] == MODEL]
+
 
 data["dataset"] = data["dataset"].str.replace(
     r"^starlight-c.*",
@@ -103,7 +108,7 @@ data["p2p_f_minus_f0-change_ratio"] = pd.to_numeric(data["p2p_f_minus_f0-change_
 # exclude (mr_classifier == RF) AND (base_explainer == gradients)
 data = data[
     ~(
-        (data["mr_classifier"] == "RandomForestClassifier")
+        (data["mr_classifier"] != "LogisticRegression")
         & (data["base_explainer"] == "gradients")
     )
 ]
@@ -248,7 +253,8 @@ for dataset, g_ds in agg.groupby("dataset"):
     #plt.title(f"{dataset}")
     plt.grid(True, alpha=0.3)
     ax = plt.gca()
-    ax.set_ylim(min_y, max_y)
+    if EXPLANATION_METHOD != 'gradients':
+        ax.set_ylim(min_y, max_y)
     ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
     plt.legend()
     handles, labels = plt.gca().get_legend_handles_labels()
@@ -258,7 +264,9 @@ for dataset, g_ds in agg.groupby("dataset"):
             labels,
             fontsize=24,
             ncol=2,
-            frameon=False, loc="upper left", handlelength=2.0, handleheight=1.5, columnspacing=1.0
+            frameon=False, loc="upper left" if dataset != 'handoutlines' else "center left",
+            handlelength=2.0, handleheight=1.5,
+            columnspacing=1.0
         )
 
     if dataset == 'ford-a':
@@ -271,6 +279,6 @@ for dataset, g_ds in agg.groupby("dataset"):
         ax.tick_params(axis='y', which='both', length=0, labelleft=False)
 
     plt.tight_layout()
-    out_file = OUT_DIR / f"{dataset}_{explainer}_{EVOLUTION_FACTOR}.png"
+    out_file = OUT_DIR / f"{dataset}_{explainer}_{EVOLUTION_FACTOR}_{MODEL}.png"
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close()

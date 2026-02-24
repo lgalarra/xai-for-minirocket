@@ -15,12 +15,12 @@ DATA_DIR = Path("perturbation-results")
 OUT_DIR = Path("./bar_charts_reference_policy")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPLAINER = "gradients"
+EXPLAINER = "extreme_feature_coalitions"
 #BASE_METRIC = "p2p_f_minus_f0"
 BASE_METRIC = "f_minus_f0"
 METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
-PERTURBATION_POLICY = "instance_to_reference"
+PERTURBATION_POLICY = "gaussian"
 #MODEL_NAME = "RandomForestClassifier"
 
 
@@ -79,23 +79,11 @@ data["dataset"] = data["dataset"].str.replace(
 )
 REFERENCE_POLICIES = {'global_centroid': 'centroid', 'global_medoid': 'medoid'}
 
-data["dataset"] = data["dataset"].str.replace(
-    r"^starlight-c.*",
-    "starlight",
-    regex=True,
-)
-
 data["mr_classifier"] = data["mr_classifier"].replace({'LogisticRegression': 'LR', 'RandomForestClassifier': 'RF', 'MLPClassifier': 'MLP'})
 data["reference_policy"] = data["reference_policy"].replace(
     {'global_centroid': 'centroid', 'global_medoid': 'medoid',
      'opposite_class_centroid': 'enemy centroid', 'opposite_class_medoid': 'enemy medoid',
      'opposite_class_farthest_instance': 'farthest enemy', 'opposite_class_closest_instance': 'closest enemy'})
-
-data["dataset"] = data["dataset"].str.replace(
-    r"^starlight-c.*",
-    "starlight",
-    regex=True,
-)
 
 data["dataset"] = data["dataset"].str.replace(
     r"^abnormal-heartbeat-c.*",
@@ -130,9 +118,9 @@ data = data.rename(columns={f"{BASE_METRIC}_list": f"{BASE_METRIC}_value"})
 #    .agg(["mean", "std"])
 #    .reset_index()
 #)
-METRICS_LABELS = {"f_minus_f0-mean": "avg. Δf", "p2p_f_minus_f0-mean": "avg. Δf",
-                  "segmented_f_minus_f0-mean": "avg. Δf", "f_minus_f0-change_ratio": "avg. Δf",
-                  "p2p_f_minus_f0-change_ratio": "avg. Δf", "segmented_f_minus_f0-change_ratio": "avg. Δf"
+METRICS_LABELS = {"f_minus_f0-mean": "avg. Δf - Probability drop", "p2p_f_minus_f0-mean": "avg. Δf",
+                  "segmented_f_minus_f0-mean": "avg. Δf - Probability drop", "f_minus_f0-change_ratio": "avg. Δf - Probability drop",
+                  "p2p_f_minus_f0-change_ratio": "avg. Δf - Probability drop", "segmented_f_minus_f0-change_ratio": "avg. Δf - Probability drop"
                   }
 
 EXPLAINER_LABELS = {'shap': 'SHAP', 'stratoshap-k1': 'ST-SHAP',
@@ -176,16 +164,17 @@ for dataset, g_ds in data.groupby("dataset"):
         linewidth=1.1,
     )
 
-    ax.set_ylabel(METRICS_LABELS[METRIC])
-    ax.set_xlabel("Reference policy")
-    ax.set_title(f"{dataset} — {EXPLAINER_LABELS[EXPLAINER]}")
+    ax.set_ylabel(METRICS_LABELS[METRIC], fontsize=18)
+    #ax.set_xlabel("Reference policy")
+    #ax.set_title(f"{dataset} — {EXPLAINER_LABELS[EXPLAINER]}")
 
-    plt.xticks(rotation=20)
+    plt.xticks(rotation=20, fontsize=14)
+    plt.yticks(fontsize=14)
     #plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
     ax.legend(
         title="Model",
         loc="best",
-        frameon=True
+        frameon=True,
     )
     plt.tight_layout()
 
