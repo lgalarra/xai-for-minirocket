@@ -163,7 +163,7 @@ for dataset, g_ds in data.groupby("dataset"):
         fliersize=2,
         linewidth=1.1,
     )
-
+    ax.set_xlabel("")
     ax.set_ylabel(METRICS_LABELS[METRIC], fontsize=18)
     #ax.set_xlabel("Reference policy")
     #ax.set_title(f"{dataset} — {EXPLAINER_LABELS[EXPLAINER]}")
