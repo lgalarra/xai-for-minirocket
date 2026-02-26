@@ -42,13 +42,12 @@ from sklearn.metrics import accuracy_score, r2_score
 
 if __name__ == '__main__':
 
-    DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a', 'handoutlines']
+    DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a', 'handoutlines', 'abnormal-heartbeat-c1']
     MR_CLASSIFIERS = {dataset: [
-        [pickle.load(open(f"data/{dataset}/LogisticRegression.pkl", "rb")),
+        pickle.load(open(f"data/{dataset}/LogisticRegression.pkl", "rb")),
          pickle.load(open(f"data/{dataset}/RandomForestClassifier.pkl", "rb")),
          pickle.load(open(f"data/{dataset}/MLPClassifier.pkl", "rb"))
-         ]
-    ]  for dataset in DATASETS}
+         ] for dataset in DATASETS}
 
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
@@ -72,6 +71,7 @@ if __name__ == '__main__':
         data_importer = DataImporter(dataset_name)
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
+            all_classifiers.add(classifier_name)
             y_test_pred = classifier.predict(X_test)
             acc = accuracy_score(y_test, y_test_pred)
             print(f"Accuracy on test set ({dataset_name}): {acc}")
@@ -80,7 +80,8 @@ if __name__ == '__main__':
 
     # Sort columns for reproducibility
     all_classifiers = sorted(all_classifiers)
-
+    print(results)
+    # ---- LaTeX table generation ----
     # ---- LaTeX table generation ----
 
     latex = []
@@ -93,3 +94,22 @@ if __name__ == '__main__':
     header = "Dataset & " + " & ".join(all_classifiers) + r" \\"
     latex.append(header)
     latex.append(r"\midrule")
+
+    # Rows
+    for dataset_name in sorted(results.keys()):
+        row = [dataset_name]
+        for clf in all_classifiers:
+            if clf in results[dataset_name]:
+                row.append(f"{results[dataset_name][clf]:.3f}")
+            else:
+                row.append("--")
+        latex.append(" & ".join(row) + r" \\")
+
+    latex.append(r"\bottomrule")
+    latex.append(r"\end{tabular}")
+    latex.append(r"\caption{Test accuracy for each classifier and dataset}")
+    latex.append(r"\label{tab:accuracy_results}")
+    latex.append(r"\end{table}")
+
+    # Print LaTeX table
+    print("\n".join(latex))
