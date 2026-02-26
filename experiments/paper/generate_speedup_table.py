@@ -103,8 +103,8 @@ latex_lines.append(r"\begin{tabular}{l l cccc cccc}")
 latex_lines.append(r"\toprule")
 latex_lines.append(
     r"\multirow{2}{*}{\textbf{Dataset}} & \multirow{2}{*}{\textbf{Method}} & "
-    r"\multicolumn{4}{c}{\textbf{P2P}} & "
-    r"\multicolumn{4}{c}{\textbf{Segmented}} \\" + "\cmidrule(lr){3-6}  \cmidrule(lr){7-10}"
+    r"\multicolumn{4}{c}{\textbf{End-to-end}} & "
+    r"\multicolumn{4}{c}{\textbf{LEFTIST}} \\" + "\cmidrule(lr){3-6}  \cmidrule(lr){7-10}"
 )
 latex_lines.append(
     r" &  & "

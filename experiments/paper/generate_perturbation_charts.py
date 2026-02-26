@@ -15,7 +15,9 @@ OUT_DIR = Path("./figures")       # output directory
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PERTURBATION_POLICY = 'gaussian'
 EVOLUTION_FACTOR = 'percentile_cut'
-EXPLANATION_METHOD = 'extreme_feature_coalitions'
+EXPLANATION_METHOD = 'gradients'
+MODEL = None
+#MODEL = "MLPClassifier"
 
 PROBABILITY_METRICS = [
     "f_minus_f0-mean",
@@ -28,9 +30,9 @@ CHANGE_RATIO_METRICS = [
     "segmented_f_minus_f0-change_ratio",
 ]
 
-METRICS_LABELS = {"f_minus_f0-mean": "backpropagated", "p2p_f_minus_f0-mean": "p2p",
-                  "segmented_f_minus_f0-mean": "segmented", "f_minus_f0-change_ratio": "backpropagated",
-                  "p2p_f_minus_f0-change_ratio": "p2p", "segmented_f_minus_f0-change_ratio": "segmented"
+METRICS_LABELS = {"f_minus_f0-mean": "backprop", "p2p_f_minus_f0-mean": "e2e",
+                  "segmented_f_minus_f0-mean": "leftist", "f_minus_f0-change_ratio": "backprop",
+                  "p2p_f_minus_f0-change_ratio": "e2e", "segmented_f_minus_f0-change_ratio": "leftist",
                   }
 
 METRICS = PROBABILITY_METRICS
@@ -38,7 +40,7 @@ METRICS = PROBABILITY_METRICS
 METRICS_LARGE_DATASETS = [METRICS[0], METRICS[2]]
 
 if METRICS == PROBABILITY_METRICS:
-    Y_AXIS_LABEL = "Δf"
+    Y_AXIS_LABEL = "Δf - Probability drop"
 else:
     Y_AXIS_LABEL = "Change class ratio"
 
@@ -81,6 +83,9 @@ if EVOLUTION_FACTOR != "sigma":
 if EXPLANATION_METHOD is not None:
     data = data[data["base_explainer"] == EXPLANATION_METHOD]
 
+if MODEL is not None:
+    data = data[data["mr_classifier"] == MODEL]
+
 
 data["dataset"] = data["dataset"].str.replace(
     r"^starlight-c.*",
@@ -103,7 +108,7 @@ data["p2p_f_minus_f0-change_ratio"] = pd.to_numeric(data["p2p_f_minus_f0-change_
 # exclude (mr_classifier == RF) AND (base_explainer == gradients)
 data = data[
     ~(
-        (data["mr_classifier"] == "RandomForestClassifier")
+        (data["mr_classifier"] != "LogisticRegression")
         & (data["base_explainer"] == "gradients")
     )
 ]
@@ -193,6 +198,9 @@ min_x = data[EVOLUTION_FACTOR].min()
 max_x = data[EVOLUTION_FACTOR].max()
 
 for dataset, g_ds in agg.groupby("dataset"):
+    if EVOLUTION_FACTOR == "percentile_cut":
+        g_ds['percentile_cut'] = 100 - g_ds['percentile_cut']
+
     g_ds = g_ds.sort_values(EVOLUTION_FACTOR)
 
     plt.figure(figsize=(7, 5))
@@ -245,20 +253,24 @@ for dataset, g_ds in agg.groupby("dataset"):
     #plt.title(f"{dataset}")
     plt.grid(True, alpha=0.3)
     ax = plt.gca()
-    ax.set_ylim(min_y, max_y)
+    if EXPLANATION_METHOD != 'gradients':
+        ax.set_ylim(min_y, max_y)
     ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    plt.legend()
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend(
+            handles,
+            labels,
+            fontsize=24,
+            ncol=2,
+            frameon=False, loc="upper left" if dataset != 'handoutlines' else "center left",
+            handlelength=2.0, handleheight=1.5,
+            columnspacing=1.0
+        )
+
     if dataset == 'ford-a':
         plt.ylabel(Y_AXIS_LABEL, fontsize=24)
-        plt.legend()
-        handles, labels = plt.gca().get_legend_handles_labels()
-        if handles:
-            plt.legend(
-             handles,
-             labels,
-             fontsize=18,
-             ncol=2,
-             frameon=False, loc="upper left", handlelength=2.0, handleheight=1.5,
-            )
     else:
         # Keep grid
         ax.grid(True, axis="y")
@@ -267,6 +279,6 @@ for dataset, g_ds in agg.groupby("dataset"):
         ax.tick_params(axis='y', which='both', length=0, labelleft=False)
 
     plt.tight_layout()
-    out_file = OUT_DIR / f"{dataset}_{explainer}_{EVOLUTION_FACTOR}.png"
+    out_file = OUT_DIR / f"{dataset}_{explainer}_{EVOLUTION_FACTOR}_{MODEL}.png"
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close()
