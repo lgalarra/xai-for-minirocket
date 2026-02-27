@@ -118,7 +118,7 @@ data = data.rename(columns={f"{BASE_METRIC}_list": f"{BASE_METRIC}_value"})
 #    .agg(["mean", "std"])
 #    .reset_index()
 #)
-METRICS_LABELS = {"f_minus_f0-mean": "avg. Δf - Probability drop", "p2p_f_minus_f0-mean": "avg. Δf",
+METRICS_LABELS = {"f_minus_f0-mean": "avg. ∆f - Probability drop", "p2p_f_minus_f0-mean": "avg. Δf - Probability drop",
                   "segmented_f_minus_f0-mean": "avg. Δf - Probability drop", "f_minus_f0-change_ratio": "avg. Δf - Probability drop",
                   "p2p_f_minus_f0-change_ratio": "avg. Δf - Probability drop", "segmented_f_minus_f0-change_ratio": "avg. Δf - Probability drop"
                   }

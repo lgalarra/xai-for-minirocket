@@ -221,7 +221,8 @@ class MinirocketExplainer:
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
-                                 reference_policy, reference=None, top_alpha=None, top_alpha_that_change_class=None) -> dict:
+                                 reference_policy, reference=None, top_alpha=None,
+                                 top_alpha_that_change_class=None, feature_to_backpropagate=None) -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -253,7 +254,11 @@ class MinirocketExplainer:
             alphas = alphas[0]
 
         selected_features = None
-        if top_alpha_that_change_class:
+        if feature_to_backpropagate is not None:
+            mask = np.zeros_like(alphas, dtype=np.float64)
+            mask[feature_to_backpropagate] = alphas[feature_to_backpropagate]
+            alphas_to_backpropagate = mask
+        elif top_alpha_that_change_class:
             alphas_to_backpropagate, selected_features = self._retain_attributions_that_change_class(alphas,
                                                                                         reference_logit,
                                                                                         instance_logit)
@@ -306,7 +311,8 @@ class MinirocketExplainer:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
-                          reference_policy = 'global_centroid', reference=None, top_alpha=None, top_alpha_that_change_class=None) -> Generator:
+                          reference_policy = 'global_centroid', reference=None, top_alpha=None,
+                          top_alpha_that_change_class=None, feature_to_backpropagate=None) -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
@@ -323,13 +329,15 @@ class MinirocketExplainer:
                                                             reference_policy,
                                                             reference,
                                                             top_alpha=top_alpha,
-                                                            top_alpha_that_change_class=top_alpha_that_change_class))
+                                                            top_alpha_that_change_class=top_alpha_that_change_class,
+                                                            feature_to_backpropagate=feature_to_backpropagate))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],
                                                                 classifier_explainer, reference_policy,
                                                                 reference, top_alpha=top_alpha,
-                                                                top_alpha_that_change_class=top_alpha_that_change_class))
+                                                                top_alpha_that_change_class=top_alpha_that_change_class,
+                                                                feature_to_backpropagate=feature_to_backpropagate))
 
     def _retain_attributions_that_change_class(self, alphas, reference_logit, instance_logit):
         sum = reference_logit
