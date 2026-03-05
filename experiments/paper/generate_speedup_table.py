@@ -10,8 +10,7 @@ def parse_list(col):
     )
 
 
-methods_labels = {'extreme_feature_coalitions': 'EFC', 'shap': 'SHAP', 'stratoshap-k1': 'ST-SHAP', 'gradients': 'Gradients'}
-methods_labels = {'extreme_feature_coalitions': 'EFC', 'shap': 'SHAP', 'stratoshap-k1': 'ST-SHAP', 'gradients': 'Gradients'}
+methods_labels = {'extreme_feature_coalitions': 'EFC', 'shap': 'KernelSHAP', 'stratoshap-k1': 'ST-SHAP', 'gradients': 'Gradients'}
 
 INPUT_DIR = "runtime-results-full"
 desktop = pathlib.Path(INPUT_DIR)
