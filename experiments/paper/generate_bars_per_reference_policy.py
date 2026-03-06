@@ -15,12 +15,12 @@ DATA_DIR = Path("perturbation-results")
 OUT_DIR = Path("./bar_charts_reference_policy")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPLAINER = "extreme_feature_coalitions"
+EXPLAINER = "stratoshap-k1"
 #BASE_METRIC = "p2p_f_minus_f0"
 BASE_METRIC = "f_minus_f0"
 METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
-PERTURBATION_POLICY = "gaussian"
+PERTURBATION_POLICY = "instance_to_reference"
 #MODEL_NAME = "RandomForestClassifier"
 
 
