@@ -258,13 +258,19 @@ for dataset, g_ds in agg.groupby("dataset"):
     ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
     plt.legend()
     handles, labels = plt.gca().get_legend_handles_labels()
+    legend_position = 'upper left'
+    ncols = 2
+    if dataset in ('handoutlines', 'starlight') and PERTURBATION_POLICY == 'gaussian':
+        legend_position = 'center'
+    if dataset == 'ford-a' and EXPLANATION_METHOD == "gradients":
+        ncols = 1
     if handles:
         plt.legend(
             handles,
             labels,
-            fontsize=24,
-            ncol=2,
-            frameon=False, loc="upper left" if dataset != 'handoutlines' else "center left",
+            fontsize=22,
+            ncol=ncols,
+            frameon=False, loc=legend_position,
             handlelength=2.0, handleheight=1.5,
             columnspacing=1.0
         )

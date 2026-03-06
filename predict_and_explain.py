@@ -57,7 +57,7 @@ def parse_args():
         type=str,
         default="no",
         choices=["yes", "no", "true", "false", "1", "0"],
-        help="Whether to export data (yes/no)."
+        help="Whether to export all data (yes/no)."
     )
 
     parser.add_argument(
@@ -286,7 +286,7 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
     return classifier
 
 def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier, base_path: str, root_path: str,
-           propagate_this_feature=None):
+           propagate_this_feature=None, should_export_data=False):
     reference_policy = explanation.explanation['reference_policy']
     betas = explanation.explanation["coefficients"]
     betas_filename = f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv"
@@ -319,13 +319,15 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
         base_mask, dilated_mask = get_dilated_triplet_array(mmv.get_feature_signature(tridx, classifier.minirocket_params))
         if not os.path.exists(f"{base_path}/base_mask_feature_{tridx}.csv"):
             pd.Series(base_mask).T.to_csv(f"{root_path}/base_mask_feature_{tridx}.csv", header=False)
-        #if not os.path.exists(f"{base_path}/dilated_mask_feature_{tridx}.csv"):
-        #    pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
+        if should_export_data:
+            if not os.path.exists(f"{base_path}/dilated_mask_feature_{tridx}.csv"):
+                pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
 
         convolved_instance = trace['conv_sum']
         pd.DataFrame(convolved_instance).to_csv(f"{base_path}/convolved_instance_{idx}_feature_{tridx}.csv", header=False)
         convolved_instance_after_sigma = trace['sigma']
-        pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)
+        if should_export_data:
+            pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)
         biases.append(trace['bias_b'])
         dilations.append(trace['dilation'])
 
@@ -431,7 +433,8 @@ if __name__ == '__main__':
                                 instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
                                 os.makedirs(instance_output_path, exist_ok=True)
                                 export(idx, explanation, classifier, instance_output_path,
-                                       output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature)
+                                       output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature,
+                                       should_export_data=should_export_data)
 
 
 
