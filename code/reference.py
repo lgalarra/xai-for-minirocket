@@ -13,7 +13,7 @@ REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class"
                              'opposite_class_closest_instance': "Closest Instance of Opposite Class"
                              }
 
-def medoid_time_series_idx(X: np.ndarray) -> int:
+def medoid_time_series_idx(X: np.ndarray, distance='euclidean') -> int:
     """
     Compute the medoid of a set of time series.
 
@@ -34,7 +34,7 @@ def medoid_time_series_idx(X: np.ndarray) -> int:
     X_flat = X.reshape(N, C * L)
 
     # Pairwise distances
-    distances = cdist(X_flat, X_flat, metric='euclidean')
+    distances = cdist(X_flat, X_flat, metric=distance)
 
     # Sum of distances for each time series
     total_distances = distances.sum(axis=1)
@@ -44,25 +44,25 @@ def medoid_time_series_idx(X: np.ndarray) -> int:
 
     return medoid_idx
 
-def medoid_data_frame(X: pd.DataFrame) -> int:
+def medoid_data_frame(X: pd.DataFrame, distance='euclidean') -> int:
     """
     Return the positional index of the medoid of a pandas DataFrame X (rows = samples).
     The medoid is the sample that minimizes the sum of distances to all other samples.
     To obtain the vector corresponding to the medoid, use X.iloc[medoid_idx].
     """
     X_array = X.to_numpy()
-    distances = cdist(X_array, X_array, metric='euclidean')
+    distances = cdist(X_array, X_array, metric=distance)
     total_distances = distances.sum(axis=1)
     medoid_position = total_distances.argmin()
     return medoid_position
 
-def centroid_data_frame(X: pd.DataFrame) -> pd.Series:
+def centroid_data_frame(X: pd.DataFrame, distance='euclidean') -> pd.Series:
     return X.mean(axis=0)
 
-def centroid_time_series(X: np.ndarray) -> np.ndarray:
+def centroid_time_series(X: np.ndarray, distance='euclidean') -> np.ndarray:
     return np.mean(X, axis=0)
 
-def medoid_ids_per_class(X: np.ndarray, y) -> dict:
+def medoid_ids_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
     """
     Return the positional index of the medoid of each class in X.
     :param X: A time series array (n, C, L)
@@ -80,7 +80,7 @@ def medoid_ids_per_class(X: np.ndarray, y) -> dict:
         X_class = X[class_indices]
 
         # Index of the minimum sum distance → medoid
-        medoid_idx_local = medoid_time_series_idx(X_class)
+        medoid_idx_local = medoid_time_series_idx(X_class, distance=distance)
 
         medoid_idx_global = class_indices[medoid_idx_local]
 
@@ -89,7 +89,7 @@ def medoid_ids_per_class(X: np.ndarray, y) -> dict:
 
     return medoids
 
-def centroid_per_class(X: np.ndarray, y) -> dict:
+def centroid_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
     """
     Compute the centroid of each class in X.
     :param X: A time series array (n, C, L)
@@ -103,12 +103,12 @@ def centroid_per_class(X: np.ndarray, y) -> dict:
         X_class = X[y == label]
 
         # Average vector
-        centroids[label] = centroid_time_series(X_class)
+        centroids[label] = centroid_time_series(X_class, distance=distance)
 
     return centroids
 
 
-def closest_series_euclidean(x, X):
+def closest_series_euclidean(x, X, distance='euclidean') -> (int, np.ndarray):
     """
     Find the closest series in X to x using Euclidean distance.
 
@@ -130,12 +130,12 @@ def closest_series_euclidean(x, X):
     x_flat = x.reshape(1, C * L)
     X_flat = X.reshape(N, C * L)
 
-    distances = cdist(x_flat, X_flat, metric="euclidean").flatten()
+    distances = cdist(x_flat, X_flat, metric=distance).flatten()
     idx = np.argmin(distances)
     return idx, X[idx]
 
 
-def farthest_series_euclidean(x, X):
+def farthest_series_euclidean(x, X, distance='euclidean') -> (int, np.ndarray):
     """
     Find the farthest series in X to x using Euclidean distance.
     """
@@ -143,6 +143,6 @@ def farthest_series_euclidean(x, X):
     x_flat = x.reshape(1, C * L)
     X_flat = X.reshape(N, C * L)
 
-    distances = cdist(x_flat, X_flat, metric="euclidean").flatten()
+    distances = cdist(x_flat, X_flat, metric=distance).flatten()
     idx = np.argmax(distances)
     return idx, X[idx]

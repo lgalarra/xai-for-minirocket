@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 import shap
+from sklearn.decomposition import PCA
 
 import minirocket_multivariate_variable as mmv
 from explainer import MinirocketExplainer, get_classifier_explainer, Explanation
@@ -66,6 +67,20 @@ class MinirocketClassifier:
     def predict_proba_wo_traces(self, X):
         out = mmv._transform_batch(X, parameters=self.minirocket_params)
         return self.classifier.predict_proba(out)
+
+    def get_pca_mr_distance(self):
+        X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
+        pca = PCA(n_components=0.05, random_state=42).fit(X_transform)
+        n, C, L = self._X_train.shape
+        def pca_transform_distance(X, Y):
+            Li = np.array([L], dtype=np.int32)
+            x_t = mmv.transform(x, Li, self.minirocket_params)
+            y_t = mmv.transform(y, Li, self.minirocket_params)
+            return np.linalg.norm(pca.transform(x_t) -
+                                  pca.transform(y_t), ord=2)
+
+        return pca_transform_distance
+
 
     def get_explainer(self, X=None, y=None) -> MinirocketExplainer:
         """

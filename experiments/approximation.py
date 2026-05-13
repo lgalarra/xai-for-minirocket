@@ -15,7 +15,7 @@ from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
 from sklearn.neural_network import MLPClassifier
 
-from explainer import Explanation
+from explainer import Explanation, MinirocketExplainer
 from exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -148,6 +148,14 @@ def parse_args():
         help="Whether to compute the p2p explanations (yes/no)."
     )
 
+    parser.add_argument(
+        "--metric",
+        "-m",
+        type=str,
+        default="euclidean",
+        help="Distance metric used to calculate the reference instances: euclidean, pca-mr"
+    )
+
 
     args = parser.parse_args()
 
@@ -165,6 +173,7 @@ def parse_args():
         args.reference_policy,
         args.start,
         args.end,
+        args.metric,
         compute_p2p_explanations
     )
 
@@ -303,6 +312,7 @@ if __name__ == '__main__':
         reference_policy,
         start,
         end,
+        metric,
         compute_p2p_explanations
     ) = parse_args()
 
@@ -358,6 +368,7 @@ if __name__ == '__main__':
     if not should_export_data:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-NOTDUMPED.csv')
 
+    OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'metric-{metric}.csv')
 
     def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
         explanation_vector = explanation.get_attributions_as_single_vector()
@@ -383,6 +394,9 @@ if __name__ == '__main__':
         end_dataset = min(len(X_test), end)
         for mr_classifier_name in models:
             classifier = get_classifier(mr_classifier_name, dataset_name)
+            if metric == "pca-mr":
+                MinirocketExplainer.REFERENCE_DISTANCE = classifier.get_pca_mr_distance()
+
             y_test_pred = classifier.predict(X_test)
             print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")
             for explainer_method in explainers:
@@ -390,7 +404,7 @@ if __name__ == '__main__':
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
                     print(f"Evaluating configuration {configuration}")
                     if should_export_data:
-                        exporter = DataExporter(dataset_name, mr_classifier_name, explainer_method, label)
+                        exporter = DataExporter(dataset_name, mr_classifier_name, explainer_method, label, metric)
                         exporter.prepare_export(DATASET_FETCH_FUNCTIONS[dataset_name])
                         exporters_dict[configuration] = exporter
 

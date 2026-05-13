@@ -77,10 +77,10 @@ def get_annotation(dataset_name, instance_id) -> str:
 class DataExporter(object):
 
     METADATA_FILE = 'metadata.csv'
-    def __init__(self, dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str):
+    def __init__(self, dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str, metric: str):
         self.output_path = DataExporter.create_output_folder_for_export(dataset_name,
                                                                         mr_classifier_name, explainer_method,
-                                                                        label_type)
+                                                                        label_type, metric)
         self.metadata_file = f'{self.output_path}/{DataExporter.METADATA_FILE}'
         self.output_dataset_path = 'data/' + dataset_name
         self.dataset_name = dataset_name
@@ -90,9 +90,9 @@ class DataExporter(object):
 
     @staticmethod
     def create_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
-                                        label_type: str):
+                                        label_type: str, metric: str) -> str:
         output_folder = get_output_folder_for_export(dataset_name, mr_classifier_name, explainer_method,
-                                                     label_type)
+                                                     label_type, metric)
         os.makedirs(output_folder, exist_ok=True)
         return output_folder
 
@@ -222,8 +222,9 @@ def extract_dataset_name(dataset_name: str) -> str:
 def flush_metadata(metadata_entries: dict, output_path: str):
     pd.DataFrame(metadata_entries).to_csv(output_path, mode='a', index=False, header=False)
 
-def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str, label_type: str) -> str:
-    return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type
+def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
+                                 label_type: str, metric: str) -> str:
+    return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type + '/' + metric
 
 
 

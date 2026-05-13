@@ -6,7 +6,6 @@ import numpy as np
 import shap
 import numdifftools as nd
 
-
 import minirocket_multivariate_variable as mmv
 from minirocket_multivariate_variable import back_propagate_attribution, get_feature_signature
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class, \
@@ -206,15 +205,17 @@ def print_dilated_triplet_array(d, base_size=9, on_value=2, off_value=-1):
 
 
 class MinirocketExplainer:
+    REFERENCE_DISTANCE = 'euclidean'
+
     def __init__(self, X, y, minirocket_classifier, minirocket_params):
         self.minirocket_params = minirocket_params
         self.minirocket_classifier = minirocket_classifier
         self._X = X
         self._y = y
-        self.global_medoid = X[medoid_time_series_idx(X)]
-        self.global_centroid = centroid_time_series(X)
-        self.centroids_per_class = centroid_per_class(X, y)
-        self.medoids_per_class = medoid_ids_per_class(X, y)
+        self.global_medoid = X[medoid_time_series_idx(X, distance=MinirocketExplainer.REFERENCE_DISTANCE)]
+        self.global_centroid = centroid_time_series(X, distance=MinirocketExplainer.REFERENCE_DISTANCE)
+        self.centroids_per_class = centroid_per_class(X, y, distance=MinirocketExplainer.REFERENCE_DISTANCE)
+        self.medoids_per_class = medoid_ids_per_class(X, y, distance=MinirocketExplainer.REFERENCE_DISTANCE)
         self.subsets = {}
         for label in np.unique(y):
             self.subsets[label] =  X[y == label]
