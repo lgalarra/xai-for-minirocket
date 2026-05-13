@@ -30,11 +30,14 @@ def medoid_time_series_idx(X: np.ndarray, distance='euclidean') -> int:
         The medoid time series (shape (C, L))
     """
     # Flatten each time series: (N, C, L) -> (N, C*L)
-    N, C, L = X.shape
-    X_flat = X.reshape(N, C * L)
+    if len(X.shape) > 2:
+        N, C, L = X.shape
+        X_for_distance = X.reshape(N, C * L)
+    else:
+        X_for_distance = X
 
     # Pairwise distances
-    distances = cdist(X_flat, X_flat, metric=distance)
+    distances = cdist(X_for_distance, X_for_distance, metric=distance)
 
     # Sum of distances for each time series
     total_distances = distances.sum(axis=1)
@@ -56,10 +59,11 @@ def medoid_data_frame(X: pd.DataFrame, distance='euclidean') -> int:
     medoid_position = total_distances.argmin()
     return medoid_position
 
-def centroid_data_frame(X: pd.DataFrame, distance='euclidean') -> pd.Series:
+def centroid_data_frame(X: pd.DataFrame) -> pd.Series:
     return X.mean(axis=0)
 
-def centroid_time_series(X: np.ndarray, distance='euclidean') -> np.ndarray:
+
+def centroid_time_series(X: np.ndarray) -> np.ndarray:
     return np.mean(X, axis=0)
 
 def medoid_ids_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
@@ -89,7 +93,7 @@ def medoid_ids_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
 
     return medoids
 
-def centroid_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
+def centroid_per_class(X: np.ndarray, y) -> dict:
     """
     Compute the centroid of each class in X.
     :param X: A time series array (n, C, L)
@@ -103,7 +107,7 @@ def centroid_per_class(X: np.ndarray, y, distance='euclidean') -> dict:
         X_class = X[y == label]
 
         # Average vector
-        centroids[label] = centroid_time_series(X_class, distance=distance)
+        centroids[label] = centroid_time_series(X_class)
 
     return centroids
 

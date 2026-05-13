@@ -207,18 +207,24 @@ def print_dilated_triplet_array(d, base_size=9, on_value=2, off_value=-1):
 class MinirocketExplainer:
     REFERENCE_DISTANCE = 'euclidean'
 
-    def __init__(self, X, y, minirocket_classifier, minirocket_params):
+    def __init__(self, X, y, minirocket_classifier, X_transformed, minirocket_params):
         self.minirocket_params = minirocket_params
         self.minirocket_classifier = minirocket_classifier
         self._X = X
         self._y = y
-        self.global_medoid = X[medoid_time_series_idx(X, distance=MinirocketExplainer.REFERENCE_DISTANCE)]
-        self.global_centroid = centroid_time_series(X, distance=MinirocketExplainer.REFERENCE_DISTANCE)
-        self.centroids_per_class = centroid_per_class(X, y, distance=MinirocketExplainer.REFERENCE_DISTANCE)
-        self.medoids_per_class = medoid_ids_per_class(X, y, distance=MinirocketExplainer.REFERENCE_DISTANCE)
+        if MinirocketExplainer.REFERENCE_DISTANCE == 'pca-mr':
+            self.global_medoid = X[medoid_time_series_idx(X_transformed)]
+        else:
+            self.global_medoid = X[medoid_time_series_idx(X)]
+        self.global_centroid = centroid_time_series(X)
+        self.centroids_per_class = centroid_per_class(X, y)
+        if MinirocketExplainer.REFERENCE_DISTANCE == 'pca-mr':
+            self.medoids_per_class = medoid_ids_per_class(X_transformed, y)
+        else:
+            self.medoids_per_class = medoid_ids_per_class(X, y)
         self.subsets = {}
         for label in np.unique(y):
-            self.subsets[label] =  X[y == label]
+            self.subsets[label] = X[y == label]
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,

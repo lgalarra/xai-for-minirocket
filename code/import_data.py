@@ -1,3 +1,4 @@
+import os.path
 import pickle
 
 import numpy as np
@@ -13,11 +14,15 @@ class DataImporter:
         self.dataset_name = dataset_name
         self.data_path = f"data/{dataset_name}"
 
-    def get_attributions_path(self, classifier_name, explainer_method, label):
-        return f"{self.data_path}/{classifier_name}/{explainer_method}/{label}"
+    def get_attributions_path(self, classifier_name, explainer_method, label, distance=None):
+        path = f"{self.data_path}/{classifier_name}/{explainer_method}/{label}"
+        if distance is not None:
+            return path + f"/{distance}"
 
-    def get_metadata(self, classifier_name, explainer_method, label) -> pd.DataFrame:
-        attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
+    def get_metadata(self, classifier_name, explainer_method, label, distance) -> pd.DataFrame:
+        attributions_path = self.get_attributions_path(classifier_name, explainer_method, label, distance)
+        if distance == 'euclidean' and not os.path.exists(attributions_path):
+            attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
         return pd.read_csv(f"{attributions_path}/{DataExporter.METADATA_FILE}")
 
 

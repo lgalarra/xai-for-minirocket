@@ -13,6 +13,7 @@ import pickle
 
 from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPClassifier
 
 from explainer import Explanation, MinirocketExplainer
@@ -293,6 +294,9 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
         mmv.MINIROCKET_PARAMETERS = classifier.minirocket_params
+        if not hasattr(classifier, 'pca'):
+            classifier._X_transform = mmv._transform_batch(classifier._X_train, parameters=mmv.MINIROCKET_PARAMETERS)
+            classifier.pca = PCA(n_components=0.9, random_state=42).fit(classifier._X_transform)
     else:
         print('Training new classifier...')
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
@@ -325,6 +329,7 @@ if __name__ == '__main__':
     print("reference_policy:", reference_policy)
     print("start:", start)
     print("end:", end)
+    print("metric:", metric)
     print("compute_p2p_explanations:", compute_p2p_explanations)
 
 
@@ -389,13 +394,13 @@ if __name__ == '__main__':
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
     exporters_dict = {}
+    MinirocketExplainer.REFERENCE_DISTANCE = metric
+
     for dataset_name, (dataset_fetch_function, features) in DATASET_FETCH_FUNCTIONS.items():
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         end_dataset = min(len(X_test), end)
         for mr_classifier_name in models:
             classifier = get_classifier(mr_classifier_name, dataset_name)
-            if metric == "pca-mr":
-                MinirocketExplainer.REFERENCE_DISTANCE = classifier.get_pca_mr_distance()
 
             y_test_pred = classifier.predict(X_test)
             print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")

@@ -33,6 +33,8 @@ class MinirocketClassifier:
         self.classifier.fit(self.traces_obj["phi"], y)
         self._X_train = X
         self._y_train = y
+        self._X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
+        self.pca = PCA(n_components=0.9, random_state=42).fit(self._X_transform)
 
     def minirocket_transform(self, X) -> dict:
         return mmv.transform_prime(X, parameters=self.minirocket_params)
@@ -69,15 +71,12 @@ class MinirocketClassifier:
         return self.classifier.predict_proba(out)
 
     def get_pca_mr_distance(self):
-        X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
-        pca = PCA(n_components=0.05, random_state=42).fit(X_transform)
-        n, C, L = self._X_train.shape
+        N, C, L = self._X_train.shape
         def pca_transform_distance(X, Y):
-            Li = np.array([L], dtype=np.int32)
-            x_t = mmv.transform(x, Li, self.minirocket_params)
-            y_t = mmv.transform(y, Li, self.minirocket_params)
-            return np.linalg.norm(pca.transform(x_t) -
-                                  pca.transform(y_t), ord=2)
+            X_t = self.pca.transform(mmv._transform_batch(X.reshape(X.shape[0], C, L) if len(X.shape) > 1 else np.array([X.reshape(C, L)]), self.minirocket_params))
+            Y_t = self.pca.transform(mmv._transform_batch(X.reshape(Y.shape[0], C, L) if len(Y.shape) > 1 else np.array([Y.reshape(C, L)]), self.minirocket_params))
+            D = np.linalg.norm(X_t - Y_t, ord=2)
+            return D
 
         return pca_transform_distance
 
@@ -99,6 +98,7 @@ class MinirocketClassifier:
             y = self._y_train
 
         return MinirocketExplainer(X, y, minirocket_classifier=self.classifier,
+                                   X_transformed=self._X_transform,
                                    minirocket_params=self.minirocket_params)
 
 
