@@ -130,11 +130,16 @@ def closest_series_euclidean(x, X, distance='euclidean') -> (int, np.ndarray):
     series : np.ndarray
         The closest series (C, L)
     """
-    N, C, L = X.shape
-    x_flat = x.reshape(1, C * L)
-    X_flat = X.reshape(N, C * L)
+    if len(X.shape) > 2:
+        N, C, L = X.shape
+        X_for_distance = X.reshape(N, C * L)
+        x_for_distance = x.reshape(1, C * L)
+    else:
+        X_for_distance = X
+        x_for_distance = x
 
-    distances = cdist(x_flat, X_flat, metric=distance).flatten()
+
+    distances = cdist(x_for_distance, X_for_distance, metric=distance).flatten()
     idx = np.argmin(distances)
     return idx, X[idx]
 
@@ -143,10 +148,15 @@ def farthest_series_euclidean(x, X, distance='euclidean') -> (int, np.ndarray):
     """
     Find the farthest series in X to x using Euclidean distance.
     """
-    N, C, L = X.shape
-    x_flat = x.reshape(1, C * L)
-    X_flat = X.reshape(N, C * L)
+    if len(X.shape) > 2:
+        N, C, L = X.shape
+        X_for_distance = X.reshape(N, C * L)
+        x_for_distance = x.reshape(1, C * L)
+    else:
+        X_for_distance = X
+        x_for_distance = x
 
-    distances = cdist(x_flat, X_flat, metric=distance).flatten()
+
+    distances = cdist(x_for_distance, X_for_distance, metric=distance).flatten()
     idx = np.argmax(distances)
     return idx, X[idx]

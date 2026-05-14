@@ -207,7 +207,7 @@ def print_dilated_triplet_array(d, base_size=9, on_value=2, off_value=-1):
 class MinirocketExplainer:
     REFERENCE_DISTANCE = 'euclidean'
 
-    def __init__(self, X, y, minirocket_classifier, X_transformed, minirocket_params):
+    def __init__(self, X, y, minirocket_classifier, X_transformed, pca, minirocket_params):
         self.minirocket_params = minirocket_params
         self.minirocket_classifier = minirocket_classifier
         self._X = X
@@ -223,8 +223,12 @@ class MinirocketExplainer:
         else:
             self.medoids_per_class = medoid_ids_per_class(X, y)
         self.subsets = {}
+        self.subsets_transformed = {}
+        self._X_transformed = X_transformed
         for label in np.unique(y):
             self.subsets[label] = X[y == label]
+            self.subsets_transformed[label] = X_transformed[y == label]
+        self.pca=pca
 
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
@@ -311,9 +315,27 @@ class MinirocketExplainer:
         elif reference_policy == 'opposite_class_centroid':
             return self.centroids_per_class[1 - y]
         elif reference_policy == 'opposite_class_farthest_instance':
-            return (farthest_series_euclidean(x_target, self.subsets[1 - y]))[1]
+            if MinirocketExplainer.REFERENCE_DISTANCE == 'euclidean':
+                return farthest_series_euclidean(x_target, self.subsets[1 - y])[1]
+            else:
+                (N, C, L) = self._X.shape
+                L = np.array([L], dtype=np.int32)
+                (idx, _) = farthest_series_euclidean(self.pca.transform(mmv.transform(x_target.astype(np.float32),
+                                                                   np.array(L, dtype=np.int32),
+                                                                   self.minirocket_params)),
+                                                     self.subsets_transformed[1 - y])
+                return self.subsets[1 - y][idx]
         elif reference_policy == 'opposite_class_closest_instance':
-            return (closest_series_euclidean(x_target, self.subsets[1 - y]))[1]
+            if MinirocketExplainer.REFERENCE_DISTANCE == 'euclidean':
+                return closest_series_euclidean(x_target, self.subsets[1 - y])[1]
+            else:
+                (N, C, L) = self._X.shape
+                L = np.array([L], dtype=np.int32)
+                (idx, _) = closest_series_euclidean(self.pca.transform(mmv.transform(x_target.astype(np.float32),
+                                                                  np.array(L, dtype=np.int32),
+                                                                  self.minirocket_params)),
+                                                    self.subsets_transformed[1 - y])
+                return self.subsets[1 - y][idx]
         else:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 

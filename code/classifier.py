@@ -70,17 +70,6 @@ class MinirocketClassifier:
         out = mmv._transform_batch(X, parameters=self.minirocket_params)
         return self.classifier.predict_proba(out)
 
-    def get_pca_mr_distance(self):
-        N, C, L = self._X_train.shape
-        def pca_transform_distance(X, Y):
-            X_t = self.pca.transform(mmv._transform_batch(X.reshape(X.shape[0], C, L) if len(X.shape) > 1 else np.array([X.reshape(C, L)]), self.minirocket_params))
-            Y_t = self.pca.transform(mmv._transform_batch(X.reshape(Y.shape[0], C, L) if len(Y.shape) > 1 else np.array([Y.reshape(C, L)]), self.minirocket_params))
-            D = np.linalg.norm(X_t - Y_t, ord=2)
-            return D
-
-        return pca_transform_distance
-
-
     def get_explainer(self, X=None, y=None) -> MinirocketExplainer:
         """
         Get an explainer object for the classifier.
@@ -98,7 +87,8 @@ class MinirocketClassifier:
             y = self._y_train
 
         return MinirocketExplainer(X, y, minirocket_classifier=self.classifier,
-                                   X_transformed=self._X_transform,
+                                   X_transformed=self.pca.transform(self._X_transform),
+                                   pca=self.pca,
                                    minirocket_params=self.minirocket_params)
 
 
