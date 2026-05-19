@@ -18,6 +18,7 @@ class DataImporter:
         path = f"{self.data_path}/{classifier_name}/{explainer_method}/{label}"
         if distance is not None:
             return path + f"/{distance}"
+        return path
 
     def get_metadata(self, classifier_name, explainer_method, label, distance) -> pd.DataFrame:
         attributions_path = self.get_attributions_path(classifier_name, explainer_method, label, distance)

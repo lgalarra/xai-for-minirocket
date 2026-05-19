@@ -81,6 +81,10 @@ if __name__ == '__main__':
     if len(sys.argv) > 6:
         THE_CLASSIFIER = sys.argv[6]
 
+    THE_DISTANCE = 'euclidean'
+    if len(sys.argv) > 7:
+        THE_DISTANCE = sys.argv[7]
+
     DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a', 'handoutlines']
     if THE_DATASET is None:
         MR_CLASSIFIERS = {dataset: [
@@ -146,6 +150,8 @@ if __name__ == '__main__':
         PERTURBATIONS = {THE_PERTURBATION : PERTURBATIONS[THE_PERTURBATION]}
     if THE_CLASSIFIER is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_CLASSIFIER}.csv')
+    if THE_DISTANCE != 'euclidean':
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_DISTANCE}.csv')
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -170,13 +176,13 @@ if __name__ == '__main__':
             print('Classifier', classifier_name)
             for label in LABELS if THE_LABEL is None else [THE_LABEL]:
                 for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
-                    for distance in DISTANCES:
+                    for distance in DISTANCES if THE_DISTANCE is None else [THE_DISTANCE]:
                         metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label, distance)
                         (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
                          segmented_explanations_dict) = (
                             DataImporter.get_series_from_metadata(metadata_df)
                         )
-                        print('Label, explainer_method: ', label, explainer_method)
+                        print('Label, explainer_method, distance: ', label, explainer_method, distance)
                         for perturbation_policy, all_args in PERTURBATIONS.items():
                             for combo in itertools.product(*all_args.values()):
                                 args = dict(zip(all_args.keys(), combo))
