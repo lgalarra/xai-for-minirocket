@@ -134,7 +134,8 @@ class DataExporter(object):
 
         for channel_idx, channel in enumerate(instance):
             metadata_dict['instance_id'].append(instance_id)
-            for idx, reference_policy in enumerate(studied_reference_policies):
+            for reference_policy in studied_reference_policies:
+                idx = REFERENCE_POLICIES.index(reference_policy)
                 (explanation, explanation_p2p, segmented_explanation) = explanations_dict[reference_policy]
                 betas = explanation.get_attributions_in_original_dimensions()
                 betas_p2p = None

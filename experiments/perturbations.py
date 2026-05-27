@@ -134,6 +134,8 @@ if __name__ == '__main__':
                     }
     }
 
+    reference_policies = REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]
+
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
     DataExporter.METADATA_FILE = 'metadata.csv'
@@ -180,14 +182,14 @@ if __name__ == '__main__':
                         metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label, distance)
                         (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
                          segmented_explanations_dict) = (
-                            DataImporter.get_series_from_metadata(metadata_df)
+                            DataImporter.get_series_from_metadata(metadata_df, reference_policies=reference_policies)
                         )
                         print('Label, explainer_method, distance: ', label, explainer_method, distance)
                         for perturbation_policy, all_args in PERTURBATIONS.items():
                             for combo in itertools.product(*all_args.values()):
                                 args = dict(zip(all_args.keys(), combo))
                                 print('Perturbation', perturbation_policy, 'Args: ', args)
-                                for reference_policy in REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]:
+                                for reference_policy in reference_policies:
                                     df_results = copy.deepcopy(df_schema)
                                     X_reference = explanations_dict[reference_policy]
                                     print('Backpropagated explanations')

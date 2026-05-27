@@ -28,7 +28,19 @@ class DataImporter:
 
 
     @staticmethod
-    def get_series_from_metadata(metadata_df):
+    def get_series_from_metadata(metadata_df, reference_policies=None):
+        if reference_policies is None:
+            policy_indices = list(enumerate(REFERENCE_POLICIES))
+        else:
+            if isinstance(reference_policies, str):
+                reference_policies = [reference_policies]
+
+            unknown = [p for p in reference_policies if p not in REFERENCE_POLICIES]
+            if unknown:
+                raise ValueError(f"Unknown reference policies: {unknown}")
+
+            policy_indices = [(REFERENCE_POLICIES.index(p), p) for p in reference_policies]
+
         groups = metadata_df.groupby('instance_id')
         references = {}
         instances = []
@@ -37,7 +49,7 @@ class DataImporter:
         segmented_explanations = {}
         ys = []
 
-        for i in range(len(REFERENCE_POLICIES)):
+        for i, reference_policy in policy_indices:
             references[REFERENCE_POLICIES[i]] = []
             explanations[REFERENCE_POLICIES[i]] = []
             p2p_explanations[REFERENCE_POLICIES[i]] = []
@@ -45,16 +57,16 @@ class DataImporter:
 
         for instance_id, df_instance in groups:
             instances.append([])
-            for i in range(len(REFERENCE_POLICIES)):
-                explanations[REFERENCE_POLICIES[i]].append([])
-                references[REFERENCE_POLICIES[i]].append([])
-                p2p_explanations[REFERENCE_POLICIES[i]].append([])
-                segmented_explanations[REFERENCE_POLICIES[i]].append([])
+            for i, reference_policy in policy_indices:
+                explanations[reference_policy].append([])
+                references[reference_policy].append([])
+                p2p_explanations[reference_policy].append([])
+                segmented_explanations[reference_policy].append([])
 
             for channel, df_instance_id_channel in df_instance.groupby('channel'):
                 channel_values = pd.read_csv(df_instance_id_channel['series'].values[0], header=None, index_col=0).iloc[:, 0]
                 instances[len(instances) - 1].append(channel_values.values)
-                for i in range(len(REFERENCE_POLICIES)):
+                for i, reference_policy in policy_indices:
                     reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].values[0],
                                                            header=None, index_col=0).iloc[:, 0]
 
