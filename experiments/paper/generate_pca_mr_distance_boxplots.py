@@ -32,6 +32,12 @@ DEFAULT_EXCLUDED_REFERENCE_POLICIES = [
     "global_centroid",
     "opposite_class_centroid",
 ]
+EXPLAINER_LABELS = {
+    "shap": "SHAP",
+    "stratoshap-k1": "ST-SHAP",
+    "extreme_feature_coalitions": "EFC",
+    "gradients": "Gradients",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,8 +144,78 @@ def expand_f_minus_f0(data: pd.DataFrame) -> pd.DataFrame:
 def normalize_labels(data: pd.DataFrame) -> pd.DataFrame:
     data = data.copy()
     data["mr_classifier_label"] = data["mr_classifier"].replace(CLASSIFIER_LABELS)
+    data["base_explainer_label"] = data["base_explainer"].replace(EXPLAINER_LABELS)
     data["reference_policy_label"] = data["reference_policy"].replace(REFERENCE_POLICY_LABELS)
     return data
+
+
+def safe_filename_part(value: object) -> str:
+    return str(value).replace("/", "_").replace(" ", "_")
+
+
+def save_boxplot(group: pd.DataFrame, title: str, out_file: Path) -> None:
+    fig, ax = plt.subplots(figsize=(9, 5))
+    reference_order = sorted(group["reference_policy_label"].unique())
+    distance_order = [item for item in DISTANCE_ORDER if item in set(group["distance_type"])]
+    colors = {"non pca-mr": "#4c78a8", "pca-mr": "#f58518"}
+
+    box_width = 0.32
+    offsets = {
+        "non pca-mr": -box_width / 1.8,
+        "pca-mr": box_width / 1.8,
+    }
+
+    for distance_type in distance_order:
+        values = []
+        positions = []
+        for index, reference_policy in enumerate(reference_order, start=1):
+            subset = group[
+                (group["reference_policy_label"] == reference_policy)
+                & (group["distance_type"] == distance_type)
+            ]["f_minus_f0_value"].to_numpy()
+            if len(subset) == 0:
+                continue
+            values.append(subset)
+            positions.append(index + offsets[distance_type])
+
+        if values:
+            box = ax.boxplot(
+                values,
+                positions=positions,
+                widths=box_width,
+                patch_artist=True,
+                showfliers=True,
+                flierprops={
+                    "marker": ".",
+                    "markersize": 1.5,
+                    "markeredgecolor": colors[distance_type],
+                    "alpha": 0.35,
+                },
+                medianprops={"color": "black", "linewidth": 1.0},
+                boxprops={"linewidth": 1.0},
+                whiskerprops={"linewidth": 1.0},
+                capprops={"linewidth": 1.0},
+            )
+            for patch in box["boxes"]:
+                patch.set_facecolor(colors[distance_type])
+                patch.set_alpha(0.75)
+
+    ax.set_xticks(range(1, len(reference_order) + 1))
+    ax.set_xticklabels(reference_order, rotation=20, ha="right")
+    ax.set_xlabel("Reference policy")
+    ax.set_ylabel("f_minus_f0")
+    ax.set_title(title)
+    ax.legend(
+        handles=[
+            Patch(facecolor=colors[item], alpha=0.75, label=item)
+            for item in distance_order
+        ],
+        title="Distance",
+        frameon=True,
+    )
+    fig.tight_layout()
+    fig.savefig(out_file, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def save_classifier_boxplots(data: pd.DataFrame, out_dir: Path) -> list[Path]:
@@ -151,71 +227,31 @@ def save_classifier_boxplots(data: pd.DataFrame, out_dir: Path) -> list[Path]:
         if group.empty:
             continue
 
-        fig, ax = plt.subplots(figsize=(9, 5))
-        reference_order = sorted(group["reference_policy_label"].unique())
-        distance_order = [item for item in DISTANCE_ORDER if item in set(group["distance_type"])]
-        colors = {"non pca-mr": "#4c78a8", "pca-mr": "#f58518"}
-
-        box_width = 0.32
-        offsets = {
-            "non pca-mr": -box_width / 1.8,
-            "pca-mr": box_width / 1.8,
-        }
-
-        for distance_type in distance_order:
-            values = []
-            positions = []
-            for index, reference_policy in enumerate(reference_order, start=1):
-                subset = group[
-                    (group["reference_policy_label"] == reference_policy)
-                    & (group["distance_type"] == distance_type)
-                ]["f_minus_f0_value"].to_numpy()
-                if len(subset) == 0:
-                    continue
-                values.append(subset)
-                positions.append(index + offsets[distance_type])
-
-            if values:
-                box = ax.boxplot(
-                    values,
-                    positions=positions,
-                    widths=box_width,
-                    patch_artist=True,
-                    showfliers=True,
-                    flierprops={
-                        "marker": ".",
-                        "markersize": 1.5,
-                        "markeredgecolor": colors[distance_type],
-                        "alpha": 0.35,
-                    },
-                    medianprops={"color": "black", "linewidth": 1.0},
-                    boxprops={"linewidth": 1.0},
-                    whiskerprops={"linewidth": 1.0},
-                    capprops={"linewidth": 1.0},
-                )
-                for patch in box["boxes"]:
-                    patch.set_facecolor(colors[distance_type])
-                    patch.set_alpha(0.75)
-
-        ax.set_xticks(range(1, len(reference_order) + 1))
-        ax.set_xticklabels(reference_order, rotation=20, ha="right")
-        ax.set_xlabel("Reference policy")
-        ax.set_ylabel("f_minus_f0")
-        ax.set_title(str(classifier))
-        ax.legend(
-            handles=[
-                Patch(facecolor=colors[item], alpha=0.75, label=item)
-                for item in distance_order
-            ],
-            title="Distance",
-            frameon=True,
-        )
-        fig.tight_layout()
-
-        safe_classifier = str(classifier).replace("/", "_").replace(" ", "_")
+        safe_classifier = safe_filename_part(classifier)
         out_file = out_dir / f"{safe_classifier}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
-        fig.savefig(out_file, dpi=300, bbox_inches="tight")
-        plt.close(fig)
+        save_boxplot(group, str(classifier), out_file)
+        written.append(out_file)
+
+    return written
+
+
+def save_classifier_explainer_boxplots(data: pd.DataFrame, out_dir: Path) -> list[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    written = []
+    grouped = data.groupby(["mr_classifier_label", "base_explainer_label"], sort=True)
+    for (classifier, explainer), group in grouped:
+        if group.empty:
+            continue
+
+        safe_classifier = safe_filename_part(classifier)
+        safe_explainer = safe_filename_part(explainer)
+        out_file = (
+            out_dir
+            / f"{safe_classifier}_{safe_explainer}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
+        )
+        save_boxplot(group, f"{classifier} - {explainer}", out_file)
         written.append(out_file)
 
     return written
@@ -238,6 +274,12 @@ def main() -> None:
     data = expand_f_minus_f0(data)
     data = normalize_labels(data)
     written = save_classifier_boxplots(data, args.out_dir)
+    written.extend(
+        save_classifier_explainer_boxplots(
+            data,
+            args.out_dir / "by_classifier_base_explainer",
+        )
+    )
 
     print(f"Read rows: {len(data):,}")
     print(f"Wrote {len(written)} plot(s):")
