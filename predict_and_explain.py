@@ -13,8 +13,10 @@ import pickle
 
 from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
+
 sys.path.append('code/')
-from explainer import Explanation, get_dilated_triplet_array
+from explainer import Explanation, get_dilated_triplet_array, MinirocketExplainer
 from experiments.exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -172,6 +174,15 @@ def parse_args():
         help="A positive integer that indicates a MR feature index to be back-propagated."
     )
 
+    parser.add_argument(
+        "--metric",
+        "-m",
+        type=str,
+        default="euclidean",
+        help="Distance metric used to calculate the reference instances: euclidean, pca-mr"
+    )
+
+
     args = parser.parse_args()
 
     # post-processing for boolean
@@ -192,6 +203,7 @@ def parse_args():
         args.output_path,
         change_class_propagation,
         args.propagate_this_feature,
+        args.metric
     )
 
 
@@ -275,6 +287,9 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
         mmv.MINIROCKET_PARAMETERS = classifier.minirocket_params
+        if not hasattr(classifier, 'pca'):
+            classifier._X_transform = mmv._transform_batch(classifier._X_train, parameters=mmv.MINIROCKET_PARAMETERS)
+            classifier.pca = PCA(n_components=0.9, random_state=42).fit(classifier._X_transform)
     else:
         print('Training new classifier...')
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
@@ -362,7 +377,8 @@ if __name__ == '__main__':
         compute_p2p_explanations,
         output_path,
         change_class_propagation,
-        propagate_this_feature
+        propagate_this_feature,
+        distance_metric
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -378,6 +394,7 @@ if __name__ == '__main__':
     print("output_path:", output_path)
     print("change_class_propagation:", change_class_propagation)
     print("backpropagate_this_feature:", propagate_this_feature)
+    print("metric:", distance_metric)
 
     os.makedirs(output_path, exist_ok=True)
     LABELS = ['predicted', 'training']
@@ -396,7 +413,7 @@ if __name__ == '__main__':
     else:
         studied_reference_policies = REFERENCE_POLICIES
 
-
+    MinirocketExplainer.REFERENCE_DISTANCE = distance_metric
 
     exporters_dict = {}
     for dataset_name, (dataset_fetch_function, features) in DATASET_FETCH_FUNCTIONS.items():
