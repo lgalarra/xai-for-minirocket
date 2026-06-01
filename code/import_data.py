@@ -67,26 +67,26 @@ class DataImporter:
                 channel_values = pd.read_csv(df_instance_id_channel['series'].values[0], header=None, index_col=0).iloc[:, 0]
                 instances[len(instances) - 1].append(channel_values.values)
                 for i, reference_policy in policy_indices:
-                    reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].values[0],
+                    reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].dropna().values[0],
                                                            header=None, index_col=0).iloc[:, 0]
 
                     references[REFERENCE_POLICIES[i]][len(references[REFERENCE_POLICIES[i]]) - 1].append(
                         reference_channel_values.values)
 
-                    beta_channel_values = pd.read_csv(df_instance_id_channel[f'beta_{i}_attributions'].values[0],
+                    beta_channel_values = pd.read_csv(df_instance_id_channel[f'beta_{i}_attributions'].dropna().values[0],
                                                       header=None, index_col=0).iloc[:, 0]
                     explanations[REFERENCE_POLICIES[i]][len(explanations[REFERENCE_POLICIES[i]]) - 1].append(
                         beta_channel_values.values)
                     
                     beta_p2p_channel_values = None
                     if not df_instance_id_channel[f'beta_p2p_{i}_attributions'].isnull().values.any():
-                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].values[0],
+                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].dropna().values[0],
                                                               header=None, index_col=0).iloc[:, 0]
                     
 
                     p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values.values if beta_p2p_channel_values is not None else None)
 
-                    beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].values[0],
+                    beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].dropna().values[0],
                                                                 header=None, index_col=0).iloc[:, 0]
 
                     segmented_explanations[REFERENCE_POLICIES[i]][len(segmented_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_segmented_channel_values.values)
