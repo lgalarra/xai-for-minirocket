@@ -81,6 +81,10 @@ if __name__ == '__main__':
     if len(sys.argv) > 6:
         THE_CLASSIFIER = sys.argv[6]
 
+    THE_DISTANCE = 'euclidean'
+    if len(sys.argv) > 7:
+        THE_DISTANCE = sys.argv[7]
+
     DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a', 'handoutlines']
     if THE_DATASET is None:
         MR_CLASSIFIERS = {dataset: [
@@ -109,6 +113,7 @@ if __name__ == '__main__':
         "handoutlines": "get_handoutlines_for_classification('1')"
     }
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
+    DISTANCES = ['euclidean', 'pca-mr']
     #EXPLAINERS = ['gradients']
     BUDGET = 10
     PERTURBATIONS = {
@@ -129,6 +134,8 @@ if __name__ == '__main__':
                     }
     }
 
+    reference_policies = REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]
+
     # In[42]:
     OUTPUT_FILE = 'perturbation-results.csv'
     DataExporter.METADATA_FILE = 'metadata.csv'
@@ -145,6 +152,8 @@ if __name__ == '__main__':
         PERTURBATIONS = {THE_PERTURBATION : PERTURBATIONS[THE_PERTURBATION]}
     if THE_CLASSIFIER is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_CLASSIFIER}.csv')
+    if THE_DISTANCE != 'euclidean':
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_DISTANCE}.csv')
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -154,7 +163,7 @@ if __name__ == '__main__':
                  'p2p_f_minus_f0_norm': [], 'p2p_f_minus_f0_norm-mean': [], 'p2p_f_minus_f0_norm-std': [],
                  'segmented_f_minus_f0': [], 'segmented_f_minus_f0-mean': [], 'segmented_f_minus_f0-std': [], 'segmented_f_minus_f0-change_ratio': [],
                  'segmented_f_minus_f0_norm': [], 'segmented_f_minus_f0_norm-mean': [], 'segmented_f_minus_f0_norm-std': [],
-                 'args': [], 'perturbation_policy': [] }
+                 'args': [], 'perturbation_policy': [], 'distance': []}
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
@@ -169,101 +178,103 @@ if __name__ == '__main__':
             print('Classifier', classifier_name)
             for label in LABELS if THE_LABEL is None else [THE_LABEL]:
                 for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
-                    metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label)
-                    (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
-                     segmented_explanations_dict) = (
-                        DataImporter.get_series_from_metadata(metadata_df)
-                    )
-                    print('Label, explainer_method: ', label, explainer_method)
-                    for perturbation_policy, all_args in PERTURBATIONS.items():
-                        for combo in itertools.product(*all_args.values()):
-                            args = dict(zip(all_args.keys(), combo))
-                            print('Perturbation', perturbation_policy, 'Args: ', args)
-                            for reference_policy in REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]:
-                                df_results = copy.deepcopy(df_schema)
-                                X_reference = explanations_dict[reference_policy]
-                                print('Backpropagated explanations')
-                                args['y'] = y_test if label == 'training' else classifier.predict(X_test)
+                    for distance in DISTANCES if THE_DISTANCE is None else [THE_DISTANCE]:
+                        metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label, distance)
+                        (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
+                         segmented_explanations_dict) = (
+                            DataImporter.get_series_from_metadata(metadata_df, reference_policies=reference_policies)
+                        )
+                        print('Label, explainer_method, distance: ', label, explainer_method, distance)
+                        for perturbation_policy, all_args in PERTURBATIONS.items():
+                            for combo in itertools.product(*all_args.values()):
+                                args = dict(zip(all_args.keys(), combo))
+                                print('Perturbation', perturbation_policy, 'Args: ', args)
+                                for reference_policy in reference_policies:
+                                    df_results = copy.deepcopy(df_schema)
+                                    X_reference = explanations_dict[reference_policy]
+                                    print('Backpropagated explanations')
+                                    args['y'] = y_test if label == 'training' else classifier.predict(X_test)
 
-                                X_test_for_explanations = X_test.copy()            
-                                X_reference_for_explanations = references_dict[reference_policy].copy()
-                                X_explanations = explanations_dict[reference_policy].copy()                    
-                                X_explanations, X_test_for_explanations, X_reference_for_explanations = ensure_consistency(X_explanations, X_test_for_explanations, X_reference_for_explanations)
-                                X_perturbed, n_perturbed_points = get_perturbations(X_test_for_explanations, X_reference_for_explanations, X_explanations, explainer_method=explainer_method, policy=perturbation_policy, **args)
-                                
-                                X_p2p_perturbed = None
-                                if p2p_explanations_dict[reference_policy][0][0] is not None:
-                                    print('P2p explanations')
-                                    X_test_for_p2p_explanations =  X_test.copy() 
-                                    X_reference_for_p2p_explanations = references_dict[reference_policy].copy() 
-                                    X_p2p_explanations = p2p_explanations_dict[reference_policy] 
-                                    X_p2p_explanations, X_test_for_p2p_explanations, X_reference_for_p2p_explanations = ensure_consistency(X_p2p_explanations, X_test_for_p2p_explanations, X_reference_for_p2p_explanations)
-                                    X_p2p_perturbed, _ = get_perturbations(X_test_for_p2p_explanations, X_reference_for_p2p_explanations,
-                                                                    X_p2p_explanations,
-                                                                        explainer_method=explainer_method,
-                                                                        policy=perturbation_policy, **args)
+                                    X_test_for_explanations = X_test.copy()
+                                    X_reference_for_explanations = references_dict[reference_policy].copy()
+                                    X_explanations = explanations_dict[reference_policy].copy()
+                                    X_explanations, X_test_for_explanations, X_reference_for_explanations = ensure_consistency(X_explanations, X_test_for_explanations, X_reference_for_explanations)
+                                    X_perturbed, n_perturbed_points = get_perturbations(X_test_for_explanations, X_reference_for_explanations, X_explanations, explainer_method=explainer_method, policy=perturbation_policy, **args)
 
-                                print('Segmented explanations')
-                                args['n_perturbed_points'] = n_perturbed_points
-                                X_test_for_segmented_explanations =  X_test.copy() 
-                                X_reference_for_segmented_explanations = references_dict[reference_policy].copy()  
-                                X_segmented_explanations = segmented_explanations_dict[reference_policy].copy()
-                                X_segmented_explanations, X_test_for_segmented_explanations, X_reference_for_segmented_explanations = ensure_consistency(X_segmented_explanations, X_test_for_segmented_explanations, X_reference_for_segmented_explanations)
-                                X_segmented_perturbed, _ = get_perturbations(X_test_for_segmented_explanations, X_reference_for_segmented_explanations, X_segmented_explanations,
-                                                                          explainer_method=explainer_method,
-                                                                          policy=perturbation_policy, **args)
-                                del args['y']
-                                del args['n_perturbed_points']
-                                if perturbation_policy == 'reference_to_instance_positive':
-                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_explanations, X_perturbed,
-                                                                                           X_test_for_explanations,
-                                                                                           PERTURBATIONS[perturbation_policy]['budget'][0])
-                                else:
-                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_explanations, X_perturbed,
-                                                                                           X_reference_for_explanations,
-                                                                                           PERTURBATIONS[perturbation_policy]['budget'][0])
-                                df_results['f_minus_f0'].append(to_sep_list(metric))
-                                df_results['f_minus_f0-mean'].append(np.mean(metric))
-                                df_results['f_minus_f0-std'].append(np.std(metric))
-                                df_results['f_minus_f0_norm'].append(to_sep_list(norm_metric))
-                                df_results['f_minus_f0_norm-mean'].append(np.mean(norm_metric))
-                                df_results['f_minus_f0_norm-std'].append(np.std(norm_metric))
-                                df_results['f_minus_f0-change_ratio'].append(change_ratio)
+                                    X_p2p_perturbed = None
+                                    if p2p_explanations_dict[reference_policy][0][0] is not None:
+                                        print('P2p explanations')
+                                        X_test_for_p2p_explanations =  X_test.copy()
+                                        X_reference_for_p2p_explanations = references_dict[reference_policy].copy()
+                                        X_p2p_explanations = p2p_explanations_dict[reference_policy]
+                                        X_p2p_explanations, X_test_for_p2p_explanations, X_reference_for_p2p_explanations = ensure_consistency(X_p2p_explanations, X_test_for_p2p_explanations, X_reference_for_p2p_explanations)
+                                        X_p2p_perturbed, _ = get_perturbations(X_test_for_p2p_explanations, X_reference_for_p2p_explanations,
+                                                                        X_p2p_explanations,
+                                                                            explainer_method=explainer_method,
+                                                                            policy=perturbation_policy, **args)
 
-                                metric = norm_metric = change_ratio = [-1.0]
-                                if X_p2p_perturbed is not None:
+                                    print('Segmented explanations')
+                                    args['n_perturbed_points'] = n_perturbed_points
+                                    X_test_for_segmented_explanations =  X_test.copy()
+                                    X_reference_for_segmented_explanations = references_dict[reference_policy].copy()
+                                    X_segmented_explanations = segmented_explanations_dict[reference_policy].copy()
+                                    X_segmented_explanations, X_test_for_segmented_explanations, X_reference_for_segmented_explanations = ensure_consistency(X_segmented_explanations, X_test_for_segmented_explanations, X_reference_for_segmented_explanations)
+                                    X_segmented_perturbed, _ = get_perturbations(X_test_for_segmented_explanations, X_reference_for_segmented_explanations, X_segmented_explanations,
+                                                                              explainer_method=explainer_method,
+                                                                              policy=perturbation_policy, **args)
+                                    del args['y']
+                                    del args['n_perturbed_points']
                                     if perturbation_policy == 'reference_to_instance_positive':
-                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_p2p_explanations, X_p2p_perturbed, X_test_for_p2p_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_explanations, X_perturbed,
+                                                                                               X_test_for_explanations,
+                                                                                               PERTURBATIONS[perturbation_policy]['budget'][0])
                                     else:
-                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_p2p_explanations, X_p2p_perturbed, X_reference_for_p2p_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
-                                df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
-                                df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
-                                df_results['p2p_f_minus_f0-std'].append(np.std(metric))
-                                df_results['p2p_f_minus_f0_norm'].append(to_sep_list(norm_metric))
-                                df_results['p2p_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
-                                df_results['p2p_f_minus_f0_norm-std'].append(np.std(norm_metric))
-                                df_results['p2p_f_minus_f0-change_ratio'].append(change_ratio)
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_explanations, X_perturbed,
+                                                                                               X_reference_for_explanations,
+                                                                                               PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    df_results['f_minus_f0'].append(to_sep_list(metric))
+                                    df_results['f_minus_f0-mean'].append(np.mean(metric))
+                                    df_results['f_minus_f0-std'].append(np.std(metric))
+                                    df_results['f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                    df_results['f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                    df_results['f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                    df_results['f_minus_f0-change_ratio'].append(change_ratio)
 
-                                if perturbation_policy == 'reference_to_instance_positive':
-                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_segmented_explanations, X_segmented_perturbed, X_test_for_segmented_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    metric = norm_metric = change_ratio = [-1.0]
+                                    if X_p2p_perturbed is not None:
+                                        if perturbation_policy == 'reference_to_instance_positive':
+                                            metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_p2p_explanations, X_p2p_perturbed, X_test_for_p2p_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                        else:
+                                            metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_p2p_explanations, X_p2p_perturbed, X_reference_for_p2p_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    df_results['p2p_f_minus_f0'].append(to_sep_list(metric))
+                                    df_results['p2p_f_minus_f0-mean'].append(np.mean(metric))
+                                    df_results['p2p_f_minus_f0-std'].append(np.std(metric))
+                                    df_results['p2p_f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                    df_results['p2p_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                    df_results['p2p_f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                    df_results['p2p_f_minus_f0-change_ratio'].append(change_ratio)
 
-                                else:
-                                    metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_segmented_explanations, X_segmented_perturbed, X_reference_for_segmented_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
-                                df_results['segmented_f_minus_f0'].append(to_sep_list(metric))
-                                df_results['segmented_f_minus_f0-mean'].append(np.mean(metric))
-                                df_results['segmented_f_minus_f0-std'].append(np.std(metric))
-                                df_results['segmented_f_minus_f0_norm'].append(to_sep_list(norm_metric))
-                                df_results['segmented_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
-                                df_results['segmented_f_minus_f0_norm-std'].append(np.std(norm_metric))
-                                df_results['segmented_f_minus_f0-change_ratio'].append(change_ratio)
+                                    if perturbation_policy == 'reference_to_instance_positive':
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_reference_for_segmented_explanations, X_segmented_perturbed, X_test_for_segmented_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+
+                                    else:
+                                        metric, norm_metric, change_ratio = compute_difference(classifier, X_test_for_segmented_explanations, X_segmented_perturbed, X_reference_for_segmented_explanations, PERTURBATIONS[perturbation_policy]['budget'][0])
+                                    df_results['segmented_f_minus_f0'].append(to_sep_list(metric))
+                                    df_results['segmented_f_minus_f0-mean'].append(np.mean(metric))
+                                    df_results['segmented_f_minus_f0-std'].append(np.std(metric))
+                                    df_results['segmented_f_minus_f0_norm'].append(to_sep_list(norm_metric))
+                                    df_results['segmented_f_minus_f0_norm-mean'].append(np.mean(norm_metric))
+                                    df_results['segmented_f_minus_f0_norm-std'].append(np.std(norm_metric))
+                                    df_results['segmented_f_minus_f0-change_ratio'].append(change_ratio)
 
 
-                                df_results['timestamp'].append(pd.Timestamp.now())
-                                df_results['base_explainer'].append(explainer_method)
-                                df_results['mr_classifier'].append(classifier_name)
-                                df_results['reference_policy'].append(reference_policy)
-                                df_results['label'].append(label)
-                                df_results['dataset'].append(dataset_name)
-                                df_results['args'].append(f'{args}')
-                                df_results['perturbation_policy'].append(perturbation_policy)
-                                pd.DataFrame(df_results).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)
+                                    df_results['timestamp'].append(pd.Timestamp.now())
+                                    df_results['base_explainer'].append(explainer_method)
+                                    df_results['mr_classifier'].append(classifier_name)
+                                    df_results['reference_policy'].append(reference_policy)
+                                    df_results['label'].append(label)
+                                    df_results['dataset'].append(dataset_name)
+                                    df_results['args'].append(f'{args}')
+                                    df_results['perturbation_policy'].append(perturbation_policy)
+                                    df_results['distance'].append(distance)
+                                    pd.DataFrame(df_results).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)

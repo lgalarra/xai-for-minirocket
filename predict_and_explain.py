@@ -13,8 +13,10 @@ import pickle
 
 from scipy.stats import kendalltau
 from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
+
 sys.path.append('code/')
-from explainer import Explanation, get_dilated_triplet_array
+from explainer import Explanation, get_dilated_triplet_array, MinirocketExplainer
 from experiments.exputils import to_sep_list
 
 # Must be set before importing joblib/sklearn
@@ -57,7 +59,7 @@ def parse_args():
         type=str,
         default="no",
         choices=["yes", "no", "true", "false", "1", "0"],
-        help="Whether to export data (yes/no)."
+        help="Whether to export all data (yes/no)."
     )
 
     parser.add_argument(
@@ -172,6 +174,15 @@ def parse_args():
         help="A positive integer that indicates a MR feature index to be back-propagated."
     )
 
+    parser.add_argument(
+        "--metric",
+        "-m",
+        type=str,
+        default="euclidean",
+        help="Distance metric used to calculate the reference instances: euclidean, pca-mr"
+    )
+
+
     args = parser.parse_args()
 
     # post-processing for boolean
@@ -192,6 +203,7 @@ def parse_args():
         args.output_path,
         change_class_propagation,
         args.propagate_this_feature,
+        args.metric
     )
 
 
@@ -274,6 +286,9 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
         mmv.MINIROCKET_PARAMETERS = classifier.minirocket_params
+        if not hasattr(classifier, 'pca'):
+            classifier._X_transform = mmv._transform_batch(classifier._X_train, parameters=mmv.MINIROCKET_PARAMETERS)
+            classifier.pca = PCA(n_components=0.9, random_state=42).fit(classifier._X_transform)
     else:
         print('Training new classifier...')
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
@@ -285,7 +300,7 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
     return classifier
 
 def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier, base_path: str, root_path: str,
-           propagate_this_feature=None):
+           propagate_this_feature=None, should_export_data=False):
     reference_policy = explanation.explanation['reference_policy']
     betas = explanation.explanation["coefficients"]
     betas_filename = f"{base_path}/betas_backpropagated_explanations_ref_policy_{reference_policy}_instance_{idx}.csv"
@@ -318,13 +333,15 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
         base_mask, dilated_mask = get_dilated_triplet_array(mmv.get_feature_signature(tridx, classifier.minirocket_params))
         if not os.path.exists(f"{base_path}/base_mask_feature_{tridx}.csv"):
             pd.Series(base_mask).T.to_csv(f"{root_path}/base_mask_feature_{tridx}.csv", header=False)
-        #if not os.path.exists(f"{base_path}/dilated_mask_feature_{tridx}.csv"):
-        #    pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
+        if should_export_data:
+            if not os.path.exists(f"{base_path}/dilated_mask_feature_{tridx}.csv"):
+                pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
 
         convolved_instance = trace['conv_sum']
         pd.DataFrame(convolved_instance).to_csv(f"{base_path}/convolved_instance_{idx}_feature_{tridx}.csv", header=False)
         convolved_instance_after_sigma = trace['sigma']
-        pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)
+        if should_export_data:
+            pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)
         biases.append(trace['bias_b'])
         dilations.append(trace['dilation'])
 
@@ -359,7 +376,8 @@ if __name__ == '__main__':
         compute_p2p_explanations,
         output_path,
         change_class_propagation,
-        propagate_this_feature
+        propagate_this_feature,
+        distance_metric
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -375,6 +393,7 @@ if __name__ == '__main__':
     print("output_path:", output_path)
     print("change_class_propagation:", change_class_propagation)
     print("backpropagate_this_feature:", propagate_this_feature)
+    print("metric:", distance_metric)
 
     os.makedirs(output_path, exist_ok=True)
     LABELS = ['predicted', 'training']
@@ -393,7 +412,7 @@ if __name__ == '__main__':
     else:
         studied_reference_policies = REFERENCE_POLICIES
 
-
+    MinirocketExplainer.REFERENCE_DISTANCE = distance_metric
 
     exporters_dict = {}
     for dataset_name, (dataset_fetch_function, features) in DATASET_FETCH_FUNCTIONS.items():
@@ -430,7 +449,8 @@ if __name__ == '__main__':
                                 instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
                                 os.makedirs(instance_output_path, exist_ok=True)
                                 export(idx, explanation, classifier, instance_output_path,
-                                       output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature)
+                                       output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature,
+                                       should_export_data=should_export_data)
 
 
 

@@ -1,3 +1,4 @@
+import os.path
 import pickle
 
 import numpy as np
@@ -13,16 +14,33 @@ class DataImporter:
         self.dataset_name = dataset_name
         self.data_path = f"data/{dataset_name}"
 
-    def get_attributions_path(self, classifier_name, explainer_method, label):
-        return f"{self.data_path}/{classifier_name}/{explainer_method}/{label}"
+    def get_attributions_path(self, classifier_name, explainer_method, label, distance=None):
+        path = f"{self.data_path}/{classifier_name}/{explainer_method}/{label}"
+        if distance is not None:
+            return path + f"/{distance}"
+        return path
 
-    def get_metadata(self, classifier_name, explainer_method, label) -> pd.DataFrame:
-        attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
+    def get_metadata(self, classifier_name, explainer_method, label, distance) -> pd.DataFrame:
+        attributions_path = self.get_attributions_path(classifier_name, explainer_method, label, distance)
+        if distance == 'euclidean' and not os.path.exists(attributions_path):
+            attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
         return pd.read_csv(f"{attributions_path}/{DataExporter.METADATA_FILE}")
 
 
     @staticmethod
-    def get_series_from_metadata(metadata_df):
+    def get_series_from_metadata(metadata_df, reference_policies=None):
+        if reference_policies is None:
+            policy_indices = list(enumerate(REFERENCE_POLICIES))
+        else:
+            if isinstance(reference_policies, str):
+                reference_policies = [reference_policies]
+
+            unknown = [p for p in reference_policies if p not in REFERENCE_POLICIES]
+            if unknown:
+                raise ValueError(f"Unknown reference policies: {unknown}")
+
+            policy_indices = [(REFERENCE_POLICIES.index(p), p) for p in reference_policies]
+
         groups = metadata_df.groupby('instance_id')
         references = {}
         instances = []
@@ -31,7 +49,7 @@ class DataImporter:
         segmented_explanations = {}
         ys = []
 
-        for i in range(len(REFERENCE_POLICIES)):
+        for i, reference_policy in policy_indices:
             references[REFERENCE_POLICIES[i]] = []
             explanations[REFERENCE_POLICIES[i]] = []
             p2p_explanations[REFERENCE_POLICIES[i]] = []
@@ -39,36 +57,36 @@ class DataImporter:
 
         for instance_id, df_instance in groups:
             instances.append([])
-            for i in range(len(REFERENCE_POLICIES)):
-                explanations[REFERENCE_POLICIES[i]].append([])
-                references[REFERENCE_POLICIES[i]].append([])
-                p2p_explanations[REFERENCE_POLICIES[i]].append([])
-                segmented_explanations[REFERENCE_POLICIES[i]].append([])
+            for i, reference_policy in policy_indices:
+                explanations[reference_policy].append([])
+                references[reference_policy].append([])
+                p2p_explanations[reference_policy].append([])
+                segmented_explanations[reference_policy].append([])
 
             for channel, df_instance_id_channel in df_instance.groupby('channel'):
                 channel_values = pd.read_csv(df_instance_id_channel['series'].values[0], header=None, index_col=0).iloc[:, 0]
                 instances[len(instances) - 1].append(channel_values.values)
-                for i in range(len(REFERENCE_POLICIES)):
-                    reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].values[0],
+                for i, reference_policy in policy_indices:
+                    reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].dropna().values[0],
                                                            header=None, index_col=0).iloc[:, 0]
 
                     references[REFERENCE_POLICIES[i]][len(references[REFERENCE_POLICIES[i]]) - 1].append(
                         reference_channel_values.values)
 
-                    beta_channel_values = pd.read_csv(df_instance_id_channel[f'beta_{i}_attributions'].values[0],
+                    beta_channel_values = pd.read_csv(df_instance_id_channel[f'beta_{i}_attributions'].dropna().values[0],
                                                       header=None, index_col=0).iloc[:, 0]
                     explanations[REFERENCE_POLICIES[i]][len(explanations[REFERENCE_POLICIES[i]]) - 1].append(
                         beta_channel_values.values)
                     
                     beta_p2p_channel_values = None
                     if not df_instance_id_channel[f'beta_p2p_{i}_attributions'].isnull().values.any():
-                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].values[0],
+                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].dropna().values[0],
                                                               header=None, index_col=0).iloc[:, 0]
                     
 
                     p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values.values if beta_p2p_channel_values is not None else None)
 
-                    beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].values[0],
+                    beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].dropna().values[0],
                                                                 header=None, index_col=0).iloc[:, 0]
 
                     segmented_explanations[REFERENCE_POLICIES[i]][len(segmented_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_segmented_channel_values.values)

@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 import shap
+from sklearn.decomposition import PCA
 
 import minirocket_multivariate_variable as mmv
 from explainer import MinirocketExplainer, get_classifier_explainer, Explanation
@@ -32,6 +33,8 @@ class MinirocketClassifier:
         self.classifier.fit(self.traces_obj["phi"], y)
         self._X_train = X
         self._y_train = y
+        self._X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
+        self.pca = PCA(n_components=0.9, random_state=42).fit(self._X_transform)
 
     def minirocket_transform(self, X) -> dict:
         return mmv.transform_prime(X, parameters=self.minirocket_params)
@@ -84,6 +87,8 @@ class MinirocketClassifier:
             y = self._y_train
 
         return MinirocketExplainer(X, y, minirocket_classifier=self.classifier,
+                                   X_transformed=self.pca.transform(self._X_transform),
+                                   pca=self.pca,
                                    minirocket_params=self.minirocket_params)
 
 
