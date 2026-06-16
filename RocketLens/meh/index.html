@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RocketLens</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body class="noInstance">
+  <header>
+    <div class="top-bar">
+      <div class="top-actions" id="topActions">
+        <label class="inline">Dataset
+          <select class="select small" id="peDataset">
+            <option value="abnormal-heartbeat-c1" selected>abnormal-heartbeat-c1</option>
+          </select>
+        </label>
+        <label class="inline">Instance
+          <select class="select small" id="peInstance" disabled>
+            <option value="">—</option>
+          </select>
+        </label>
+        <label class="inline">Label
+          <select class="select small" id="peLabel">
+            <option value="predicted" selected>predicted</option>
+            <option value="true">true</option>
+          </select>
+        </label>
+        <label class="inline">Model
+          <select class="select small" id="peModel">
+            <option value="MLPClassifier" selected>MLPClassifier</option>
+            <option value="RandomForestClassifier" selected>RandomForestClassifier</option>
+            <option value="LogisticRegression" selected>LogisticRegression</option>
+          </select>
+        </label>
+        <label class="inline">Explainer
+          <select class="select small" id="peExplainer">
+            <option value="shap" selected>shap</option>
+            <option value="StratoShap">StratoShap</option>
+          </select>
+        </label>
+        <label class="inline">Reference
+          <select class="select small" id="peRefPolicy">
+            <option value="opposite_class_farthest_instance" selected>Opposite farthest</option>
+            <option value="opposite_class_closest_instance">Opposite closest</option>
+            <option value="opposite_class_medoid">Opposite medoid</option>
+            <option value="opposite_class_centroid">Opposite centroid</option>
+            <option value="global_medoid">Global medoid</option>
+            <option value="global_centroid">Global centroid</option>
+          </select>
+        </label>
+        <button class="btn primary" id="peLoadBtn" disabled>Load</button>
+        <button class="btn" id="peAdvancedBtn" title="Generate new instance files" aria-haspopup="dialog"
+          aria-expanded="false">Generate files</button>
+        <button class="btn" id="peOpenTabBtn" disabled title="Open this instance in a new tab">Open tab</button>
+      </div>
+      <div class="instanceTabs" id="instanceTabs" aria-label="Open instances"></div>
+    </div>
+    <div class="headerActions">
+      <button class="btn" id="peSummaryBtn" disabled title="Summarize top embeddings by attribution">Ranking
+        view</button>
+    </div>
+  </header>
+
+  <!-- Generate new instance files popover -->
+  <div class="pePopover" id="peAdvancedPopover" hidden role="dialog" aria-label="Generate new instance files">
+    <div class="pePopoverHead">
+      <div class="pePopoverTitle"><b>Generate new instance files</b></div>
+      <button class="btn" id="peAdvancedCloseBtn" title="Close">×</button>
+    </div>
+    <div class="tpDetailsBody">
+      <div class="peRow2">
+        <label class="peField">
+          <span class="peLabel">Start</span>
+          <input id="peStartNum" type="number" min="0" step="1" value="" />
+        </label>
+        <label class="peField">
+          <span class="peLabel">End (exclusive)</span>
+          <input id="peEndNum" type="number" min="1" step="1" value="" />
+        </label>
+      </div>
+      <div class="peField">
+        <div class="peLabel">Propagate to change class (-c)</div>
+        <div class="radioRow">
+          <label class="radio"><input type="radio" name="pePropagate" value="yes" checked /> yes</label>
+          <label class="radio"><input type="radio" name="pePropagate" value="no" /> no</label>
+        </div>
+      </div>
+      <label class="peField" id="peTopTField">
+        <span class="peLabel">Top-t MiniROCKET features (-t)</span>
+        <input id="peTopT" type="number" min="1" step="1" placeholder="(optional)" disabled />
+        <div class="muted">Enabled only when propagate = no. If set, uses -t and omits -c.</div>
+      </label>
+      <div class="peActions">
+        <button class="btn primary" id="peRunBtn">Run</button>
+        <button class="btn" id="peCopyBtn" title="Copy CLI command">Copy</button>
+        <span class="kbd" id="peRunStatus">—</span>
+      </div>
+      <pre class="cmd" id="peCmd"></pre>
+      <div class="progressWrap" id="peProgressWrap" hidden>
+        <div class="progressTop">
+          <div class="muted" id="peProgressText">Running…</div>
+          <div class="kbd" id="peProgressPct">—</div>
+        </div>
+        <div class="progressBar indeterminate" id="peProgressBar">
+          <div class="progressFill" id="peProgressFillBar"></div>
+        </div>
+        <pre class="log" id="peLog"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="split">
+
+      <div class="card" id="instanceDetailsCard">
+        <h2>Reference vs Instance</h2>
+
+        <div id="instanceMetaGrid" class="instanceMetaGrid" hidden>
+
+          <div class="slopeRow">
+            <svg id="instanceSlopeChart" class="slopeSvg"
+              aria-label="Reference vs instance prediction probabilities"></svg>
+          </div>
+
+          <!-- <div class="muted" id="instanceMetaFootnote"></div> -->
+
+        </div>
+      </div>
+
+      <div class="card" id="featureDetailsCard">
+        <h2>Feature</h2>
+        <div class="controls" style="margin-bottom:10px">
+          <label class="inline">Feature #
+            <input id="featureIdx" type="number" min="0" max="923" step="1" value="0" />
+          </label>
+          <button class="btn" id="goFeature">Go</button>
+          <span class="kbd" id="featureInfo">α = — · emb = —</span>
+        </div>
+        <div class="picker" id="kernelPickerCard" style="margin-top:8px;">
+          <div class="row" style="margin-bottom:6px">
+            <div class="muted"><b>Kernel</b></div>
+          </div>
+          <div class="picker-btn" id="kernelPickerBtn" aria-expanded="false" role="button" tabindex="0">
+            <div class="picker-top">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span id="selectedKernelDesc"></span>
+              </div>
+            </div>
+            <svg id="selectedKernelPlot" class="kernelMini" aria-label="Kernel plot preview"></svg>
+          </div>
+          <div class="dropdown" id="kernelDropdown">
+            <input id="kernelSearch" type="text" placeholder="Search by id or description..." />
+            <div id="kernelList"></div>
+            <div class="footer-note">
+              MiniROCKET uses the full set of 84 length-9 kernels with three <span class="kbd">2</span>s and six <span
+                class="kbd">-1</span>s
+              (i.e., all <span class="kbd">C(9,3)</span> combinations).
+            </div>
+          </div>
+        </div>
+        <div class="rangeRow">
+          <div class="rangeTop">
+            <div class="muted"><b>Dilation</b> <span class="kbd" id="dilationLabel">d = 1</span></div>
+          </div>
+          <div class="rangeBar" aria-label="Dilation slider">
+            <div class="rangeFill" id="dilationFill"></div>
+            <div class="rangeMarker" id="dilationMarker"></div>
+            <input id="dilationSlider" type="range" min="1" max="256" step="1" value="1" aria-label="Dilation slider" />
+          </div>
+        </div>
+        <div class="rangeRow">
+          <div class="rangeTop">
+            <div class="muted"><b>Threshold</b> <span class="kbd" id="thresholdLabel">thr = 0.00</span></div>
+            <div class="muted" id="thresholdBounds">—</div>
+          </div>
+          <div class="rangeBar" aria-label="Threshold slider">
+            <div class="rangeFill warnfill" id="thresholdFill"></div>
+            <div class="rangeMarker warnmarker" id="thresholdMarker"></div>
+            <input id="thresholdSlider" type="range" min="0" max="1" step="0.001" value="0"
+              aria-label="Threshold slider" />
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="muted" id="seriesInfo">—</div>
+      </div>
+
+      <button class="btn" id="retropropFeatureBtn" style="width:100%; margin-top:10px;" disabled>Retropropagate this
+        feature</button>
+      <div class="progressWrap" id="retroProgressWrap" hidden style="margin-top:8px;">
+        <div class="progressTop">
+          <div class="muted" id="retroProgressText">Running…</div>
+          <div class="kbd" id="retroProgressPct">—</div>
+        </div>
+        <div class="progressBar indeterminate" id="retroProgressBar">
+          <div class="progressFill" id="retroProgressFillBar"></div>
+        </div>
+        <pre class="log" id="retroProgressLog" style="max-height:120px;"></pre>
+      </div>
+      <button class="btn" id="resetZoom" style="width:100%; margin-top:10px;">Reset zoom</button>
+    </aside>
+
+    <main class="split tight">
+      <div class="card" id="timeSeriesCard">
+        <div class="row">
+          <h2>Time series</h2>
+          
+          <label class="inline" style="gap:8px;">
+            <span>Reference</span>
+            <select class="select small" id="referencePolicySelect" disabled style="min-width:200px;">
+              <option value="">Current reference</option>
+            </select>
+          </label>
+          <label class="inline" style="gap:8px;">
+            <input id="showReference" type="checkbox" />
+            <span>Show reference</span>
+          </label>
+          <input id="align" type="range" min="0" max="0" step="1" value="0" style="display:none" aria-hidden="true"
+            tabindex="-1" />
+            <label class="inline" style="gap:8px;">
+            <span>Betas</span>
+            <select class="select small" id="betaFileSelect" disabled style="min-width:200px;">
+              <option value="">Original β</option>
+            </select>
+          </label>
+          <span class="kbd" id="alignLabel" style="width: 120px;">t = 0</span>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(37,99,235,.85)"></span>series</span>
+            <span><span class="dot" style="background: rgba(99,102,241,.85)"></span>reference</span>
+            <span><span class="dot" style="background: rgba(245,158,11,.65)"></span>alignment handle</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.60)"></span>positive taps (w=2)</span>
+            <span><span class="dot" style="background: rgba(239,68,68,.55)"></span>negative taps (w=-1)</span>
+          </div>
+        </div>
+        <div class="panelContent" id="timeSeriesPanelContent">
+          <svg id="seriesChart"></svg>
+        </div>
+      </div>
+      <div class="resize-handle" data-above="timeSeriesPanelContent" data-below="embeddingsPanelContent"></div>
+      <div class="card" id="featureCard" style="position:relative;">
+        <div class="row" style="margin-bottom:6px">
+          <h2>Embeddings</h2>
+          <div class="sortControls" id="embSortControls" aria-label="Embedding sort controls">
+            <label class="inline">Sort
+              <select class="select small" id="embSortKey">
+                <option value="index" selected>index</option>
+                <option value="beta">beta</option>
+                <option value="alpha">alpha</option>
+              </select>
+            </label>
+            <div class="radioRow sortDir" aria-label="Sort direction">
+              <label class="radio"><input type="radio" name="embSortDir" value="asc" checked /> asc</label>
+              <label class="radio"><input type="radio" name="embSortDir" value="desc" /> desc</label>
+            </div>
+          </div>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(37,99,235,.70)"></span>higher attribution</span>
+            <span><span class="dot" style="background: rgba(17,24,39,.10)"></span>near zero</span>
+          </div>
+        </div>
+        <div class="panelContent" id="embeddingsPanelContent">
+          <svg id="featureOverview" aria-label="MiniROCKET embedding and attributions overview"></svg>
+        </div>
+        <div class="tooltip" id="featureTooltip"></div>
+      </div>
+      <div class="resize-handle" data-above="embeddingsPanelContent" data-below="convPanelContent"></div>
+      <div class="card" id="convCard">
+        <div class="row" style="margin-bottom:6px">
+          <h2>Convolution response</h2>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(16,185,129,.75)"></span>response</span>
+            <span><span class="dot" style="background: rgba(245,158,11,.75)"></span>threshold</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.18)"></span>area above threshold</span>
+          </div>
+        </div>
+        <div class="panelContent" id="convPanelContent">
+          <svg id="convChart"></svg>
+        </div>
+        <div class="hint" id="summary"></div>
+      </div>
+    </main>
+  </div>
+
+
+  <!-- Top embeddings summary modal -->
+  <div class="modalOverlay" id="peSummaryOverlay" hidden>
+    <div class="modalWindow" id="peSummaryModal" role="dialog" aria-modal="true" aria-label="Top embeddings summary">
+      <div class="modalHeader" id="peSummaryHeader" title="Drag to move">
+        <div class="modalTitle">
+          <b>Top embeddings</b>
+          <span class="muted" id="peSummarySubtitle" style="margin-left:8px;">—</span>
+        </div>
+        <div class="modalHeaderRight">
+          <button class="btn" id="peSummaryRefreshBtn" title="Refresh">Refresh</button>
+          <button class="btn" id="peSummaryCloseBtn" title="Close">×</button>
+        </div>
+      </div>
+
+      <div class="modalBody">
+        <div class="modalControls">
+          <div class="peField peCompact" style="flex: 0 0 auto;">
+            <div class="peLabel">Scope</div>
+            <select id="peSummaryScopeSelect" class="select" style="min-width:240px;">
+              <option value="active" selected>active instance (—)</option>
+              <option value="tabs">open tabs</option>
+              <option value="range">instance id range</option>
+              <option value="list">instance list</option>
+              <option value="classflip">ClassFlip (Top—)</option>
+            </select>
+          </div>
+
+          <div class="peField peCompact" id="peSummaryRangeControls" style="display:none; flex: 0 0 auto;">
+            <div class="peLabel">Instance range</div>
+            <div class="peSubRow" style="gap:10px;">
+              <label class="inline" style="gap:6px;">Start
+                <input id="peSummaryStartId" type="number" min="0" step="1" value="0" style="width:90px;" />
+              </label>
+              <label class="inline" style="gap:6px;">End
+                <input id="peSummaryEndId" type="number" min="0" step="1" value="0" style="width:90px;" />
+              </label>
+              <button class="btn" id="peSummaryLoadRangeBtn">Load</button>
+            </div>
+          </div>
+
+          <div class="peField peCompact" id="peSummaryListControls" style="display:none; flex: 0 0 auto;">
+            <div class="peLabel">Instance list</div>
+            <div class="peSubRow" style="gap:10px;">
+              <input id="peSummaryInstanceList" type="text" placeholder="e.g., 1,8,9-14" style="width:240px;" />
+              <button class="btn" id="peSummaryLoadListBtn">Load</button>
+            </div>
+          </div>
+
+          <div class="peField peCompact" style="flex: 0 0 auto;">
+            <div class="peLabel">Top-k by |α|</div>
+            <div class="peSubRow" style="gap:10px;">
+              <input id="peSummaryTopK" type="range" min="1" max="50" step="1" value="15" />
+              <span class="kbd" id="peSummaryTopKLabel">15</span>
+            </div>
+          </div>
+
+          <div class="peField peCompact" style="flex: 0 0 auto;">
+            <div class="peLabel">Kernel view</div>
+            <label class="radio" style="margin-top:6px;">
+              <input id="peSummaryShowDilated" type="checkbox" />
+              show dilated kernels
+            </label>
+          </div>
+
+          <div class="peField peCompact" style="flex: 1 1 260px;">
+            <div class="peLabel">Status</div>
+            <div class="muted" id="peSummaryStatus">—</div>
+            <div class="muted" id="peSummaryBiasStats" style="margin-top:4px;"></div>
+          </div>
+        </div>
+
+        <div class="summaryStack">
+          <div class="summaryPane summaryLeft">
+            <div class="summaryPaneHead">
+              <div class="summaryPaneTitle">Feature summary</div>
+            </div>
+            <div class="summaryScroll" id="peSummaryMatrixWrap" aria-label="Feature summary matrix">
+              <svg id="peSummaryMatrixSvg" class="summaryMatrixSvg" aria-label="Feature summary matrix"></svg>
+            </div>
+          </div>
+
+          <div class="summaryPane summaryRight">
+            <div class="summaryPaneHead">
+              <div class="summaryPaneTitle">Kernels grouped by frequency</div>
+              <label class="inline" style="gap:6px;">
+                <select class="select small" id="peSummaryKernelSort" style="min-width:150px;">
+                  <option value="freq_desc" selected>freq ↓</option>
+                  <option value="freq_asc">freq ↑</option>
+                </select>
+              </label>
+            </div>
+            <div class="summaryKernelScroll" id="peSummaryKernelStrip" aria-label="Kernel grouped list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+  
+  
+  
+
+
+
+
+</body>
+
+</html>
