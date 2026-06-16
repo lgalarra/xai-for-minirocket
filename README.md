@@ -4,6 +4,11 @@ This branch is based on the source code of [`ROCKET`](https://github.com/angus92
 
 The source code includes the implementation of [`RocketLens`](https://rocketlens.webs.upv.es/), an interactive visual analytics tool for explaining MiniROCKET-based time series classifiers. The source code as well as the instructions to deploy them is under the folder RocketLens.
 
+## Using this code
+
+To run this code you need a Python environment with Python >= 3.11 (it may work with older versions but all our tests relied on Python 3.11 and 3.13) and Numba. In the file requirements_example.txt we provide the list of installed packages for a Python 3.11.14 environment running on Fedora 41.
+
+
 # MINIROCKET
 
 ***MINIROCKET: A Very Fast (Almost) Deterministic Transform for Time Series Classification***
