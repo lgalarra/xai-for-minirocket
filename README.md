@@ -1,8 +1,8 @@
 # Explainable AI for ROCKET-based models
 
-This branch is based on the source code of [`ROCKET`](https://github.com/angus924/rocket) &middot; [**`MINIROCKET`**](https://github.com/angus924/minirocket) &middot; [`HYDRA`](https://github.com/angus924/hydra) and contains the implementation of an approach to back-propagate attribution scores defined on ROCKET features back to the observations in the time series.
+This branch is based on the source code of [`ROCKET`](https://github.com/angus924/rocket) &middot; [**`MINIROCKET`**](https://github.com/angus924/minirocket) &middot; [`HYDRA`](https://github.com/angus924/hydra) and contains the implementation of an approach to back-propagate attribution scores defined on ROCKET features on time series classifiers back to the observations in the time series.
 
-The source code includes the implementation of [`RocketLens`](https://rocketlens.webs.upv.es/), an interactive visual analytics tool for explaining MiniROCKET-based time series classifiers.
+The source code includes the implementation of [`RocketLens`](https://rocketlens.webs.upv.es/), an interactive visual analytics tool for explaining MiniROCKET-based time series classifiers. The source code as well as the instructions to deploy them is under the folder RocketLens.
 
 # MINIROCKET
 
