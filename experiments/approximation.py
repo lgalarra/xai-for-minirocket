@@ -5,6 +5,7 @@
 import os
 import random
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -39,11 +40,17 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS, COGNITIVE_CIRCLES_BASIC_CHANNELS,
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
-from sklearn.metrics import accuracy_score, r2_score
+from sklearn.metrics import accuracy_score
 from export_data import DataExporter
 from reference import REFERENCE_POLICIES
 
 import argparse
+
+TSHAP_REPO_PATH = Path(__file__).resolve().parents[2] / "tshap"
+if TSHAP_REPO_PATH.exists() and str(TSHAP_REPO_PATH) not in sys.path:
+    sys.path.append(str(TSHAP_REPO_PATH))
+
+from tshap.synthetic import DoubleFreqTest
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -182,13 +189,22 @@ MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
                   'RandomForestClassifier': RandomForestClassifier,
                   'MLPClassifier' : MLPClassifier}
 
+def get_double_freq_test_for_classification(n_samples=100):
+    synth_gen = DoubleFreqTest()
+    X_train, y_train, _ = synth_gen.generate_classification_data_and_attribs(
+        n_samples=n_samples,
+        random_seed=0
+    )
+    X_test, y_test, _ = synth_gen.generate_classification_data_and_attribs(
+        n_samples=int(n_samples/5),
+        random_seed=1
+    )
+    return (X_train.astype(np.float32), y_train.astype(int)), (X_test.astype(np.float32), y_test.astype(int))
+
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
-    "abnormal-heartbeat-c0": ("get_abnormal_hearbeat_for_classification('0')", [('A', 'Amplitude Change')]),
+    "double-freq-test": ("get_double_freq_test_for_classification(n_samples=200)", [('X', 'Frequency')]),
     "abnormal-heartbeat-c1": ("get_abnormal_hearbeat_for_classification('1')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c2": ("get_abnormal_hearbeat_for_classification('2')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c3": ("get_abnormal_hearbeat_for_classification('3')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c4": ("get_abnormal_hearbeat_for_classification('4')", [('A', 'Amplitude Change')]),
     "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
     "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
     "starlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
@@ -207,21 +223,16 @@ def build_map_of_already_trained_classifiers(datasets: list, classifiers):
             }
 
 MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(['starlight-c1', 'starlight-c2', 'starlight-c3',
-                                             'abnormal-heartbeat-c0', 'abnormal-heartbeat-c1',
-                                          'abnormal-heartbeat-c2', 'abnormal-heartbeat-c3',
-                                          'abnormal-heartbeat-c4', 'ford-a', 'cognitive-circles', 'handoutlines'],
-                                                                                     ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
+                                             'abnormal-heartbeat-c1', 'ford-a', 'cognitive-circles', 'handoutlines',
+                                          'double-freq-test'], ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
 
 
 MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
                           'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
                           'handoutlines': {'num_features': 500},
                           'cognitive-circles': {'num_features': 1000},
-                          'abnormal-heartbeat-c0' : {'num_features': 1000},
                           'abnormal-heartbeat-c1' : {'num_features': 1000},
-                          'abnormal-heartbeat-c2' : {'num_features': 1000},
-                          'abnormal-heartbeat-c3' : {'num_features': 1000},
-                          'abnormal-heartbeat-c4' : {'num_features': 1000},
+                          'double-freq-test': {'num_features': 500},
                           }
 
 
@@ -258,10 +269,9 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
     return explanation, explanation_p2p, segmented_explanation
 
 
-def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
+def update(kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
            complexity_p2p, complexity_segmented, local_accuracy, error, reference_policy):
-    if reference_policy not in r2s:
-        r2s[reference_policy] = []
+    if reference_policy not in kendalls:
         error[reference_policy] = []
         kendalls[reference_policy] = []
         runtimes_backpropagated[reference_policy] = []
@@ -272,8 +282,7 @@ def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmen
         complexity_segmented[reference_policy] = []
         local_accuracy[reference_policy] = 0
 
-    r2, kendall = (0.0, 0.0) if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
-    r2s[reference_policy].append(r2)
+    kendall = 0.0 if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
     kendalls[reference_policy].append(kendall)
     runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
     runtimes_p2p[reference_policy].append(-1.0 if explanation_p2p is None else explanation_p2p.get_runtime())
@@ -375,15 +384,14 @@ if __name__ == '__main__':
 
     OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'metric-{metric}.csv')
 
-    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
+    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> float:
         explanation_vector = explanation.get_attributions_as_single_vector()
         explanation_p2p_vector = explanation_p2p.get_attributions_as_single_vector()
         res = kendalltau(explanation_p2p_vector, explanation_vector)
-        return r2_score(explanation_p2p_vector, explanation_vector), res.statistic
+        return res.statistic
     
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
-                 'dataset': [], 'r2s': [], 'r2s-mean': [], 'r2s-std': [],
-                 'local_accuracy': [], 'error': [], 'runtimes-seconds': [], 'runtimes-mean': [], 'runtimes-std': [],
+                 'dataset': [], 'local_accuracy': [], 'error': [], 'runtimes-seconds': [], 'runtimes-mean': [], 'runtimes-std': [],
                  'runtimes-p2p-seconds': [], 'runtimes-p2p-mean': [], 'runtimes-p2p-std': [],
                  'runtimes-segmented-seconds': [], 'runtimes-segmented-mean': [], 'runtimes-segmented-std': [],
                  'complexity': [], 'complexity-mean': [], 'complexity-std': [],
@@ -423,7 +431,6 @@ if __name__ == '__main__':
                     for reference_policy in studied_reference_policies:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
-                    r2s = {}
                     kendalls = {}
                     runtimes_backpropagated = {}
                     runtimes_p2p = {}
@@ -451,11 +458,11 @@ if __name__ == '__main__':
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
                                                                            segmented_explanation)
 
-                            update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented,
+                            update(kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented,
                                    complexity_backpropagated, complexity_p2p, complexity_segmented,
                                    local_accuracy, error, reference_policy)
 
-                            measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy],
+                            measures_for_instance[reference_policy] = (kendalls[reference_policy],
                                                                        runtimes_backpropagated[reference_policy],
                                                                    runtimes_p2p[reference_policy], runtimes_segmented[reference_policy],
                                                                    complexity_backpropagated[reference_policy], complexity_p2p[reference_policy],
@@ -469,7 +476,7 @@ if __name__ == '__main__':
 
                     for reference_policy in studied_reference_policies:
                         for instance_measures in dataset_measures:
-                            (kendalls, r2s, runtimes_backpropagated,
+                            (kendalls, runtimes_backpropagated,
                              runtimes_p2p, runtimes_segmented,
                              complexity_backpropagated, complexity_p2p,
                              complexity_segmented, local_accuracy, error) = instance_measures[reference_policy]
@@ -499,15 +506,11 @@ if __name__ == '__main__':
                             results_df_rp['runtimes-segmented-mean'].append(np.mean(runtimes_segmented))
                             results_df_rp['runtimes-segmented-std'].append(np.std(runtimes_segmented))
 
-                            results_df_rp['r2s'].append(to_sep_list(r2s))
-                            results_df_rp['r2s-mean'].append(np.mean(r2s))
-                            results_df_rp['r2s-std'].append(np.std(r2s))
-
                             results_df_rp['kendall-taus'].append(to_sep_list(kendalls))
                             results_df_rp['kendall-taus-mean'].append(np.mean(kendalls))
                             results_df_rp['kendall-taus-std'].append(np.std(kendalls))
 
-                            results_df_rp['local_accuracy'].append(local_accuracy / len(r2s))
+                            results_df_rp['local_accuracy'].append(local_accuracy / len(kendalls))
                             results_df_rp['error'].append(to_sep_list(error))
                             print(results_df_rp)
                             pd.DataFrame(results_df_rp).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)

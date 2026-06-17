@@ -27,7 +27,8 @@ UNITS = {
     "starlight-c1": ["m"], "starlight-c2": ["m"], "starlight-c3": ["m"],
     "abnormal-heartbeat-c0": ["m"], "abnormal-heartbeat-c1": ["m"],
     "abnormal-heartbeat-c2": ["m"], "abnormal-heartbeat-c3": ["m"],
-    "abnormal-heartbeat-c4": ["m"], "handoutlines": ["cm"]
+    "abnormal-heartbeat-c4": ["m"], "handoutlines": ["cm"],
+    "double-freq-test": ["Hz"]
 }
 
 DESCRIPTIONS = {
@@ -39,14 +40,16 @@ DESCRIPTIONS = {
     "abnormal-heartbeat-c2": ["Amplitude Change"],
     "abnormal-heartbeat-c3": ["Amplitude Change"],
     "abnormal-heartbeat-c4": ["Amplitude Change"],
-    "handoutlines": ["X"]
+    "handoutlines": ["X"],
+    "double-freq-test": ["Frequency"]
 }
 
 CHANNELS = {'ford-a': ['C'],
             'cognitive-circles': [x for x in cognitive_circles_get_sorted_channels_from_df(data_dir='../data/cognitive-circles')],
             'starlight-c1': ['B'], 'starlight-c2': ['B'], 'starlight-c3': ['B'],
             'abnormal-heartbeat-c0': ['A'], 'abnormal-heartbeat-c1': ['A'], 'abnormal-heartbeat-c2': ['A'],
-            'abnormal-heartbeat-c3': ['A'], 'abnormal-heartbeat-c4': ['A'], "handoutlines": ["X"]
+            'abnormal-heartbeat-c3': ['A'], 'abnormal-heartbeat-c4': ['A'], "handoutlines": ["X"],
+            "double-freq-test": ["X"]
             }
 
 #('X', 'X'), ('V', 'velocity'), ('VA', 'angular_velocity'),
@@ -58,7 +61,8 @@ CLASSES = {'ford-a': ['No problem', 'Problem'], 'cognitive-circles': ['Easy', 'D
            'abnormal-heartbeat-c1': ['Extra Stole', 'Other'],
            'abnormal-heartbeat-c2': ['Murmur', 'Other'],
            'abnormal-heartbeat-c3': ['Normal', 'Other'],
-           'abnormal-heartbeat-c4': ['ExtraHLS', 'Other'], 'handoutlines': ['Correct', 'Incorrect']
+           'abnormal-heartbeat-c4': ['ExtraHLS', 'Other'], 'handoutlines': ['Correct', 'Incorrect'],
+           'double-freq-test': ['Low frequency sum', 'High frequency sum']
            }
 
 METADATA_SCHEMA = {col : [] for col in METADATA_COLUMNS}
@@ -226,6 +230,5 @@ def flush_metadata(metadata_entries: dict, output_path: str):
 def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
                                  label_type: str, metric: str) -> str:
     return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type + '/' + metric
-
 
 
