@@ -12,13 +12,36 @@ import json
 
 from utils import COGNITIVE_CIRCLES_CHANNELS, cognitive_circles_get_sorted_channels_from_df, COGNITIVE_CIRCLES_UNITS
 
+SEGMENTED_EXPLANATION_SEGMENTS = (10, 20, 50, 100)
+TSHAP_CONFIGS = tuple(
+    (window_size_percent, stride)
+    for window_size_percent in (10, 15, 20)
+    for stride in (5, 20)
+)
+
+def get_beta_segmented_column(reference_policy_idx: int, num_segments: int) -> str:
+    if num_segments == 10:
+        return f'beta_segmented_{reference_policy_idx}_attributions'
+    return f'beta_segmented_n{num_segments}_{reference_policy_idx}_attributions'
+
+def get_tshap_key(window_size_percent: int, stride: int) -> str:
+    return f"w{window_size_percent}_s{stride}"
+
+def get_beta_tshap_column(reference_policy_idx: int, window_size_percent: int, stride: int) -> str:
+    return f'beta_tshap_{get_tshap_key(window_size_percent, stride)}_{reference_policy_idx}_attributions'
+
 METADATA_COLUMNS =(['instance_id', 'series', 'label', 'label_type', 'label_probability', 'channel', 'group', 'annotation']
                    + [f'reference_{i}' for i in range(len(REFERENCE_POLICIES))]
                    + [f'reference_{i}_label' for i in range(len(REFERENCE_POLICIES))]
                    + [f'reference_{i}_label_probability' for i in range(len(REFERENCE_POLICIES))]
                    + [f'beta_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
                    + [f'beta_p2p_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
-                   + [f'beta_segmented_{i}_attributions' for i in range(len(REFERENCE_POLICIES))]
+                   + [get_beta_segmented_column(i, num_segments)
+                      for num_segments in SEGMENTED_EXPLANATION_SEGMENTS
+                      for i in range(len(REFERENCE_POLICIES))]
+                   + [get_beta_tshap_column(i, window_size_percent, stride)
+                      for window_size_percent, stride in TSHAP_CONFIGS
+                      for i in range(len(REFERENCE_POLICIES))]
                    )
 
 UNITS = {
@@ -129,7 +152,7 @@ class DataExporter(object):
             (self.dataset_name, self.mr_classifier_name, self.explainer_method, self.label_type)
         metadata_dict = copy.deepcopy(METADATA_SCHEMA)
         some_reference_policy = next(iter(explanations_dict))
-        (explanation, _, _) = explanations_dict[some_reference_policy]
+        explanation = explanations_dict[some_reference_policy][0]
         instance = explanation.get_instance()
 
         mr_filename = f'{self.output_dataset_path}/mr_embeddings_instance_{instance_id}.csv'
@@ -140,14 +163,20 @@ class DataExporter(object):
             metadata_dict['instance_id'].append(instance_id)
             for reference_policy in studied_reference_policies:
                 idx = REFERENCE_POLICIES.index(reference_policy)
-                (explanation, explanation_p2p, segmented_explanation) = explanations_dict[reference_policy]
+                explanation_values = explanations_dict[reference_policy]
+                if len(explanation_values) == 4:
+                    (explanation, explanation_p2p, segmented_explanations, tshap_explanations) = explanation_values
+                else:
+                    (explanation, explanation_p2p, segmented_explanations) = explanation_values
+                    tshap_explanations = {}
                 betas = explanation.get_attributions_in_original_dimensions()
                 betas_p2p = None
-                betas_segmented = None
                 if explanation_p2p is not None:
                     betas_p2p = explanation_p2p.get_attributions_in_original_dimensions()
-                if segmented_explanation is not None:
-                    betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
+                if not isinstance(segmented_explanations, dict):
+                    segmented_explanations = {10: segmented_explanations}
+                if tshap_explanations is None:
+                    tshap_explanations = {}
                 reference = explanation.explanation['reference']
                 reference_code = hashlib.md5(reference[channel_idx].data.tobytes()).hexdigest()
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
@@ -174,12 +203,31 @@ class DataExporter(object):
                     attr_p2p_channel_filename = None
                 metadata_dict[f'beta_p2p_{idx}_attributions'].append(attr_p2p_channel_filename)
 
-                if betas_segmented is not None:
-                    attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
-                    pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
-                else:
-                    attr_segmented_channel_filename = None
-                metadata_dict[f'beta_segmented_{idx}_attributions'].append(attr_segmented_channel_filename)
+                for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                    segmented_explanation = segmented_explanations.get(num_segments)
+                    column = get_beta_segmented_column(idx, num_segments)
+                    if segmented_explanation is not None:
+                        betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
+                        if num_segments == 10:
+                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
+                        else:
+                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_n{num_segments}_instance_{instance_id}_{idx}.csv'
+                        pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
+                    else:
+                        attr_segmented_channel_filename = None
+                    metadata_dict[column].append(attr_segmented_channel_filename)
+
+                for window_size_percent, stride in TSHAP_CONFIGS:
+                    key = get_tshap_key(window_size_percent, stride)
+                    tshap_explanation = tshap_explanations.get(key)
+                    column = get_beta_tshap_column(idx, window_size_percent, stride)
+                    if tshap_explanation is not None:
+                        betas_tshap = tshap_explanation["coefficients"]
+                        attr_tshap_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betatshap_{key}_instance_{instance_id}_{idx}.csv'
+                        pd.Series(betas_tshap[channel_idx]).to_csv(attr_tshap_channel_filename, header=False)
+                    else:
+                        attr_tshap_channel_filename = None
+                    metadata_dict[column].append(attr_tshap_channel_filename)
 
             for idx, _ in enumerate(REFERENCE_POLICIES):
                 if len(metadata_dict[f'reference_{idx}']) == 0:
@@ -188,7 +236,10 @@ class DataExporter(object):
                     metadata_dict[f'reference_{idx}_label_probability'].append(None)
                     metadata_dict[f'beta_{idx}_attributions'].append(None)
                     metadata_dict[f'beta_p2p_{idx}_attributions'].append(None)
-                    metadata_dict[f'beta_segmented_{idx}_attributions'].append(None)
+                    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                        metadata_dict[get_beta_segmented_column(idx, num_segments)].append(None)
+                    for window_size_percent, stride in TSHAP_CONFIGS:
+                        metadata_dict[get_beta_tshap_column(idx, window_size_percent, stride)].append(None)
 
             channel_filename = f'{self.output_dataset_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_instance_{instance_id}.csv'
             metadata_dict['series'].append(channel_filename)
@@ -230,5 +281,3 @@ def flush_metadata(metadata_entries: dict, output_path: str):
 def get_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
                                  label_type: str, metric: str) -> str:
     return 'data/' + dataset_name + '/' + mr_classifier_name + '/' + explainer_method + '/' + label_type + '/' + metric
-
-
