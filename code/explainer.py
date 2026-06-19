@@ -117,7 +117,11 @@ class Explanation:
 def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=None, target=None):
     if type(classifier_explainer) == str:
         if classifier_explainer == "shap":
-            return shap.KernelExplainer(classifier_fn, X_background).explain
+            explainer = shap.KernelExplainer(classifier_fn, X_background)
+            nsamples = None if target is None else 4 * target.reshape(-1).shape[0]
+            if nsamples is None:
+                return explainer.explain
+            return lambda x: explainer.explain(x, nsamples=nsamples)
         elif classifier_explainer == 'stratoshap-k1':
             x_flat = target.reshape(-1)
             x_bar = X_background[0].reshape(-1)

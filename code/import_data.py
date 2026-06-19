@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 from export_data import CHANNELS
 from reference import REFERENCE_POLICIES
-from export_data import DataExporter
+from export_data import (DataExporter, SEGMENTED_EXPLANATION_SEGMENTS, TSHAP_CONFIGS,
+                         get_beta_segmented_column, get_beta_tshap_column, get_tshap_key)
 
 
 class DataImporter:
@@ -28,6 +29,15 @@ class DataImporter:
 
 
     @staticmethod
+    def _read_optional_series(df_instance_id_channel, column):
+        if column not in df_instance_id_channel.columns:
+            return None
+        values = df_instance_id_channel[column].dropna().values
+        if len(values) == 0:
+            return None
+        return pd.read_csv(values[0], header=None, index_col=0).iloc[:, 0].values
+
+    @staticmethod
     def get_series_from_metadata(metadata_df, reference_policies=None):
         if reference_policies is None:
             policy_indices = list(enumerate(REFERENCE_POLICIES))
@@ -47,13 +57,19 @@ class DataImporter:
         explanations = {}
         p2p_explanations = {}
         segmented_explanations = {}
+        tshap_explanations = {}
         ys = []
 
         for i, reference_policy in policy_indices:
             references[REFERENCE_POLICIES[i]] = []
             explanations[REFERENCE_POLICIES[i]] = []
             p2p_explanations[REFERENCE_POLICIES[i]] = []
-            segmented_explanations[REFERENCE_POLICIES[i]] = []
+            segmented_explanations[reference_policy] = {
+                num_segments: [] for num_segments in SEGMENTED_EXPLANATION_SEGMENTS
+            }
+            tshap_explanations[reference_policy] = {
+                get_tshap_key(*config): [] for config in TSHAP_CONFIGS
+            }
 
         for instance_id, df_instance in groups:
             instances.append([])
@@ -61,47 +77,66 @@ class DataImporter:
                 explanations[reference_policy].append([])
                 references[reference_policy].append([])
                 p2p_explanations[reference_policy].append([])
-                segmented_explanations[reference_policy].append([])
+                for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                    segmented_explanations[reference_policy][num_segments].append([])
+                for window_size_percent, stride in TSHAP_CONFIGS:
+                    tshap_explanations[reference_policy][get_tshap_key(window_size_percent, stride)].append([])
 
             for channel, df_instance_id_channel in df_instance.groupby('channel'):
                 channel_values = pd.read_csv(df_instance_id_channel['series'].values[0], header=None, index_col=0).iloc[:, 0]
                 instances[len(instances) - 1].append(channel_values.values)
                 for i, reference_policy in policy_indices:
-                    reference_channel_values = pd.read_csv(df_instance_id_channel[f'reference_{i}'].dropna().values[0],
-                                                           header=None, index_col=0).iloc[:, 0]
+                    reference_channel_values = DataImporter._read_optional_series(
+                        df_instance_id_channel, f'reference_{i}'
+                    )
 
                     references[REFERENCE_POLICIES[i]][len(references[REFERENCE_POLICIES[i]]) - 1].append(
-                        reference_channel_values.values)
+                        reference_channel_values)
 
-                    beta_channel_values = pd.read_csv(df_instance_id_channel[f'beta_{i}_attributions'].dropna().values[0],
-                                                      header=None, index_col=0).iloc[:, 0]
+                    beta_channel_values = DataImporter._read_optional_series(
+                        df_instance_id_channel, f'beta_{i}_attributions'
+                    )
                     explanations[REFERENCE_POLICIES[i]][len(explanations[REFERENCE_POLICIES[i]]) - 1].append(
-                        beta_channel_values.values)
+                        beta_channel_values)
                     
-                    beta_p2p_channel_values = None
-                    if not df_instance_id_channel[f'beta_p2p_{i}_attributions'].isnull().values.any():
-                        beta_p2p_channel_values = pd.read_csv(df_instance_id_channel[f'beta_p2p_{i}_attributions'].dropna().values[0],
-                                                              header=None, index_col=0).iloc[:, 0]
+                    beta_p2p_channel_values = DataImporter._read_optional_series(
+                        df_instance_id_channel, f'beta_p2p_{i}_attributions'
+                    )
                     
 
-                    p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values.values if beta_p2p_channel_values is not None else None)
+                    p2p_explanations[REFERENCE_POLICIES[i]][len(p2p_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_p2p_channel_values)
 
-                    beta_segmented_channel_values = pd.read_csv(df_instance_id_channel[f'beta_segmented_{i}_attributions'].dropna().values[0],
-                                                                header=None, index_col=0).iloc[:, 0]
+                    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                        beta_segmented_channel_values = DataImporter._read_optional_series(
+                            df_instance_id_channel, get_beta_segmented_column(i, num_segments)
+                        )
+                        segmented_explanations[reference_policy][num_segments][
+                            len(segmented_explanations[reference_policy][num_segments]) - 1
+                        ].append(beta_segmented_channel_values)
 
-                    segmented_explanations[REFERENCE_POLICIES[i]][len(segmented_explanations[REFERENCE_POLICIES[i]]) - 1].append(beta_segmented_channel_values.values)
+                    for window_size_percent, stride in TSHAP_CONFIGS:
+                        key = get_tshap_key(window_size_percent, stride)
+                        beta_tshap_channel_values = DataImporter._read_optional_series(
+                            df_instance_id_channel, get_beta_tshap_column(i, window_size_percent, stride)
+                        )
+                        tshap_explanations[reference_policy][key][
+                            len(tshap_explanations[reference_policy][key]) - 1
+                        ].append(beta_tshap_channel_values)
 
             ys.append(df_instance['label'].iloc[0])
 
-        for series_dict in [references, explanations, p2p_explanations, segmented_explanations]:
-            for _k, v in series_dict.items():
-                try:
-                    series_dict[_k] = np.array(v)
-                except:
-                    pass
+        def arrayify(value):
+            if isinstance(value, dict):
+                return {k: arrayify(v) for k, v in value.items()}
+            try:
+                return np.array(value)
+            except Exception:
+                return value
 
 
-        return np.array(instances), np.array(ys), references, explanations, p2p_explanations, segmented_explanations
+        return (np.array(instances), np.array(ys), arrayify(references), arrayify(explanations),
+                arrayify(p2p_explanations), arrayify(segmented_explanations),
+                arrayify(tshap_explanations))
 
     def import_classifier(self, mr_classifier):
         return pickle.load(open(f"{self.data_path}/{mr_classifier}/{mr_classifier}.pkl", 'rb'))
