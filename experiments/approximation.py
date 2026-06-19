@@ -39,7 +39,7 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification, get_handoutlines_for_classification,
                    get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS, COGNITIVE_CIRCLES_BASIC_CHANNELS,
-                   cognitive_circles_get_sorted_channels_from_df)
+                   cognitive_circles_get_sorted_channels_from_df, get_double_freq_test_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score
 from export_data import DataExporter
@@ -191,18 +191,6 @@ MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
                   'RandomForestClassifier': RandomForestClassifier,
                   'MLPClassifier' : MLPClassifier}
 
-def get_double_freq_test_for_classification(n_samples=100):
-    synth_gen = DoubleFreqTest()
-    X_train, y_train, _ = synth_gen.generate_classification_data_and_attribs(
-        n_samples=n_samples,
-        random_seed=0
-    )
-    X_test, y_test, _ = synth_gen.generate_classification_data_and_attribs(
-        n_samples=int(n_samples/5),
-        random_seed=1
-    )
-    return (X_train.astype(np.float32), y_train.astype(int)), (X_test.astype(np.float32), y_test.astype(int))
-
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
     "double-freq-test": ("get_double_freq_test_for_classification(n_samples=200)", [('X', 'Frequency')]),
@@ -228,12 +216,13 @@ MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classif
                                              'abnormal-heartbeat-c1', 'ford-a', 'cognitive-circles', 'handoutlines',
                                           'double-freq-test'], ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
 
-
-MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 5000}, 'starlight-c1': {'num_features': 500},
-                          'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
-                          'handoutlines': {'num_features': 500},
-                          'cognitive-circles': {'num_features': 1000},
-                          'abnormal-heartbeat-c1' : {'num_features': 1000},
+### Some notes:
+### For ford-a on RF, 1000 and 5000 features achieve comparable test performance
+MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 1000}, 'starlight-c1': {'num_features': 5000},
+                          'starlight-c2': {'num_features': 5000}, 'starlight-c3': {'num_features': 5000},
+                          'handoutlines': {'num_features': 5000},
+                          'cognitive-circles': {'num_features': 5000},
+                          'abnormal-heartbeat-c1' : {'num_features': 5000},
                           'double-freq-test': {'num_features': 500},
                           }
 

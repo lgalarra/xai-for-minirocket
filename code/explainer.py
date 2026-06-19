@@ -119,9 +119,10 @@ def get_classifier_explainer(classifier_explainer, classifier_fn, X_background=N
         if classifier_explainer == "shap":
             explainer = shap.KernelExplainer(classifier_fn, X_background)
             nsamples = None if target is None else 4 * target.reshape(-1).shape[0]
+            features_cap = int(target.reshape(-1).shape[0] * 0.1)
             if nsamples is None:
-                return explainer.explain
-            return lambda x: explainer.explain(x, nsamples=nsamples)
+                return lambda x: explainer.explain(x, l1_reg=f"num_features({features_cap})")
+            return lambda x: explainer.explain(x, nsamples=nsamples, l1_reg=f"num_features({features_cap})")
         elif classifier_explainer == 'stratoshap-k1':
             x_flat = target.reshape(-1)
             x_bar = X_background[0].reshape(-1)

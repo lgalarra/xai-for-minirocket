@@ -455,23 +455,21 @@ def _compute_sigma_traces_one(Xi_CL, *parameters):
             channels_this_comb = channel_indices[num_channels_start:num_channels_end]
 
             idx0, idx1, idx2 = indices[kernel_index]
+            channels = list(map(int, channels_this_comb))
 
-            # --- Serie convolutiva por canal (antes de sumar canales) ---
-            conv_by_channel = {}
-            for i_ch in channels_this_comb:
-                conv_i = (
-                    C_alpha[i_ch] +
-                    C_gamma[idx0][i_ch] +
-                    C_gamma[idx1][i_ch] +
-                    C_gamma[idx2][i_ch]
-                ).astype(np.float32)  # (L,)
-                conv_by_channel[int(i_ch)] = conv_i
+            conv_by_channel_values = (
+                C_alpha[channels_this_comb] +
+                C_gamma[idx0, channels_this_comb] +
+                C_gamma[idx1, channels_this_comb] +
+                C_gamma[idx2, channels_this_comb]
+            ).astype(np.float32, copy=False)
+            conv_by_channel = {
+                channel: conv_by_channel_values[channel_index]
+                for channel_index, channel in enumerate(channels)
+            }
 
-            # Agregada sobre canales (base para σ/PPV)
-            C_series = np.sum(
-                [conv_by_channel[int(i)] for i in channels_this_comb],
-                axis=0
-            ).astype(np.float32)  # (L,)
+            # Agregada sobre canales (base para sigma/PPV)
+            C_series = conv_by_channel_values.sum(axis=0, dtype=np.float32)
 
             # Kernel MiniRocket "real": -1 en todas y +2 en (idx0, idx1, idx2)
             kappa = np.full(9, -1.0, dtype=np.float64)
@@ -487,9 +485,9 @@ def _compute_sigma_traces_one(Xi_CL, *parameters):
                     sigma=sigma,
                     bias_b=b,
                     dilation=dilation,
-                    channels=list(map(int, channels_this_comb)),
+                    channels=channels,
                     kernel=kappa,
-                    conv_sum=C_series.copy(),
+                    conv_sum=C_series,
                     conv_by_channel=conv_by_channel
                 ))
 
@@ -531,13 +529,9 @@ def _transform_batch(X, parameters):
     """
     assert X.ndim == 3, f"Esperaba (n,C,L), recibí {X.shape}"
     n, C, L = X.shape
-    feats = []
-    for i in range(n):
-        Xi = X[i].astype(np.float32)           # (C, L)
-        Li = np.array([L], dtype=np.int32)
-        phi_i = transform(Xi, Li, parameters)  # tu transform numba
-        feats.append(phi_i[0])                 # (1,F) -> (F,)
-    return np.vstack(feats).astype(np.float32)
+    X_stack = X.transpose(1, 0, 2).reshape(C, n * L).astype(np.float32, copy=False)
+    L_batch = np.full(n, L, dtype=np.int32)
+    return transform(X_stack, L_batch, parameters).astype(np.float32, copy=False)
 
 # =========================
 # B) transform_prime: ϕ + traces
