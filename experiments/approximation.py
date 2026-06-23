@@ -159,6 +159,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--tshap_explanations",
+        "-T",
+        type=str,
+        default="yes",
+        choices=["yes", "no", "true", "false", "1", "0"],
+        help="Whether to compute the t-shap explanations (yes/no)."
+    )
+
+    parser.add_argument(
         "--metric",
         "-m",
         type=str,
@@ -172,6 +181,7 @@ def parse_args():
     # post-processing for boolean
     should_export_data = args.dump_data.lower() in ("yes", "true", "1")
     compute_p2p_explanations = args.p2p_explanations.lower() in ("yes", "true", "1")
+    compute_tshap_explanations = args.tshap_explanations.lower() in ("yes", "true", "1")
 
     return (
         should_export_data,
@@ -184,7 +194,8 @@ def parse_args():
         args.start,
         args.end,
         args.metric,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        compute_tshap_explanations
     )
 
 MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
@@ -284,7 +295,8 @@ def compute_tshap_explanations(classifier: MinirocketClassifier, instance: np.nd
 
 
 def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
-                         reference_policy: str, compute_p2p_explanations=True, compute_segmented_explanations=True, top_alpha=None):
+                         reference_policy: str, compute_p2p_explanations=True,
+                         compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
@@ -319,7 +331,9 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                 reference_policy=reference_policy
             )
 
-    tshap_explanations = compute_tshap_explanations(classifier, instance, reference, y_target)
+    tshap_explanations = {}
+    if compute_tshap_explanations_enabled:
+        tshap_explanations = compute_tshap_explanations(classifier, instance, reference, y_target)
 
     return explanation, explanation_p2p, segmented_explanations, tshap_explanations
 
@@ -401,7 +415,8 @@ if __name__ == '__main__':
         start,
         end,
         metric,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        compute_tshap_explanations
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -415,6 +430,7 @@ if __name__ == '__main__':
     print("end:", end)
     print("metric:", metric)
     print("compute_p2p_explanations:", compute_p2p_explanations)
+    print("compute_tshap_explanations:", compute_tshap_explanations)
 
 
     LABELS = ['predicted', 'training']
@@ -538,6 +554,7 @@ if __name__ == '__main__':
                                                      reference_policy,
                                                      compute_p2p_explanations=(topk is None and compute_p2p_explanations),
                                                      compute_segmented_explanations=(topk is None),
+                                                     compute_tshap_explanations_enabled=compute_tshap_explanations,
                                                      top_alpha=topk)
                             )
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
