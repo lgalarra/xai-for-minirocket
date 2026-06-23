@@ -217,13 +217,12 @@ MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classif
                                           'double-freq-test'], ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
 
 ### Some notes:
-### For ford-a on RF, 1000 and 5000 features achieve comparable test performance
-MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 1000}, 'starlight-c1': {'num_features': 5000},
-                          'starlight-c2': {'num_features': 5000}, 'starlight-c3': {'num_features': 5000},
+MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 5000}, 'starlight-c1': {'num_features': 5000},
+                          'starlight-c2': {'num_features': 1000}, 'starlight-c3': {'num_features': 5000},
                           'handoutlines': {'num_features': 5000},
-                          'cognitive-circles': {'num_features': 5000},
-                          'abnormal-heartbeat-c1' : {'num_features': 5000},
-                          'double-freq-test': {'num_features': 500},
+                          'cognitive-circles': {'num_features': 500},
+                          'abnormal-heartbeat-c1' : {'num_features': 10000},
+                          'double-freq-test': {'num_features': 5000},
                           }
 
 SEGMENTED_EXPLANATION_SEGMENTS = (10, 20, 50, 100)
