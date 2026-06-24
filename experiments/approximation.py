@@ -51,7 +51,20 @@ if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
     sys.path.insert(0, TSHAP_REPO_PATH)
 
 from tshap.synthetic import DoubleFreqTest
-from tshap.tshap import tshap_explanation
+import tshap.tshap as tshap_module
+
+if hasattr(tshap_module, "tshap_explanation"):
+    tshap_explanation = tshap_module.tshap_explanation
+else:
+    def tshap_explanation(fnc, X, baselines, window_length=20, stride=5, roi=True):
+        final_fnc = (lambda X_: fnc(X_)[:, 1]) if getattr(fnc, "__name__", "") == "predict_proba" else fnc
+        X_attribs = np.zeros(X.shape)
+        X_roi_attribs = np.zeros(X.shape)
+        for i in range(X.shape[0]):
+            X_attribs[[i]], X_roi_attribs[[i]] = tshap_module.tshap_explanation_single_instance(
+                final_fnc, X[i], baselines, window_length=window_length, stride=stride, roi=roi
+            )
+        return X_attribs, X_roi_attribs
 
 def parse_args():
     parser = argparse.ArgumentParser(
