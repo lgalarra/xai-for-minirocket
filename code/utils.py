@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 from curses.ascii import isdigit
 import numdifftools as nd
@@ -15,6 +16,10 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split
 from sktime.datasets import load_UCR_UEA_dataset
+
+TSHAP_REPO_PATH = os.environ.get("TSHAP_REPO_PATH", "/home/lgalarraga/tshap")
+if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
+    sys.path.insert(0, TSHAP_REPO_PATH)
 
 from tshap.synthetic import DoubleFreqTest
 
