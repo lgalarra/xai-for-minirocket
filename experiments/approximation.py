@@ -274,7 +274,7 @@ def get_tshap_complexity_columns(window_size_percent: int, stride: int) -> tuple
     prefix = f"complexity-tshap-{get_tshap_key(window_size_percent, stride)}"
     return prefix, f"{prefix}-mean", f"{prefix}-std"
 
-def compute_tshap_explanations(classifier: MinirocketClassifier, instance: np.ndarray, reference: np.ndarray,
+def compute_tshap_explanations_for_instance(classifier: MinirocketClassifier, instance: np.ndarray, reference: np.ndarray,
                                y_target) -> dict:
     tshap_explanations = {}
     model_fn = lambda X: classifier.predict_proba(X)[:, int(y_target)]
@@ -345,7 +345,7 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
 
     tshap_explanations = {}
     if compute_tshap_explanations_enabled:
-        tshap_explanations = compute_tshap_explanations(classifier, instance, reference, y_target)
+        tshap_explanations = compute_tshap_explanations_for_instance(classifier, instance, reference, y_target)
 
     return explanation, explanation_p2p, segmented_explanations, tshap_explanations
 
