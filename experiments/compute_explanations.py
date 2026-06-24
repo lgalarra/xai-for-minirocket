@@ -53,6 +53,55 @@ if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
 from tshap.synthetic import DoubleFreqTest
 import tshap.tshap as tshap_module
 
+def _get_tshap_window_mask(series_length, window_start, window_length):
+    mask = np.zeros((1, series_length))
+    if window_start >= 0:
+        mask[..., window_start:(window_start + window_length)] = 1
+    else:
+        mask[..., :(window_length + window_start)] = 1
+    return mask
+
+
+def _fallback_tshap_window_explanation(fnc, input_sample, baselines, window_length=20, stride=5):
+    all_samples = np.array([input_sample])
+    series_length = input_sample.shape[-1]
+    window_positions = [ws for ws in range(0, series_length - window_length + stride, stride)]
+    baseline_count = len(baselines)
+    all_samples = np.vstack((all_samples, baselines))
+
+    for window_start in window_positions:
+        feature_mask = _get_tshap_window_mask(series_length, window_start, window_length)
+        for baseline in baselines:
+            fused_samples = np.array([
+                input_sample * (1 - feature_mask) + baseline * feature_mask,
+                input_sample * feature_mask + baseline * (1 - feature_mask),
+            ])
+            all_samples = np.vstack((all_samples, fused_samples))
+
+    payout = fnc(all_samples)
+    window_scores = np.zeros(series_length)
+
+    for i in range(series_length):
+        if i % stride == 0 and i <= window_positions[-1]:
+            current_position = baseline_count + (i // stride) * baseline_count * 2
+            value = 0
+            for baseline_idx in range(baseline_count):
+                value += (
+                    (payout[0] - payout[current_position + baseline_idx * 2 + 1])
+                    + (payout[current_position + baseline_idx * 2 + 2] - payout[1 + baseline_idx])
+                ) / 2
+            value = value / baseline_count
+            if i > 0:
+                window_scores[i - stride:i + 1] = np.linspace(window_scores[i - stride], value, stride + 1)
+            else:
+                window_scores[i] = value
+
+    interpolated = np.zeros(len(window_scores))
+    for i in range(len(window_scores)):
+        interpolated[i:i + window_length] += window_scores[i] / (window_length * min(i + 1, stride))
+    return interpolated
+
+
 if hasattr(tshap_module, "tshap_explanation"):
     tshap_explanation = tshap_module.tshap_explanation
 else:
@@ -76,11 +125,16 @@ else:
                     final_fnc, X[i], baselines, window_length=window_length, stride=stride
                 )
         else:
-            available = ", ".join(name for name in dir(tshap_module) if "tshap" in name.lower() or "window" in name.lower())
-            raise ImportError(
-                "The configured TSHAP clone does not expose a compatible explanation function. "
-                f"Available TSHAP/window names: {available}"
-            )
+            if roi:
+                available = ", ".join(name for name in dir(tshap_module) if "tshap" in name.lower() or "window" in name.lower())
+                raise ImportError(
+                    "The configured TSHAP clone does not expose ROI-compatible functions. "
+                    f"Available TSHAP/window names: {available}"
+                )
+            for i in range(X.shape[0]):
+                X_attribs[i] = _fallback_tshap_window_explanation(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride
+                )
         return X_attribs, X_roi_attribs
 
 def parse_args():
