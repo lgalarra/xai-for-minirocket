@@ -46,6 +46,10 @@ from reference import REFERENCE_POLICIES
 
 import argparse
 
+TSHAP_REPO_PATH = os.environ.get("TSHAP_REPO_PATH", "/home/lgalarraga/tshap")
+if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
+    sys.path.insert(0, TSHAP_REPO_PATH)
+
 from tshap.synthetic import DoubleFreqTest
 from tshap.tshap import tshap_explanation
 
