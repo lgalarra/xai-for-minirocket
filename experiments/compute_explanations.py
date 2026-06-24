@@ -60,9 +60,26 @@ else:
         final_fnc = (lambda X_: fnc(X_)[:, 1]) if getattr(fnc, "__name__", "") == "predict_proba" else fnc
         X_attribs = np.zeros(X.shape)
         X_roi_attribs = np.zeros(X.shape)
-        for i in range(X.shape[0]):
-            X_attribs[[i]], X_roi_attribs[[i]] = tshap_module.tshap_explanation_single_instance(
-                final_fnc, X[i], baselines, window_length=window_length, stride=stride, roi=roi
+        if hasattr(tshap_module, "tshap_explanation_single_instance"):
+            for i in range(X.shape[0]):
+                X_attribs[[i]], X_roi_attribs[[i]] = tshap_module.tshap_explanation_single_instance(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride, roi=roi
+                )
+        elif hasattr(tshap_module, "tshap_window_explanation_pi"):
+            if roi:
+                raise ImportError(
+                    "The configured TSHAP clone does not provide ROI explanations. "
+                    "Use roi=False or update /home/lgalarraga/tshap."
+                )
+            for i in range(X.shape[0]):
+                X_attribs[i] = tshap_module.tshap_window_explanation_pi(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride
+                )
+        else:
+            available = ", ".join(name for name in dir(tshap_module) if "tshap" in name.lower() or "window" in name.lower())
+            raise ImportError(
+                "The configured TSHAP clone does not expose a compatible explanation function. "
+                f"Available TSHAP/window names: {available}"
             )
         return X_attribs, X_roi_attribs
 
