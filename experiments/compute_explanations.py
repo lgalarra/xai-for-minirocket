@@ -463,7 +463,8 @@ if __name__ == '__main__':
 
 
     # In[42]:
-    OUTPUT_FILE = 'approximation-results.csv'
+    OUTPUT_FILE = 'results/approximation-results.csv'
+    os.makedirs('results', exist_ok=True)
     if datasets is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(datasets)}.csv')
     if labels is not None:

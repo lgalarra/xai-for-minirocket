@@ -216,7 +216,8 @@ if __name__ == '__main__':
     reference_policies = REFERENCE_POLICIES if THE_REFERENCE_POLICY is None else [THE_REFERENCE_POLICY]
 
     # In[42]:
-    OUTPUT_FILE = 'perturbation-results.csv'
+    OUTPUT_FILE = 'results/perturbation-results.csv'
+    os.makedirs('results', exist_ok=True)
     DataExporter.METADATA_FILE = 'metadata.csv'
     if THE_DATASET is not None:
         OUTPUT_FILE = f'perturbation-results-{THE_DATASET}.csv'
