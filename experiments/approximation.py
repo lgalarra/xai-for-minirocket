@@ -6,7 +6,6 @@ import os
 import random
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -46,10 +45,6 @@ from export_data import DataExporter
 from reference import REFERENCE_POLICIES
 
 import argparse
-
-TSHAP_REPO_PATH = Path(__file__).resolve().parents[2] / "tshap"
-if TSHAP_REPO_PATH.exists() and str(TSHAP_REPO_PATH) not in sys.path:
-    sys.path.append(str(TSHAP_REPO_PATH))
 
 from tshap.synthetic import DoubleFreqTest
 from tshap.tshap import tshap_explanation
