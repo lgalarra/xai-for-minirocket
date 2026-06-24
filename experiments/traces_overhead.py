@@ -40,7 +40,7 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    cognitive_circles_get_sorted_channels_from_df, get_handoutlines_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score, r2_score
-from approximation import MINIROCKET_PARAMS_DICT
+from compute_explanations import MINIROCKET_PARAMS_DICT
 
 
 
