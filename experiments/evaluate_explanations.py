@@ -199,8 +199,29 @@ if __name__ == '__main__':
                     'instance_to_reference': {'percentile_cut': [50, 75, 90],
                      'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
+                    'instance_to_reference_bottom': {'percentile_cut': [50, 75, 90],
+                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
+                    },
+                    'instance_to_reference_random': {'percentile_cut': [50, 75, 90],
+                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [BUDGET]
+                    },
+                    'instance_to_reference_random_no_positive': {'percentile_cut': [50, 75, 90],
+                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [BUDGET]
+                    },
                     'gaussian' : {'percentile_cut': [90, 75, 50],
                                     'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gaussian_bottom' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gaussian_random' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gaussian_random_no_positive' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
                                   'budget': [BUDGET]
                     },
                      'reference_to_instance': {'percentile_cut': [90, 75, 50],
@@ -220,7 +241,7 @@ if __name__ == '__main__':
     os.makedirs('results', exist_ok=True)
     DataExporter.METADATA_FILE = 'metadata.csv'
     if THE_DATASET is not None:
-        OUTPUT_FILE = f'perturbation-results-{THE_DATASET}.csv'
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{THE_DATASET}.csv')
     if THE_LABEL is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_LABEL}.csv')
     if THE_EXPLAINER is not None:
