@@ -287,7 +287,7 @@ MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
 
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
-    "double-freq-test": ("get_double_freq_test_for_classification(n_samples=200)", [('X', 'Frequency')]),
+    "double-freq-test": ("get_double_freq_test_for_classification(n_samples=250)", [('X', 'Frequency')]),
     "abnormal-heartbeat-c1": ("get_abnormal_hearbeat_for_classification('1')", [('A', 'Amplitude Change')]),
     "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
     "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
