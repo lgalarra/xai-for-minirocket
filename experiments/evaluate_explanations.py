@@ -183,7 +183,7 @@ if __name__ == '__main__':
     LABELS = ['training', 'predicted']
     DATASET_FETCH_FUNCTIONS = {
         "ford-a": "get_forda_for_classification()",
-        "double-freq-test": "get_double_freq_test_for_classification(n_samples=200)",
+        "double-freq-test": "get_double_freq_test_for_classification(n_samples=250)",
         "starlight-c1": "get_starlightcurves_for_classification('1')",
         "starlight-c2": "get_starlightcurves_for_classification('2')",
         "starlight-c3": "get_starlightcurves_for_classification('3')",
