@@ -197,12 +197,36 @@ def get_random_reference_perturbation(xfrom, xto, explanation, unconstrained=Fal
     return apply_explanation_masks(xto, xfrom, percentile_vectors, kwargs['interpolation'])
 
 def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray):
-    lengths = set([len(X[i][0]) for i in range(len(X)) if hasattr(X[i][0], "__len__")])
+    def row_length(row):
+        row_array = np.asarray(row, dtype=object)
+        if row_array.size == 0 or any(value is None for value in row_array.flat):
+            return None
+        nested_lengths = [
+            len(value) for value in row_array.flat
+            if hasattr(value, "__len__") and not isinstance(value, (str, bytes))
+        ]
+        if nested_lengths:
+            return nested_lengths[0]
+        if row_array.ndim == 0:
+            return None
+        return row_array.shape[-1]
+
+    row_lengths = [row_length(X[i]) for i in range(len(X))]
+    lengths = set(length for length in row_lengths if length is not None)
+    if not lengths:
+        raise ValueError(
+            "No valid explanation series found. Check that the selected reference policy has "
+            "non-empty reference_* and beta_*_attributions entries in metadata.csv."
+        )
+
     max_length = max(lengths)
     print(f'Ensuring consistency, all series must have size {max_length}')
-    indices_to_remove = set([i for i in range(len(X)) if hasattr(X[i][0], "__len__") and len(X[i][0]) != max_length])
+    indices_to_remove = set([
+        i for i, length in enumerate(row_lengths)
+        if length is None or length != max_length
+    ])
     print(indices_to_remove, lengths)
-    X = np.array([x for x in X if hasattr(x[0], "__len__") and len(x[0]) == max_length])
+    X = np.array([x for idx, x in enumerate(X) if idx not in indices_to_remove])
     X1 = np.array([x for idx, x in enumerate(X1) if idx not in indices_to_remove])
     X2 = np.array([x for idx, x in enumerate(X2) if idx not in indices_to_remove])
     return X, X1, X2
