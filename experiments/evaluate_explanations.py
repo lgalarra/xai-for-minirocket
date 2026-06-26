@@ -280,7 +280,13 @@ if __name__ == '__main__':
             for label in LABELS if THE_LABEL is None else [THE_LABEL]:
                 for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
                     for distance in DISTANCES if THE_DISTANCE is None else [THE_DISTANCE]:
-                        metadata_df = data_importer.get_metadata(classifier_name, explainer_method, label, distance)
+                        metadata_df = data_importer.get_metadata(
+                            classifier_name,
+                            explainer_method,
+                            label,
+                            distance,
+                            reference_policy=THE_REFERENCE_POLICY
+                        )
                         (X_test, y_test, references_dict, explanations_dict, p2p_explanations_dict,
                          segmented_explanations_dict, tshap_explanations_dict) = (
                             DataImporter.get_series_from_metadata(metadata_df, reference_policies=reference_policies)

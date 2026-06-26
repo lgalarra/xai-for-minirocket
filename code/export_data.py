@@ -101,6 +101,21 @@ def get_annotation(dataset_name, instance_id) -> str:
         return f"{instance_id}"
     return None
 
+def get_reference_policy_list(studied_reference_policies):
+    if studied_reference_policies is None:
+        studied_reference_policies = REFERENCE_POLICIES
+    elif isinstance(studied_reference_policies, str):
+        studied_reference_policies = studied_reference_policies.split(',')
+
+    reference_policies = []
+    for reference_policy in studied_reference_policies:
+        reference_policy = reference_policy.strip()
+        if reference_policy not in REFERENCE_POLICIES:
+            raise ValueError(f"Unknown reference policy: {reference_policy}")
+        if reference_policy not in reference_policies:
+            reference_policies.append(reference_policy)
+    return reference_policies
+
 class DataExporter(object):
 
     METADATA_FILE = 'metadata.csv'
@@ -114,6 +129,14 @@ class DataExporter(object):
         self.mr_classifier_name = mr_classifier_name
         self.explainer_method = explainer_method
         self.label_type = label_type
+
+    @staticmethod
+    def get_metadata_filename_for_reference_policy(reference_policy: str) -> str:
+        base, ext = os.path.splitext(DataExporter.METADATA_FILE)
+        return f'{base}_ref_policy_{reference_policy}{ext}'
+
+    def get_metadata_file_for_reference_policy(self, reference_policy: str) -> str:
+        return f'{self.output_path}/{DataExporter.get_metadata_filename_for_reference_policy(reference_policy)}'
 
     @staticmethod
     def create_output_folder_for_export(dataset_name: str, mr_classifier_name: str, explainer_method: str,
@@ -134,14 +157,19 @@ class DataExporter(object):
         os.makedirs(f'data/{dataset_name}/', exist_ok=True)
         classifier.save(f'data/{dataset_name}/{mr_classifier_name}.pkl')
 
-    def prepare_export(self, DATASET_FETCH_INFO: tuple):
+    def prepare_export(self, DATASET_FETCH_INFO: tuple, studied_reference_policies=REFERENCE_POLICIES):
         (_, features) = DATASET_FETCH_INFO
         for (f, _) in features:
             os.makedirs(f'{self.output_path}/' + f, exist_ok=True)
             os.makedirs(f'{self.output_dataset_path}/' + f, exist_ok=True)
 
-        pd.DataFrame(METADATA_SCHEMA).to_csv(f'{self.metadata_file}', mode='w',
-                                             index=False, header=True)
+        for reference_policy in get_reference_policy_list(studied_reference_policies):
+            pd.DataFrame(METADATA_SCHEMA).to_csv(
+                self.get_metadata_file_for_reference_policy(reference_policy),
+                mode='w',
+                index=False,
+                header=True
+            )
 
     def export_instance_and_explanations(self, instance_id, y_i,
                                          features: list,
@@ -150,7 +178,6 @@ class DataExporter(object):
                                          topk=None):
         (dataset_name, mr_classifier_name, explainer_method, label_type) = \
             (self.dataset_name, self.mr_classifier_name, self.explainer_method, self.label_type)
-        metadata_dict = copy.deepcopy(METADATA_SCHEMA)
         some_reference_policy = next(iter(explanations_dict))
         explanation = explanations_dict[some_reference_policy][0]
         instance = explanation.get_instance()
@@ -159,10 +186,13 @@ class DataExporter(object):
         if not os.path.exists(mr_filename):
             pd.Series(explanation.explanation['instance_transformed']).to_csv(mr_filename, header=False)
 
-        for channel_idx, channel in enumerate(instance):
-            metadata_dict['instance_id'].append(instance_id)
-            for reference_policy in studied_reference_policies:
-                idx = REFERENCE_POLICIES.index(reference_policy)
+        for reference_policy in get_reference_policy_list(studied_reference_policies):
+            metadata_dict = copy.deepcopy(METADATA_SCHEMA)
+            metadata_file = self.get_metadata_file_for_reference_policy(reference_policy)
+
+            for channel_idx, channel in enumerate(instance):
+                metadata_dict['instance_id'].append(instance_id)
+                reference_policy_idx = REFERENCE_POLICIES.index(reference_policy)
                 explanation_values = explanations_dict[reference_policy]
                 if len(explanation_values) == 4:
                     (explanation, explanation_p2p, segmented_explanations, tshap_explanations) = explanation_values
@@ -180,38 +210,38 @@ class DataExporter(object):
                 reference = explanation.explanation['reference']
                 reference_code = hashlib.md5(reference[channel_idx].data.tobytes()).hexdigest()
                 reference_filename = f'{self.output_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_reference_{reference_code}.csv'
-                metadata_dict[f'reference_{idx}'].append(reference_filename)
+                metadata_dict[f'reference_{reference_policy_idx}'].append(reference_filename)
 
                 if not os.path.exists(reference_filename):
                     pd.Series(reference[channel_idx]).to_csv(reference_filename, header=False)
 
-                metadata_dict[f'reference_{idx}_label'].append(explanation.explanation['reference_prediction'])
-                metadata_dict[f'reference_{idx}_label_probability'].append(explanation.explanation['reference_logit'])
+                metadata_dict[f'reference_{reference_policy_idx}_label'].append(explanation.explanation['reference_prediction'])
+                metadata_dict[f'reference_{reference_policy_idx}_label_probability'].append(explanation.explanation['reference_logit'])
 
                 if topk is None:
-                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}.csv'
+                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{reference_policy_idx}.csv'
                 else:
-                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{idx}-topk-{topk}.csv'
+                    attr_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/beta_instance_{instance_id}_{reference_policy_idx}-topk-{topk}.csv'
 
                 pd.Series(betas[channel_idx]).to_csv(attr_channel_filename, header=False)
-                metadata_dict[f'beta_{idx}_attributions'].append(attr_channel_filename)
+                metadata_dict[f'beta_{reference_policy_idx}_attributions'].append(attr_channel_filename)
 
                 if betas_p2p is not None:
-                    attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}_{idx}.csv'
+                    attr_p2p_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betap2p_instance_{instance_id}_{reference_policy_idx}.csv'
                     pd.Series(betas_p2p[channel_idx]).to_csv(attr_p2p_channel_filename, header=False)
                 else:
                     attr_p2p_channel_filename = None
-                metadata_dict[f'beta_p2p_{idx}_attributions'].append(attr_p2p_channel_filename)
+                metadata_dict[f'beta_p2p_{reference_policy_idx}_attributions'].append(attr_p2p_channel_filename)
 
                 for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
                     segmented_explanation = segmented_explanations.get(num_segments)
-                    column = get_beta_segmented_column(idx, num_segments)
+                    column = get_beta_segmented_column(reference_policy_idx, num_segments)
                     if segmented_explanation is not None:
                         betas_segmented = segmented_explanation.get_distributed_explanations_in_original_space()
                         if num_segments == 10:
-                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{idx}.csv'
+                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_instance_{instance_id}_{reference_policy_idx}.csv'
                         else:
-                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_n{num_segments}_instance_{instance_id}_{idx}.csv'
+                            attr_segmented_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betasegmented_n{num_segments}_instance_{instance_id}_{reference_policy_idx}.csv'
                         pd.Series(betas_segmented[channel_idx]).to_csv(attr_segmented_channel_filename, header=False)
                     else:
                         attr_segmented_channel_filename = None
@@ -220,46 +250,46 @@ class DataExporter(object):
                 for window_size_percent, stride in TSHAP_CONFIGS:
                     key = get_tshap_key(window_size_percent, stride)
                     tshap_explanation = tshap_explanations.get(key)
-                    column = get_beta_tshap_column(idx, window_size_percent, stride)
+                    column = get_beta_tshap_column(reference_policy_idx, window_size_percent, stride)
                     if tshap_explanation is not None:
                         betas_tshap = tshap_explanation["coefficients"]
-                        attr_tshap_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betatshap_{key}_instance_{instance_id}_{idx}.csv'
+                        attr_tshap_channel_filename = f'{self.output_path}/{features[channel_idx][0]}/betatshap_{key}_instance_{instance_id}_{reference_policy_idx}.csv'
                         pd.Series(betas_tshap[channel_idx]).to_csv(attr_tshap_channel_filename, header=False)
                     else:
                         attr_tshap_channel_filename = None
                     metadata_dict[column].append(attr_tshap_channel_filename)
 
-            for idx, _ in enumerate(REFERENCE_POLICIES):
-                if len(metadata_dict[f'reference_{idx}']) == 0:
-                    metadata_dict[f'reference_{idx}'].append(None)
-                    metadata_dict[f'reference_{idx}_label'].append(None)
-                    metadata_dict[f'reference_{idx}_label_probability'].append(None)
-                    metadata_dict[f'beta_{idx}_attributions'].append(None)
-                    metadata_dict[f'beta_p2p_{idx}_attributions'].append(None)
-                    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
-                        metadata_dict[get_beta_segmented_column(idx, num_segments)].append(None)
-                    for window_size_percent, stride in TSHAP_CONFIGS:
-                        metadata_dict[get_beta_tshap_column(idx, window_size_percent, stride)].append(None)
+                for fill_idx, _ in enumerate(REFERENCE_POLICIES):
+                    if len(metadata_dict[f'reference_{fill_idx}']) == len(metadata_dict['instance_id']) - 1:
+                        metadata_dict[f'reference_{fill_idx}'].append(None)
+                        metadata_dict[f'reference_{fill_idx}_label'].append(None)
+                        metadata_dict[f'reference_{fill_idx}_label_probability'].append(None)
+                        metadata_dict[f'beta_{fill_idx}_attributions'].append(None)
+                        metadata_dict[f'beta_p2p_{fill_idx}_attributions'].append(None)
+                        for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                            metadata_dict[get_beta_segmented_column(fill_idx, num_segments)].append(None)
+                        for window_size_percent, stride in TSHAP_CONFIGS:
+                            metadata_dict[get_beta_tshap_column(fill_idx, window_size_percent, stride)].append(None)
 
-            channel_filename = f'{self.output_dataset_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_instance_{instance_id}.csv'
-            metadata_dict['series'].append(channel_filename)
-            if not os.path.exists(channel_filename):
-                pd.Series(channel).to_csv(channel_filename, header=False)
+                channel_filename = f'{self.output_dataset_path}/{features[channel_idx][0]}/{features[channel_idx][0]}_instance_{instance_id}.csv'
+                metadata_dict['series'].append(channel_filename)
+                if not os.path.exists(channel_filename):
+                    pd.Series(channel).to_csv(channel_filename, header=False)
 
-            metadata_dict['label'].append(y_i)
-            metadata_dict['label_type'].append(label_type)
-            metadata_dict['label_probability'].append(explanation.explanation['instance_logit'])
-            metadata_dict['channel'].append(CHANNELS[dataset_name][channel_idx])
-            metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
-            metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
+                metadata_dict['label'].append(y_i)
+                metadata_dict['label_type'].append(label_type)
+                metadata_dict['label_probability'].append(explanation.explanation['instance_logit'])
+                metadata_dict['channel'].append(CHANNELS[dataset_name][channel_idx])
+                metadata_dict['group'].append(get_group_id(dataset_name, instance_id))
+                metadata_dict['annotation'].append(get_annotation(dataset_name, instance_id))
+
+            print(f'Flushing {metadata_dict} in {metadata_file}')
+            flush_metadata(metadata_dict, metadata_file)
 
         alphas = explanation.explanation['minirocket_coefficients']
         alphas_file = f'{self.output_dataset_path}/{mr_classifier_name}/{explainer_method}/alphas_instance_{instance_id}.csv'
         if not os.path.exists(alphas_file):
             pd.Series(alphas).to_csv(alphas_file, header=False)
-
-        print(f'Flushing {metadata_dict} in {self.metadata_file}')
-        flush_metadata(metadata_dict, self.metadata_file)
 
     def export_metametadata(self):
         metametadata = {}

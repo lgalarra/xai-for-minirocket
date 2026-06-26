@@ -601,7 +601,10 @@ if __name__ == '__main__':
                     print(f"Evaluating configuration {configuration}")
                     if should_export_data:
                         exporter = DataExporter(dataset_name, mr_classifier_name, explainer_method, label, metric)
-                        exporter.prepare_export(DATASET_FETCH_FUNCTIONS[dataset_name])
+                        exporter.prepare_export(
+                            DATASET_FETCH_FUNCTIONS[dataset_name],
+                            studied_reference_policies=studied_reference_policies
+                        )
                         exporters_dict[configuration] = exporter
 
                     results_df_dict = {}

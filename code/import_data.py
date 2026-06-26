@@ -21,11 +21,34 @@ class DataImporter:
             return path + f"/{distance}"
         return path
 
-    def get_metadata(self, classifier_name, explainer_method, label, distance) -> pd.DataFrame:
+    def get_metadata(self, classifier_name, explainer_method, label, distance, reference_policy=None) -> pd.DataFrame:
         attributions_path = self.get_attributions_path(classifier_name, explainer_method, label, distance)
         if distance == 'euclidean' and not os.path.exists(attributions_path):
             attributions_path = self.get_attributions_path(classifier_name, explainer_method, label)
-        return pd.read_csv(f"{attributions_path}/{DataExporter.METADATA_FILE}")
+        if reference_policy is not None:
+            policy_metadata_path = (
+                f"{attributions_path}/"
+                f"{DataExporter.get_metadata_filename_for_reference_policy(reference_policy)}"
+            )
+            if os.path.exists(policy_metadata_path):
+                return pd.read_csv(policy_metadata_path)
+
+        legacy_metadata_path = f"{attributions_path}/{DataExporter.METADATA_FILE}"
+        if os.path.exists(legacy_metadata_path):
+            return pd.read_csv(legacy_metadata_path)
+
+        metadata_frames = []
+        for policy in REFERENCE_POLICIES:
+            policy_metadata_path = (
+                f"{attributions_path}/"
+                f"{DataExporter.get_metadata_filename_for_reference_policy(policy)}"
+            )
+            if os.path.exists(policy_metadata_path):
+                metadata_frames.append(pd.read_csv(policy_metadata_path))
+        if metadata_frames:
+            return pd.concat(metadata_frames, ignore_index=True)
+
+        return pd.read_csv(legacy_metadata_path)
 
 
     @staticmethod
