@@ -1,4 +1,9 @@
 (() => {
+  // Global toggle for UI animations (can be set later from the HTML UI).
+  window.ANIMATE_TRANSITIONS = true;
+
+  const extraForLabel = 30;
+
   function syncHeaderHeight() {
     const h = document.querySelector('header')?.offsetHeight || 0;
     document.documentElement.style.setProperty('--headerH', `${h}px`);
@@ -6,14 +11,30 @@
   }
   syncHeaderHeight();
   window.addEventListener('resize', syncHeaderHeight);
+
+  // Always start with the Summary modal closed.
+  // This also fixes cases where the browser restores the previous DOM state (bfcache).
+  function forceHideSummaryOverlay() {
+    const o = document.getElementById('peSummaryOverlay');
+    if (o) o.hidden = true;
+  }
+  forceHideSummaryOverlay();
+  window.addEventListener('pageshow', forceHideSummaryOverlay);
   const _hdr = document.querySelector('header');
   if (_hdr && 'ResizeObserver' in window) {
     new ResizeObserver(syncHeaderHeight).observe(_hdr);
   }
 
   const PORT = 3000;
-  const inProduction = !(location.hostname === "localhost" || location.hostname === "127.0.0.1");
-  const API_ORIGIN = inProduction ? "" : ((location.port === String(PORT)) ? "" : `${location.protocol}//${location.hostname}:${PORT}`);
+  if (typeof window.inProduction !== 'boolean') {
+    window.inProduction = !(location.hostname === "localhost" || location.hostname === "127.0.0.1");
+  }
+  const inProduction = window.inProduction;
+
+  const API_ORIGIN = inProduction ? "" : `http://localhost:${PORT}`;
+
+  console.log(API_ORIGIN);
+
 
   function withApiOrigin(url) {
     if (!API_ORIGIN || !url) return url;
@@ -101,6 +122,27 @@
       });
     });
     return out;
+  }
+
+  function parseIndexValueMapCSV(text) {
+    const rows = d3.csvParseRows(text);
+    const map = new Map();
+    rows.forEach(r => {
+      if (!r || r.length < 2) return;
+      const i = +r[0];
+      const v = +r[1];
+      if (Number.isFinite(i) && Number.isFinite(v)) map.set(i, v);
+    });
+    return map;
+  }
+
+  function parseKernelMaskCSV(text, kLen = 9) {
+    const map = parseIndexValueMapCSV(text);
+    const w = new Array(kLen).fill(0);
+    for (let i = 0; i < kLen; i++) {
+      if (map.has(i)) w[i] = map.get(i);
+    }
+    return w;
   }
 
   function parseBetaCSV(text) {
@@ -237,6 +279,41 @@
     };
   }
 
+  function isFeatureBetaFile(file) {
+    return /feature[-_](\d+)\.csv$/i.test(String(file || ''));
+  }
+
+  function parseFeatureIdFromBetaFilename(file) {
+    const m = String(file || '').match(/feature[-_](\d+)\.csv$/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  function betaVariantLabel(file, isBase = false) {
+    if (isBase) return 'Original β';
+    const fidx = parseFeatureIdFromBetaFilename(file);
+    if (Number.isFinite(fidx)) return `Feature #${fidx} β`;
+    return String(file || 'β');
+  }
+
+  function findBaseBetaFile(files, cfg, instanceId) {
+    if (!files || !cfg || instanceId == null) return null;
+    const prefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
+    return (files || []).find(f => String(f || '').startsWith(prefix) && /\.csv$/i.test(String(f || '')) && !isFeatureBetaFile(f)) || null;
+  }
+
+  function findFeatureBetaFiles(files, cfg, instanceId) {
+    if (!files || !cfg || instanceId == null) return [];
+    const prefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
+    return (files || []).filter(f => {
+      const s = String(f || '');
+      return s.startsWith(prefix) && /\.csv$/i.test(s) && isFeatureBetaFile(s);
+    });
+  }
+
+  function formatCliCommand(args) {
+    return `python3 ${(args || []).map(a => (/[^\w\-\.\/]/.test(String(a)) ? JSON.stringify(String(a)) : String(a))).join(' ')}`;
+  }
+
   function convolve(seriesY, weights, dilation) {
     const n = seriesY.length;
     const k = weights.length;
@@ -310,31 +387,204 @@
     return x.toFixed(8);
   }
 
+  const REFERENCE_POLICY_LABELS = {
+    opposite_class_farthest_instance: 'Opposite farthest',
+    opposite_class_closest_instance: 'Opposite closest',
+    opposite_class_medoid: 'Opposite medoid',
+    opposite_class_centroid: 'Opposite centroid',
+    global_medoid: 'Global medoid',
+    global_centroid: 'Global centroid'
+  };
+
+  function getReferencePolicyLabel(policy) {
+    const key = String(policy || '').trim();
+    if (!key) return 'Current reference';
+    if (REFERENCE_POLICY_LABELS[key]) return REFERENCE_POLICY_LABELS[key];
+    if (el && el.peRefPolicy) {
+      const match = Array.from(el.peRefPolicy.options || []).find(opt => String(opt.value) === key);
+      if (match && String(match.textContent || '').trim()) return String(match.textContent).trim();
+    }
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function extractReferencePolicyFromMetadataFile(filename, instanceId) {
+    const safeId = String(instanceId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(`^metadata_ref_policy_(.+)_instance_${safeId}\\.json$`, 'i');
+    const m = String(filename || '').match(rx);
+    return m ? m[1] : null;
+  }
+
+  function extractReferencePolicyFromGeneratedFile(filename, instanceId) {
+    const safeId = String(instanceId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const s = String(filename || '');
+    const patterns = [
+      new RegExp(`^metadata_ref_policy_(.+)_instance_${safeId}\\.json$`, 'i'),
+      new RegExp(`^reference_ref_policy_(.+)_for_instance_${safeId}\\.csv$`, 'i'),
+      new RegExp(`^mr_reference_ref_policy_(.+)_for_instance_${safeId}\\.csv$`, 'i'),
+      new RegExp(`^alphas_mr_explanations_ref_policy_(.+)_instance_${safeId}\\.csv$`, 'i')
+    ];
+    for (const rx of patterns) {
+      const m = s.match(rx);
+      if (m && m[1]) return m[1];
+    }
+    return null;
+  }
+
+  function clearReferencePolicySelect(placeholder) {
+    if (!el.referencePolicySelect) return;
+    el.referencePolicySelect.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = placeholder || 'Current reference';
+    el.referencePolicySelect.appendChild(opt);
+    el.referencePolicySelect.disabled = true;
+  }
+
+  function updateReferencePolicySelect(files, instanceId, preferredPolicy) {
+    if (!el.referencePolicySelect) return [];
+    const discovered = [];
+    const seen = new Set();
+    (files || []).forEach(file => {
+      const policy = extractReferencePolicyFromGeneratedFile(file, instanceId);
+      if (!policy || seen.has(policy)) return;
+      seen.add(policy);
+      discovered.push(policy);
+    });
+    const preferred = String(preferredPolicy || '').trim();
+    if (preferred && !seen.has(preferred)) {
+      discovered.push(preferred);
+      seen.add(preferred);
+    }
+    const canonicalOrder = [
+      'opposite_class_farthest_instance',
+      'opposite_class_closest_instance',
+      'opposite_class_medoid',
+      'opposite_class_centroid',
+      'global_medoid',
+      'global_centroid'
+    ];
+    discovered.sort((a, b) => {
+      const ia = canonicalOrder.indexOf(a);
+      const ib = canonicalOrder.indexOf(b);
+      const oa = ia === -1 ? Number.POSITIVE_INFINITY : ia;
+      const ob = ib === -1 ? Number.POSITIVE_INFINITY : ib;
+      return d3.ascending(oa, ob) || String(a).localeCompare(String(b));
+    });
+    el.referencePolicySelect.innerHTML = '';
+    if (!discovered.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Current reference';
+      el.referencePolicySelect.appendChild(opt);
+      el.referencePolicySelect.disabled = true;
+      return discovered;
+    }
+    discovered.forEach(policy => {
+      const opt = document.createElement('option');
+      opt.value = policy;
+      opt.textContent = getReferencePolicyLabel(policy);
+      el.referencePolicySelect.appendChild(opt);
+    });
+    const selected = discovered.includes(preferred) ? preferred : discovered[0];
+    el.referencePolicySelect.value = selected;
+    el.referencePolicySelect.disabled = false;
+    return discovered;
+  }
+
+  function syncActiveTabToCurrentLoad(cfg, instanceId) {
+    const active = tabState.tabs.find(t => t.id === tabState.activeId);
+    if (!active) return;
+    active.cfg = { ...cfg };
+    active.instanceId = instanceId;
+    active.key = tabKey(cfg, instanceId);
+    active.label = String(instanceId);
+    renderTabs();
+  }
+
+  function resetFeatureSelectionUI() {
+    stopSweep();
+    state.selectedFeatureIdx = null;
+    if (el.featureIdx) el.featureIdx.value = '';
+    if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
+    if (el.seriesInfo) el.seriesInfo.textContent = '—';
+    if (el.summary) el.summary.textContent = '';
+    if (el.selectedKernelDesc) el.selectedKernelDesc.textContent = '';
+    try {
+      d3.select(el.selectedKernelPlot).selectAll('*').remove();
+    } catch (e) { }
+    try {
+      d3.select(el.convChart).selectAll('*').remove();
+    } catch (e) { }
+    renderInstanceDetails();
+    renderKernelPreview();
+    renderKernelList();
+    syncRetropropButtonState();
+  }
+
   const state = {
     kernels: generateMiniRocketKernels(),
     selectedId: 'K00',
+    kernelOverride: null,
+    kernelOverrideKey: null,
     series: [],
     referenceSeries: [],
     referencePath: '',
     dilation: 1,
     align: 0,
     threshold: 0,
+    betaVariants: new Map(),
+    activeBetaKey: null,
+    betaRaw: [],
+    betaStats: null,
     zoomTransform: d3.zoomIdentity,
     featureZoomTransform: d3.zoomIdentity,
     isFeatureZooming: false,
     features: [],
+    activeEmbeddingTab: 'values',
+    showReferenceEmbeddings: false,
+    referenceEmbeddingMap: new Map(),
+    referenceEmbeddingFile: null,
     selectedFeatureIdx: null,
     hoveredFeatureIdx: null,
+    // Embedding panel ordering (visual only; does not change feature indices)
+    featureSortKey: 'index', // 'index' | 'beta' | 'alpha'
+    featureSortDir: 'asc',   // 'asc' | 'desc'
+    featureOrder: null,      // Array<fidx> in display order
+    featurePos: null,        // Map<fidx, rank>
+    featureOrderSig: null,
+    animateFeatureSortNext: false,
     footprint: null,
     sweepActive: false,
     sweepTimer: null,
     animateTapsNext: false,
+    animateKernelTransitionNext: false,
     convLayout: null,
     alignLocked: false,
     isZooming: false,
     // NEW for perf
     seriesVersion: 0,
     convCache: new Map(),
+
+    // Summary modal caches
+    summaryCache: {
+      // per-instance α maps loaded from disk (key: sig|id)
+      alphaMapCache: new Map(),
+
+      rangeSig: null,
+      rangeIds: null,
+      rangeAlphaMaps: null,
+      rangeErrors: null,
+
+      listSig: null,
+      listIds: null,
+      listAlphaMaps: null,
+      listErrors: null,
+
+      classFlipKey: null,
+      classFlipFile: null,
+      classFlipTopN: null,
+      classFlipFeatureIds: null
+    },
 
     // runtime caches for fast alignment & throttling
     sX: null,
@@ -354,9 +604,9 @@
     kernelSearch: document.querySelector('#kernelSearch'),
     kernelList: d3.select('#kernelList'),
     summary: document.querySelector('#summary'),
-    selectedKernelId: document.querySelector('#selectedKernelId'),
     selectedKernelDesc: document.querySelector('#selectedKernelDesc'),
     selectedKernelPlot: document.querySelector('#selectedKernelPlot'),
+    selectedKernelDesc: document.querySelector('#selectedKernelDesc'),
     pickerBtn: document.querySelector('#kernelPickerBtn'),
     dropdown: document.querySelector('#kernelDropdown'),
     resetZoom: document.querySelector('#resetZoom'),
@@ -373,11 +623,30 @@
     align: document.querySelector('#align'),
     alignLabel: document.querySelector('#alignLabel'),
     sweepBtn: document.querySelector('#sweepBtn'),
+    betaFileSelect: document.querySelector('#betaFileSelect'),
+    referencePolicySelect: document.querySelector('#referencePolicySelect'),
     showReference: document.querySelector('#showReference'),
+    retropropFeatureBtn: document.querySelector('#retropropFeatureBtn'),
+    retroProgressWrap: document.querySelector('#retroProgressWrap'),
+    retroProgressText: document.querySelector('#retroProgressText'),
+    retroProgressPct: document.querySelector('#retroProgressPct'),
+    retroProgressBar: document.querySelector('#retroProgressBar'),
+    retroProgressFillBar: document.querySelector('#retroProgressFillBar'),
+    retroProgressLog: document.querySelector('#retroProgressLog'),
     featureIdx: document.querySelector('#featureIdx'),
     goFeature: document.querySelector('#goFeature'),
     featureInfo: document.querySelector('#featureInfo'),
     featureTooltip: document.querySelector('#featureTooltip'),
+    embeddingDiffOverview: document.querySelector('#embeddingDiffOverview'),
+    showReferenceEmbeddings: document.querySelector('#showReferenceEmbeddings'),
+    embeddingDiffLegend: document.querySelector('#embeddingDiffLegend'),
+    embeddingDiffMin: document.querySelector('#embeddingDiffMin'),
+    embeddingDiffMax: document.querySelector('#embeddingDiffMax'),
+    embTabs: document.querySelectorAll('[data-emb-tab]'),
+    embValuesPanel: document.querySelector('#embValuesPanel'),
+    embDiffPanel: document.querySelector('#embDiffPanel'),
+    embSortKey: document.querySelector('#embSortKey'),
+    embSortDir: document.querySelectorAll('input[name=\"embSortDir\"]'),
     peDataset: document.querySelector('#peDataset'),
     peLabelSelect: document.querySelector('#peLabel'),
     peModel: document.querySelector('#peModel'),
@@ -392,6 +661,7 @@
     peInstance: document.querySelector('#peInstance'),
     peTopT: document.querySelector('#peTopT'),
     peTopTField: document.querySelector('#peTopTField'),
+    peMetricPcaMr: document.querySelector('#peMetricPcaMr'),
     peRunBtn: document.querySelector('#peRunBtn'),
     peLoadBtn: document.querySelector('#peLoadBtn'),
     peCopyBtn: document.querySelector('#peCopyBtn'),
@@ -417,6 +687,38 @@
     instanceSlopeChart: document.querySelector('#instanceSlopeChart'),
     instanceEmbeddingPct: document.querySelector('#instanceEmbeddingPct'),
     instanceMetaFootnote: document.querySelector('#instanceMetaFootnote'),
+
+
+    // Summary modal (Top embeddings)
+    peSummaryBtn: document.querySelector('#peSummaryBtn'),
+    peSummaryOverlay: document.querySelector('#peSummaryOverlay'),
+    peSummaryModal: document.querySelector('#peSummaryModal'),
+    peSummaryHeader: document.querySelector('#peSummaryHeader'),
+    peSummaryCloseBtn: document.querySelector('#peSummaryCloseBtn'),
+    peSummaryRefreshBtn: document.querySelector('#peSummaryRefreshBtn'),
+    peSummarySubtitle: document.querySelector('#peSummarySubtitle'),
+    peSummaryStatus: document.querySelector('#peSummaryStatus'),
+    peSummaryBiasStats: document.querySelector('#peSummaryBiasStats'),
+    peSummaryScopeSelect: document.querySelector('#peSummaryScopeSelect'),
+    peSummaryRangeControls: document.querySelector('#peSummaryRangeControls'),
+    peSummaryStartId: document.querySelector('#peSummaryStartId'),
+    peSummaryEndId: document.querySelector('#peSummaryEndId'),
+    peSummaryLoadRangeBtn: document.querySelector('#peSummaryLoadRangeBtn'),
+    peSummaryListControls: document.querySelector('#peSummaryListControls'),
+    peSummaryInstanceList: document.querySelector('#peSummaryInstanceList'),
+    peSummaryLoadListBtn: document.querySelector('#peSummaryLoadListBtn'),
+    peSummaryTopK: document.querySelector('#peSummaryTopK'),
+    peSummaryTopKLabel: document.querySelector('#peSummaryTopKLabel'),
+    peSummaryShowDilated: document.querySelector('#peSummaryShowDilated'),
+    peSummaryKernelSort: document.querySelector('#peSummaryKernelSort'),
+    peSummaryMatrixWrap: document.querySelector('#peSummaryMatrixWrap'),
+    peSummaryMatrixSvg: document.querySelector('#peSummaryMatrixSvg'),
+    peSummaryKernelStrip: document.querySelector('#peSummaryKernelStrip'),
+
+    // Generate-instance popover
+    peAdvancedBtn: document.querySelector('#peAdvancedBtn'),
+    peAdvancedPopover: document.querySelector('#peAdvancedPopover'),
+    peAdvancedCloseBtn: document.querySelector('#peAdvancedCloseBtn'),
   };
 
 
@@ -462,8 +764,10 @@
     };
 
     function resize() {
-      const w = svg.node().clientWidth;
-      const h = svg.node().clientHeight;
+      const node = svg.node();
+      const box = node ? node.getBoundingClientRect() : { width: 0, height: 0 };
+      const w = Math.max(1, node ? (node.clientWidth || box.width || 1) : 1);
+      const h = Math.max(1, node ? (node.clientHeight || box.height || 1) : 1);
       g.attr('transform', `translate(${m.left},${m.top})`);
       return {
         w,
@@ -498,6 +802,12 @@
     bottom: 26,
     left: 44
   });
+  const embeddingDiffChart = chart('#embeddingDiffOverview', {
+    top: 16,
+    right: 18,
+    bottom: 26,
+    left: 44
+  });
 
   const fG = featureChart.g;
   const fTopG = fG.append('g');
@@ -513,6 +823,25 @@
   const fSel = fG.append('line').attr('stroke', 'rgba(17,24,39,.55)').attr('stroke-width', 1.5);
   const fHover = fG.append('line').attr('stroke', 'rgba(17,24,39,.20)').attr('stroke-width', 1.25).attr('stroke-dasharray', '4 4');
   const fOverlay = fG.append('rect').attr('fill', 'transparent').style('cursor', 'crosshair');
+
+  const fdG = embeddingDiffChart.g;
+  const fdGrid = fdG.append('g').attr('class', 'diffGrid');
+  const fdBarsG = fdG.append('g');
+  const fdStatus = fdG.append('text')
+    .attr('class', 'diffStatus')
+    .attr('text-anchor', 'middle')
+    .attr('fill', 'rgba(17,24,39,.55)')
+    .attr('font-size', 12)
+    .attr('font-weight', 700)
+    .attr('opacity', 0);
+  const fdZero = fdG.append('line').attr('stroke', 'rgba(17,24,39,.38)').attr('stroke-width', 1);
+  const fdAxes = {
+    x: fdG.append('g'),
+    y: fdG.append('g')
+  };
+  const fdSel = fdG.append('line').attr('stroke', 'rgba(17,24,39,.55)').attr('stroke-width', 1.5);
+  const fdHover = fdG.append('line').attr('stroke', 'rgba(17,24,39,.20)').attr('stroke-width', 1.25).attr('stroke-dasharray', '4 4');
+  const fdOverlay = fdG.append('rect').attr('fill', 'transparent').style('cursor', 'crosshair');
 
 
   const sG = seriesChart.g;
@@ -610,13 +939,231 @@
     return map;
   }
 
-  function mergeFeatureSignals(features, alphaMap, embMap) {
+
+  function buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap) {
+    const ids = new Set();
+
+    try {
+      if (alphaMap && typeof alphaMap.forEach === 'function') {
+        alphaMap.forEach((_, k) => {
+          const f = +k;
+          if (Number.isFinite(f)) ids.add(f);
+        });
+      }
+    } catch (_) { }
+
+    try {
+      if (embMap && typeof embMap.forEach === 'function') {
+        embMap.forEach((_, k) => {
+          const f = +k;
+          if (Number.isFinite(f)) ids.add(f);
+        });
+      }
+    } catch (_) { }
+
+    try {
+      if (refEmbMap && typeof refEmbMap.forEach === 'function') {
+        refEmbMap.forEach((_, k) => {
+          const f = +k;
+          if (Number.isFinite(f)) ids.add(f);
+        });
+      }
+    } catch (_) { }
+
+    // Fallback to model caches if needed
+    if (!ids.size) {
+      try {
+        if (peState && peState.dilations && typeof peState.dilations.forEach === 'function') {
+          peState.dilations.forEach((_, k) => {
+            const f = +k;
+            if (Number.isFinite(f)) ids.add(f);
+          });
+        }
+      } catch (_) { }
+
+      try {
+        if (peState && peState.biases && typeof peState.biases.forEach === 'function') {
+          peState.biases.forEach((_, k) => {
+            const f = +k;
+            if (Number.isFinite(f)) ids.add(f);
+          });
+        }
+      } catch (_) { }
+    }
+
+    const fidxs = Array.from(ids).sort((a, b) => a - b);
+
+    const kernelCount = (state && state.kernels && state.kernels.length) ? state.kernels.length : 84;
+
+    return fidxs.map(fidx => {
+      const kIdx = ((fidx % kernelCount) + kernelCount) % kernelCount;
+      const kId = `K${String(kIdx).padStart(2, '0')}`;
+      const dil = peDilationForFeature(fidx);
+      const thr = peBiasForFeature(fidx);
+
+      return {
+        fidx,
+        alpha: (alphaMap && alphaMap.has && alphaMap.has(fidx)) ? +alphaMap.get(fidx) : 0,
+        embedding: (embMap && embMap.has && embMap.has(fidx)) ? +embMap.get(fidx) : 0,
+        kernel_index: kIdx,
+        kernel_id: kId,
+        dilation: Number.isFinite(+dil) ? +dil : 1,
+        threshold: Number.isFinite(+thr) ? +thr : 0,
+        referenceEmbedding: (refEmbMap && refEmbMap.has && refEmbMap.has(fidx)) ? +refEmbMap.get(fidx) : null,
+        triplet: '',
+        kernel_str: ''
+      };
+    });
+  }
+
+  function mergeFeatureSignals(features, alphaMap, embMap, refEmbMap) {
     return (features || []).map(d => ({
       ...d,
       alpha: (alphaMap && alphaMap.has(d.fidx)) ? alphaMap.get(d.fidx) : (Number.isFinite(d.alpha) ? d.alpha : 0),
-      embedding: (embMap && embMap.has(d.fidx)) ? embMap.get(d.fidx) : (Number.isFinite(d.embedding) ? d.embedding : 0)
+      embedding: (embMap && embMap.has(d.fidx)) ? embMap.get(d.fidx) : (Number.isFinite(d.embedding) ? d.embedding : 0),
+      referenceEmbedding: (refEmbMap && refEmbMap.has && refEmbMap.has(d.fidx))
+        ? +refEmbMap.get(d.fidx)
+        : (Number.isFinite(+d.referenceEmbedding) ? +d.referenceEmbedding : null)
     }));
   }
+  // ---- Embedding panel sorting (visual only) ----
+  function invalidateFeatureDisplayOrder() {
+    state.featureOrder = null;
+    state.featurePos = null;
+    state.featureOrderSig = null;
+  }
+
+  function featureByFidx(fidx) {
+    if (!state.features || state.features.length === 0) return null;
+    const i = Math.round(+fidx);
+    if (Number.isFinite(i) && i >= 0 && i < state.features.length) {
+      const d = state.features[i];
+      if (d && +d.fidx === i) return d;
+    }
+    // Fallback (handles missing or non-contiguous feature sets)
+    return state.features.find(d => +d.fidx === +fidx) || null;
+  }
+
+  function getFeatureDisplayOrder() {
+    const n = (state.features && state.features.length) ? state.features.length : 0;
+    const key = state.featureSortKey || 'index';
+    const dir = state.featureSortDir || 'asc';
+    const sig = `${key}|${dir}|${n}`;
+    if (state.featureOrder && state.featureOrderSig === sig && state.featurePos) return state.featureOrder;
+
+    const ord = new Array(n);
+    for (let i = 0; i < n; i++) ord[i] = state.features[i].fidx;
+
+    const getVal = (fidx) => {
+      const d = featureByFidx(fidx);
+      if (!d) return null;
+      if (key === 'alpha') return Number.isFinite(+d.alpha) ? +d.alpha : null;
+      if (key === 'beta') return Number.isFinite(+d.embedding) ? +d.embedding : null; // beta == embedding here
+      // index
+      return Number.isFinite(+d.fidx) ? +d.fidx : null;
+    };
+
+    ord.sort((a, b) => {
+      if (key === 'index') return d3.ascending(+a, +b);
+
+      const va = getVal(a);
+      const vb = getVal(b);
+
+      const aBad = (va == null || !Number.isFinite(va));
+      const bBad = (vb == null || !Number.isFinite(vb));
+      if (aBad && bBad) return d3.ascending(+a, +b);
+      if (aBad) return 1;
+      if (bBad) return -1;
+
+      const cmp = d3.ascending(va, vb) || d3.ascending(+a, +b);
+      return cmp;
+    });
+
+    if (dir === 'desc') ord.reverse();
+
+    const pos = new Map();
+    for (let i = 0; i < ord.length; i++) pos.set(ord[i], i);
+
+    state.featureOrder = ord;
+    state.featurePos = pos;
+    state.featureOrderSig = sig;
+    return ord;
+  }
+
+  function featureDisplayPos(fidx) {
+    const ord = getFeatureDisplayOrder();
+    if (state.featurePos && state.featurePos.has(fidx)) return state.featurePos.get(fidx);
+    // Fall back to identity if needed
+    return +fidx;
+  }
+
+
+  function featureFocusTransformForFidx(fidx, zoomK) {
+    const n = (state.features && state.features.length) ? state.features.length : 0;
+    if (!n) return d3.zoomIdentity;
+    const dims = featureChart.resize();
+    const innerW = Math.max(1, dims.innerW || 1);
+    const xBaseFeat = d3.scaleLinear().domain([0, n - 1]).range([0, innerW]);
+    const rank = clamp(featureDisplayPos(fidx), 0, Math.max(0, n - 1));
+    const k = clamp(Number.isFinite(+zoomK) ? +zoomK : 6, 1, 200);
+    const txDesired = (innerW / 2) - (xBaseFeat(rank) * k);
+    const tx = clamp(txDesired, innerW * (1 - k), 0);
+    return d3.zoomIdentity.translate(tx, 0).scale(k);
+  }
+
+  function focusFeatureInEmbeddingPanel(fidx, opts = {}) {
+    const n = (state.features && state.features.length) ? state.features.length : 0;
+    const featureId = Number.isFinite(+fidx) ? Math.round(+fidx) : null;
+    if (!n || !Number.isFinite(featureId)) return;
+    const targetTransform = featureFocusTransformForFidx(featureId, opts.zoomK);
+    state.hoveredFeatureIdx = featureId;
+    state.__featureHoverIdx = featureId;
+    if (opts.animate && typeof gsap !== 'undefined') {
+      if (state.__featureFocusTween) state.__featureFocusTween.kill();
+      const from = {
+        x: state.featureZoomTransform && Number.isFinite(+state.featureZoomTransform.x) ? +state.featureZoomTransform.x : 0,
+        k: state.featureZoomTransform && Number.isFinite(+state.featureZoomTransform.k) ? +state.featureZoomTransform.k : 1
+      };
+      state.__featureFocusTween = gsap.to(from, {
+        x: targetTransform.x,
+        k: targetTransform.k,
+        duration: Number.isFinite(+opts.duration) ? +opts.duration / 1000 : 0.7,
+        ease: 'power3.out',
+        onUpdate: () => {
+          state.featureZoomTransform = d3.zoomIdentity.translate(from.x, 0).scale(from.k);
+          renderFeatureCharts();
+        },
+        onComplete: () => {
+          state.featureZoomTransform = targetTransform;
+          state.__featureFocusTween = null;
+          renderFeatureCharts();
+        }
+      });
+    } else {
+      state.featureZoomTransform = targetTransform;
+    }
+    if (state.__featureFocusPulseTimer) clearTimeout(state.__featureFocusPulseTimer);
+    state.__featureFocusPulseTimer = setTimeout(() => {
+      if (state.hoveredFeatureIdx !== featureId) return;
+      state.hoveredFeatureIdx = null;
+      state.__featureHoverIdx = null;
+      renderFeatureCharts();
+    }, 900);
+  }
+
+  function focusSelectedFeatureAfterReferenceSwitch() {
+    const featureId = state.selectedFeatureIdx != null ? Math.round(+state.selectedFeatureIdx) : null;
+    if (!Number.isFinite(featureId) || !featureByIdx(featureId)) return;
+    const currentK = state.featureZoomTransform && Number.isFinite(+state.featureZoomTransform.k)
+      ? +state.featureZoomTransform.k
+      : 1;
+    focusFeatureInEmbeddingPanel(featureId, {
+      zoomK: currentK,
+      animate: true
+    });
+  }
+
+
   async function fetchFirst(paths) {
     let lastErr = null;
     for (const p of paths) {
@@ -633,16 +1180,33 @@
     throw lastErr || new Error('Fetch failed');
   }
 
-  function setFeatures(features) {
+  function setFeatures(features, opts = {}) {
+    const preserveSelection = !!opts.preserveSelection;
+    const prevSelected = preserveSelection && state.selectedFeatureIdx != null ? Math.round(+state.selectedFeatureIdx) : null;
+    const prevZoom = preserveSelection ? state.featureZoomTransform : null;
     state.features = (features || []).slice().sort((a, b) => d3.ascending(a.fidx, b.fidx));
-    state.featureZoomTransform = d3.zoomIdentity;
+    invalidateFeatureDisplayOrder();
+    state.featureZoomTransform = preserveSelection && prevZoom ? prevZoom : d3.zoomIdentity;
     if (el.featureIdx) el.featureIdx.max = Math.max(0, state.features.length - 1);
+    if (preserveSelection && Number.isFinite(prevSelected) && featureByIdx(prevSelected)) {
+      state.selectedFeatureIdx = prevSelected;
+      if (el.featureIdx) el.featureIdx.value = String(prevSelected);
+      updateFeatureHeaderWithReference(featureByIdx(prevSelected));
+    } else if (!preserveSelection) {
+      state.selectedFeatureIdx = null;
+    }
     renderFeatureCharts();
-    if (el.featureInfo) el.featureInfo.textContent = '';
+    if (el.peSummaryBtn) el.peSummaryBtn.disabled = false;
+    if (preserveSelection) {
+      syncRetropropButtonState();
+      return;
+    }
+    if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
     if (el.seriesInfo) el.seriesInfo.textContent = '';
     try {
       d3.select(el.convChart).selectAll('*').remove();
     } catch (e) { }
+    syncRetropropButtonState();
   }
 
   function featureByIdx(fidx) {
@@ -656,18 +1220,85 @@
     if (el.featureInfo) el.featureInfo.textContent = `α = ${fmt(d.alpha)} · emb = ${fmt(d.embedding)}`;
   }
 
+  function updateFeatureHeaderWithReference(d) {
+    if (!d) return;
+    updateFeatureHeader(d);
+    if (!el.featureInfo || !Number.isFinite(+d.referenceEmbedding)) return;
+    el.featureInfo.textContent += ` · ref = ${fmt(d.referenceEmbedding)} · Δ = ${fmt(+d.embedding - +d.referenceEmbedding)}`;
+  }
+
   function applyFeatureToKernelExplorer(d) {
     if (!d) return;
-    state.dilation = +d.dilation;
+
+    const fidx = +d.fidx;
+
+    // Update dilation + threshold from model-level CSVs (dilations.csv, biases.csv).
+    state.dilation = peDilationForFeature(fidx);
     updateDilationLimits();
-    state.selectedId = d.kernel_id;
-    fixAlignBounds();
-    renderKernelPreview();
-    renderKernelList();
-    state.threshold = +d.threshold;
+
+    state.threshold = peBiasForFeature(fidx);
     updateThresholdDisplay(state.thresholdRange?.min, state.thresholdRange?.max);
-    renderSeriesAndConv();
+
+    // Load the kernel mask from: /output/<dataset>/<model>/base_mask_feature_<fidx>.csv
+    const cfg = peState ? peState.lastRun : null;
+    const reqKey = `${cfg ? (cfg.dataset + '|' + cfg.model) : ''}|${fidx}`;
+    state.kernelOverrideKey = reqKey;
+
+    const applyPack = (pack) => {
+      state.animateKernelTransitionNext = true;
+      const matchId = kernelIdFromWeights(pack.weights);
+      if (matchId) {
+        state.selectedId = matchId;
+        state.kernelOverride = { id: matchId, weights: pack.weights, pos2: pack.pos2, desc: pack.desc };
+      } else {
+        state.kernelOverride = { id: (state.selectedId || 'KFILE'), weights: pack.weights, pos2: pack.pos2, desc: pack.desc };
+      }
+
+      fixAlignBounds();
+      renderKernelPreview();
+      renderKernelList();
+      renderSeriesAndConv();
+    };
+
+    // If we don't have an output context yet, fall back to metadata immediately.
+    if (!cfg) {
+      state.animateKernelTransitionNext = true;
+      state.kernelOverride = null;
+      if (d.kernel_id) state.selectedId = d.kernel_id;
+      fixAlignBounds();
+      renderKernelPreview();
+      renderKernelList();
+      renderSeriesAndConv();
+      return;
+    }
+
+    // Apply cached mask synchronously (avoids a transient "wrong kernel" while the file loads).
+    const cacheKey = `${cfg.dataset}|${cfg.model}|${fidx}`;
+    if (peState && peState.kernelMaskCache && peState.kernelMaskCache.has(cacheKey)) {
+      const pack = peState.kernelMaskCache.get(cacheKey);
+      if (pack && state.kernelOverrideKey === reqKey) {
+        applyPack(pack);
+        return;
+      }
+    }
+
+    // Keep the current kernel visible while loading; update only when the correct mask arrives.
+    peLoadKernelMaskForFeature(fidx).then(pack => {
+      if (!pack) throw new Error('no mask');
+      if (state.kernelOverrideKey !== reqKey) return;
+      applyPack(pack);
+    }).catch(() => {
+      if (state.kernelOverrideKey !== reqKey) return;
+      state.animateKernelTransitionNext = true;
+      state.kernelOverride = null;
+      if (d.kernel_id) state.selectedId = d.kernel_id;
+      fixAlignBounds();
+      renderKernelPreview();
+      renderKernelList();
+      renderSeriesAndConv();
+    });
   }
+
 
   function selectFeature(fidx, opts) {
     const d = featureByIdx(fidx);
@@ -675,12 +1306,18 @@
     stopSweep();
     state.selectedFeatureIdx = d.fidx;
     if (el.featureIdx) el.featureIdx.value = d.fidx;
-    updateFeatureHeader(d);
+    updateFeatureHeaderWithReference(d);
+    if (opts && opts.focusEmbedding) {
+      focusFeatureInEmbeddingPanel(d.fidx, {
+        zoomK: (opts && Number.isFinite(+opts.embeddingZoomK)) ? +opts.embeddingZoomK : 8
+      });
+    }
     // Keep the instance details card in sync with the currently selected embedding.
     renderInstanceDetails();
     renderFeatureCharts();
     applyFeatureToKernelExplorer(d);
     if (!(opts && opts.silentTooltip)) hideFeatureTooltip();
+    syncRetropropButtonState();
   }
 
   function showFeatureTooltip(clientX, clientY, d) {
@@ -691,6 +1328,9 @@
     const x = clientX - r.left;
     const y = clientY - r.top;
     tip.innerHTML = `#${d.fidx}<br>α=${fmt(d.alpha)}<br>emb=${fmt(d.embedding)}`;
+    if (Number.isFinite(+d.referenceEmbedding)) {
+      tip.innerHTML += `<br>ref=${fmt(d.referenceEmbedding)}<br>Δ=${fmt(+d.embedding - +d.referenceEmbedding)}`;
+    }
     tip.style.left = `${x + 12}px`;
     tip.style.top = `${y + 12}px`;
     tip.style.opacity = 1;
@@ -706,11 +1346,16 @@
 
   function renderFeatureCharts() {
     if (!state.features || state.features.length === 0) return;
-    renderFeatureOverview();
+    if ((state.activeEmbeddingTab || 'values') === 'diff') renderEmbeddingDiffOverview();
+    else renderFeatureOverview();
   }
 
 
   function renderFeatureOverview() {
+    const featureSvgNode = featureChart.svg.node();
+    if (featureSvgNode && fG.node() && fG.node().parentNode !== featureSvgNode) {
+      featureSvgNode.appendChild(fG.node());
+    }
     const {
       innerW,
       innerH
@@ -719,6 +1364,7 @@
       stripH = 22;
     const topH = Math.max(40, innerH - stripH - gap);
     const n = state.features.length;
+    const ord = getFeatureDisplayOrder();
     // Zoom-based navigation (wheel to zoom, drag to pan), matching the convolution series plot.
     const xBaseFeat = d3.scaleLinear().domain([0, n - 1]).range([0, innerW]);
     if (!state.featureZoomTransform) state.featureZoomTransform = d3.zoomIdentity;
@@ -726,38 +1372,90 @@
     const step = (n > 1) ? (xZ(1) - xZ(0)) : innerW;
     const bandW = Math.max(1, Math.abs(step));
 
-    function idxFromPx(px) {
+    const doAnimSort = !!window.ANIMATE_TRANSITIONS && !!state.animateFeatureSortNext && (typeof gsap !== 'undefined');
+    const sortDur = 0.55;
+    const sortEase = 'power2.out';
+
+    function fidxFromPx(px) {
       const v = xZ.invert(px);
-      return clamp(Math.round(v), 0, n - 1);
+      const r = clamp(Math.round(v), 0, n - 1);
+      const fidx = ord && ord.length ? ord[r] : r;
+      return (fidx == null) ? r : fidx;
     }
 
     fTopG.attr('transform', 'translate(0,0)');
     fBotG.attr('transform', `translate(0,${topH + gap})`);
     fSep.attr('x1', 0).attr('x2', innerW).attr('y1', topH + gap / 2).attr('y2', topH + gap / 2).attr('opacity', 1);
-    const y = d3.scaleLinear().domain(d3.extent(state.features, d => d.embedding)).nice().range([topH, 0]);
+    const embVals = [];
+    (state.features || []).forEach(d => {
+      if (Number.isFinite(+d.embedding)) embVals.push(+d.embedding);
+      if (state.showReferenceEmbeddings === true && Number.isFinite(+d.referenceEmbedding)) embVals.push(+d.referenceEmbedding);
+    });
+    if (!embVals.length) embVals.push(0);
+    if (!embVals.some(v => v < 0)) embVals.push(0);
+    if (!embVals.some(v => v > 0)) embVals.push(0);
+    const y = d3.scaleLinear().domain(d3.extent(embVals)).nice().range([topH, 0]);
 
-    // Render embeddings as a bar chart (instead of a line chart).
+    // Render target and reference embeddings as overlapped bars.
     fEmbedPath.attr('d', '').attr('opacity', 0);
 
     const yZero = y(0);
-    const nBars = state.features.length;
-    const barW0 = Math.max(0.8, bandW * 0.9);
+    const barW0 = Math.max(0.8, bandW * 0.82);
 
-    const bars = fEmbedBarsG.selectAll('rect.embedBar').data(state.features, d => d.fidx);
-    bars.enter().append('rect')
-      .attr('class', 'embedBar')
-      .attr('fill', 'rgba(125,169,165,.35)')
-      .attr('stroke', 'rgba(125,169,165,.75)')
-      .attr('stroke-width', 0.8)
-      .merge(bars)
-      .attr('x', d => xZ(d.fidx) - barW0 / 2)
-      .attr('width', barW0)
-      .attr('y', d => Math.min(y(d.embedding), yZero))
-      .attr('height', d => Math.max(0, Math.abs(y(d.embedding) - yZero)));
-    bars.exit().remove();
+    fEmbedBarsG.selectAll('rect.embedBar').remove();
+
+    function renderEmbeddingSeries(cls, valueGetter, fill, stroke) {
+      const data = (state.features || []).filter(d => {
+        const v = valueGetter(d);
+        return v != null && Number.isFinite(+v);
+      });
+      const bars = fEmbedBarsG.selectAll(`rect.${cls}`).data(data, d => d.fidx);
+      const barsEnter = bars.enter().append('rect')
+        .attr('class', cls)
+        .attr('fill', fill)
+        .attr('stroke', stroke)
+        .attr('stroke-width', 0.8)
+        .attr('shape-rendering', bandW < 3 ? 'crispEdges' : null);
+
+      const barsMerged = barsEnter.merge(bars);
+
+      barsMerged.each(function (d) {
+        const node = this;
+        const v = +valueGetter(d);
+        const xNew = xZ(featureDisplayPos(d.fidx)) - barW0 / 2;
+        const yNew = Math.min(y(v), yZero);
+        const hNew = Math.max(0, Math.abs(y(v) - yZero));
+
+        d3.select(node)
+          .attr('width', barW0)
+          .attr('y', yNew)
+          .attr('height', hNew);
+
+        if (doAnimSort) {
+          gsap.killTweensOf(node);
+          gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
+        } else {
+          d3.select(node).attr('x', xNew);
+        }
+      });
+
+      bars.exit().remove();
+    }
+
+    renderEmbeddingSeries('referenceEmbedBar', d => state.showReferenceEmbeddings === true ? d.referenceEmbedding : null, 'rgba(168,85,247,.34)', 'rgba(126,34,206,.72)');
+    renderEmbeddingSeries('instanceEmbedBar', d => d.embedding, 'rgba(20,184,166,.38)', 'rgba(15,118,110,.78)');
+
+    fEmbedBarsG.selectAll('rect.referenceEmbedBar').lower();
+    fEmbedBarsG.selectAll('rect.instanceEmbedBar').raise();
+
     fAxes.x.attr('transform', `translate(0,${innerH})`);
     fAxes.y.attr('transform', 'translate(0,0)');
-    fAxes.x.call(d3.axisBottom(xZ).ticks(6).tickFormat(d3.format('d')).tickSizeOuter(0));
+    const xTick = (v) => {
+      const i = clamp(Math.round(v), 0, n - 1);
+      const f = (ord && ord.length) ? ord[i] : i;
+      return (f == null) ? '' : String(f);
+    };
+    fAxes.x.call(d3.axisBottom(xZ).ticks(6).tickFormat(xTick).tickSizeOuter(0));
     fAxes.y.call(d3.axisLeft(y).ticks(4).tickSizeOuter(0));
     styleAxes(fG);
     const aVals = state.features.map(d => d.alpha);
@@ -771,27 +1469,68 @@
       color = d3.scaleSequential().domain([0, maxAbs]).interpolator(d3.interpolateBlues);
     }
     const rects = fHeatG.selectAll('rect.cell').data(state.features, d => d.fidx);
-    rects.enter().append('rect').attr('class', 'cell').attr('y', 0).attr('height', stripH)
-      .merge(rects)
-      .attr('x', d => xZ(d.fidx) - bandW / 2)
-      .attr('width', bandW + 0.6)
-      .attr('fill', d => {
-        const v = d.alpha;
+
+    const rectsEnter = rects.enter()
+      .append('rect')
+      .attr('class', 'cell')
+      .attr('y', 0)
+      .attr('height', stripH);
+
+    const rectsMerged = rectsEnter.merge(rects);
+
+    rectsMerged.each(function (d) {
+      const node = this;
+      const xNew = xZ(featureDisplayPos(d.fidx)) - bandW / 2;
+      const wNew = bandW + 0.6;
+
+      const v = d.alpha;
+      const fillNew = (() => {
         if ((minA || 0) < 0 && (maxA || 0) > 0) return color(v);
         return color(Math.abs(v));
-      });
+      })();
+
+      d3.select(node)
+        .attr('width', wNew)
+        .attr('fill', fillNew);
+
+      if (doAnimSort) {
+        gsap.killTweensOf(node);
+        gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
+      } else {
+        d3.select(node).attr('x', xNew);
+      }
+    });
+
     rects.exit().remove();
     const y0 = 0,
       y1 = topH + gap + stripH;
+
     if (state.selectedFeatureIdx != null) {
-      const sx = xZ(state.selectedFeatureIdx);
-      fSel.attr('x1', sx).attr('x2', sx).attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      const sx = xZ(featureDisplayPos(state.selectedFeatureIdx));
+      fSel.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+
+      const n0 = fSel.node();
+      if (doAnimSort && n0) {
+        gsap.killTweensOf(n0);
+        gsap.to(n0, { duration: sortDur, ease: sortEase, attr: { x1: sx, x2: sx } });
+      } else {
+        fSel.attr('x1', sx).attr('x2', sx);
+      }
     } else {
       fSel.attr('opacity', 0);
     }
+
     if (state.hoveredFeatureIdx != null) {
-      const hx = xZ(state.hoveredFeatureIdx);
-      fHover.attr('x1', hx).attr('x2', hx).attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      const hx = xZ(featureDisplayPos(state.hoveredFeatureIdx));
+      fHover.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+
+      const n1 = fHover.node();
+      if (doAnimSort && n1) {
+        gsap.killTweensOf(n1);
+        gsap.to(n1, { duration: sortDur, ease: sortEase, attr: { x1: hx, x2: hx } });
+      } else {
+        fHover.attr('x1', hx).attr('x2', hx);
+      }
     } else {
       fHover.attr('opacity', 0);
     }
@@ -806,7 +1545,7 @@
       });
     }
 
-    
+
 
 
     fOverlay.attr('x', 0).attr('y', 0).attr('width', innerW).attr('height', y1)
@@ -826,7 +1565,7 @@
           if (featureZoomRAF) cancelAnimationFrame(featureZoomRAF);
           featureZoomRAF = requestAnimationFrame(() => {
             featureZoomRAF = null;
-            renderFeatureOverview();
+            renderFeatureCharts();
           });
         })
         .on('end', () => {
@@ -850,15 +1589,15 @@
       .on('mousemove', (ev) => {
         if (state.isFeatureZooming) return;
         const [px] = d3.pointer(ev, fOverlay.node());
-        const idx = idxFromPx(px);
+        const fidx = fidxFromPx(px);
         const prev = state.__featureHoverIdx;
-        state.hoveredFeatureIdx = idx;
+        state.hoveredFeatureIdx = fidx;
         state.hoveredFeaturePx = px;
-        if (prev !== idx) {
-          state.__featureHoverIdx = idx;
+        if (prev !== fidx) {
+          state.__featureHoverIdx = fidx;
           scheduleFeatureOverviewRender();
         }
-        showFeatureTooltip(ev.clientX, ev.clientY, featureByIdx(idx));
+        showFeatureTooltip(ev.clientX, ev.clientY, featureByFidx(fidx));
       })
       .on('mouseleave', () => {
         state.hoveredFeatureIdx = null;
@@ -870,24 +1609,238 @@
       .on('click', (ev) => {
         if (state.isFeatureZooming) return;
         const [px] = d3.pointer(ev, fOverlay.node());
-        const idx = idxFromPx(px);
-        selectFeature(idx);
+        const fidx = fidxFromPx(px);
+        selectFeature(fidx);
       });
 
 
+    // Only animate one render pass after a sort change (avoid animating on hover/zoom).
+    if (state.animateFeatureSortNext) state.animateFeatureSortNext = false;
+
+  }
+
+  function renderEmbeddingDiffOverview() {
+    const diffSvgNode = embeddingDiffChart.svg.node();
+    if (diffSvgNode && fdG.node() && fdG.node().parentNode !== diffSvgNode) {
+      diffSvgNode.appendChild(fdG.node());
+    }
+    const {
+      innerW,
+      innerH
+    } = embeddingDiffChart.resize();
+    const n = state.features.length;
+    const ord = getFeatureDisplayOrder();
+    const xBaseFeat = d3.scaleLinear().domain([0, n - 1]).range([0, innerW]);
+    if (!state.featureZoomTransform) state.featureZoomTransform = d3.zoomIdentity;
+    const xZ = state.featureZoomTransform.rescaleX(xBaseFeat);
+    const step = (n > 1) ? (xZ(1) - xZ(0)) : innerW;
+    const bandW = Math.max(1, Math.abs(step));
+    const barW = Math.max(0.8, bandW * 0.86);
+
+    const data = (state.features || []).map(d => {
+      const instance = Number.isFinite(+d.embedding) ? +d.embedding : null;
+      const reference = Number.isFinite(+d.referenceEmbedding) ? +d.referenceEmbedding : null;
+      return {
+        ...d,
+        instanceEmbedding: instance,
+        referenceEmbeddingValue: reference,
+        embeddingDiff: (instance != null && reference != null) ? (instance - reference) : null
+      };
+    }).filter(d => Number.isFinite(+d.embeddingDiff));
+
+    const diffs = data.map(d => +d.embeddingDiff);
+    const maxAbs = Math.max(d3.max(diffs.map(v => Math.abs(v))) || 0, 1e-12);
+    const y = d3.scaleLinear().domain([-maxAbs, maxAbs]).nice().range([innerH, 0]);
+    const color = d3.scaleDiverging().domain([-maxAbs, 0, maxAbs]).interpolator(d3.interpolateRdBu);
+    const yZero = y(0);
+
+    if (el.embeddingDiffMin) el.embeddingDiffMin.textContent = fmt(-maxAbs);
+    if (el.embeddingDiffMax) el.embeddingDiffMax.textContent = fmt(maxAbs);
+
+    function fidxFromPx(px) {
+      const v = xZ.invert(px);
+      const r = clamp(Math.round(v), 0, n - 1);
+      const fidx = ord && ord.length ? ord[r] : r;
+      return (fidx == null) ? r : fidx;
+    }
+
+    const doAnimSort = !!window.ANIMATE_TRANSITIONS && !!state.animateFeatureSortNext && (typeof gsap !== 'undefined');
+    const sortDur = 0.55;
+    const sortEase = 'power2.out';
+
+    fdGrid.attr('transform', 'translate(0,0)')
+      .call(d3.axisLeft(y).ticks(5).tickSize(-innerW).tickFormat(''));
+    fdGrid.selectAll('line')
+      .attr('stroke', 'rgba(17,24,39,.12)')
+      .attr('stroke-width', 1);
+    fdGrid.selectAll('path').remove();
+
+    fdZero.attr('x1', 0).attr('x2', innerW).attr('y1', yZero).attr('y2', yZero).attr('opacity', 1);
+
+    fdStatus
+      .attr('x', innerW / 2)
+      .attr('y', Math.max(18, innerH / 2))
+      .attr('opacity', data.length ? 0 : 1)
+      .text('No reference embedding values available for this reference.');
+
+    const bars = fdBarsG.selectAll('rect.diffBar').data(data, d => d.fidx);
+    const barsEnter = bars.enter().append('rect')
+      .attr('class', 'diffBar')
+      .attr('stroke', 'rgba(17,24,39,.20)')
+      .attr('stroke-width', 0.4);
+    const barsMerged = barsEnter.merge(bars);
+
+    barsMerged.each(function (d) {
+      const node = this;
+      const v = +d.embeddingDiff;
+      const xNew = xZ(featureDisplayPos(d.fidx)) - barW / 2;
+      const yNew = Math.min(y(v), yZero);
+      const hNew = Math.max(0, Math.abs(y(v) - yZero));
+      d3.select(node)
+        .attr('width', barW)
+        .attr('y', yNew)
+        .attr('height', hNew)
+        .attr('fill', color(v))
+        .attr('opacity', 0.9);
+
+      if (doAnimSort) {
+        gsap.killTweensOf(node);
+        gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
+      } else {
+        d3.select(node).attr('x', xNew);
+      }
+    });
+
+    bars.exit().remove();
+
+    fdAxes.x.attr('transform', `translate(0,${innerH})`);
+    const xTick = (v) => {
+      const i = clamp(Math.round(v), 0, n - 1);
+      const f = (ord && ord.length) ? ord[i] : i;
+      return (f == null) ? '' : String(f);
+    };
+    fdAxes.x.call(d3.axisBottom(xZ).ticks(6).tickFormat(xTick).tickSizeOuter(0));
+    fdAxes.y.call(d3.axisLeft(y).ticks(4).tickSizeOuter(0));
+    styleAxes(fdG);
+
+    const y0 = 0;
+    const y1 = innerH;
+    if (state.selectedFeatureIdx != null) {
+      const sx = xZ(featureDisplayPos(state.selectedFeatureIdx));
+      fdSel.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      if (doAnimSort && fdSel.node()) {
+        gsap.killTweensOf(fdSel.node());
+        gsap.to(fdSel.node(), { duration: sortDur, ease: sortEase, attr: { x1: sx, x2: sx } });
+      } else {
+        fdSel.attr('x1', sx).attr('x2', sx);
+      }
+    } else {
+      fdSel.attr('opacity', 0);
+    }
+
+    if (state.hoveredFeatureIdx != null) {
+      const hx = xZ(featureDisplayPos(state.hoveredFeatureIdx));
+      fdHover.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      if (doAnimSort && fdHover.node()) {
+        gsap.killTweensOf(fdHover.node());
+        gsap.to(fdHover.node(), { duration: sortDur, ease: sortEase, attr: { x1: hx, x2: hx } });
+      } else {
+        fdHover.attr('x1', hx).attr('x2', hx);
+      }
+    } else {
+      fdHover.attr('opacity', 0);
+    }
+
+    function scheduleFeatureDiffRender() {
+      if (state.__featureOverviewRAF) return;
+      state.__featureOverviewRAF = requestAnimationFrame(() => {
+        state.__featureOverviewRAF = null;
+        renderEmbeddingDiffOverview();
+      });
+    }
+
+    fdOverlay.attr('x', 0).attr('y', 0).attr('width', innerW).attr('height', innerH)
+      .style('cursor', 'grab');
+
+    if (!featureZoom) {
+      featureZoom = d3.zoom().scaleExtent([1, 200])
+        .on('start', () => {
+          state.isFeatureZooming = true;
+          fdOverlay.style('cursor', 'grabbing');
+        })
+        .on('zoom', (ev) => {
+          if (syncingFeatureZoom) return;
+          const t = d3.zoomIdentity.translate(ev.transform.x, 0).scale(ev.transform.k);
+          state.featureZoomTransform = t;
+          if (featureZoomRAF) cancelAnimationFrame(featureZoomRAF);
+          featureZoomRAF = requestAnimationFrame(() => {
+            featureZoomRAF = null;
+            renderFeatureCharts();
+          });
+        })
+        .on('end', () => {
+          state.isFeatureZooming = false;
+          fdOverlay.style('cursor', 'grab');
+        });
+    }
+    featureZoom.extent([
+      [0, 0],
+      [innerW, innerH]
+    ]).translateExtent([
+      [0, 0],
+      [innerW, innerH]
+    ]);
+    syncingFeatureZoom = true;
+    fdOverlay.call(featureZoom).call(featureZoom.transform, state.featureZoomTransform);
+    syncingFeatureZoom = false;
+    fdOverlay.selectAll('title').data([0]).join('title').text('Scroll to zoom. Drag to pan.');
+
+    fdOverlay
+      .on('mousemove', (ev) => {
+        if (state.isFeatureZooming) return;
+        const [px] = d3.pointer(ev, fdOverlay.node());
+        const fidx = fidxFromPx(px);
+        const prev = state.__featureHoverIdx;
+        state.hoveredFeatureIdx = fidx;
+        state.hoveredFeaturePx = px;
+        if (prev !== fidx) {
+          state.__featureHoverIdx = fidx;
+          scheduleFeatureDiffRender();
+        }
+        showFeatureTooltip(ev.clientX, ev.clientY, featureByFidx(fidx));
+      })
+      .on('mouseleave', () => {
+        state.hoveredFeatureIdx = null;
+        state.hoveredFeaturePx = null;
+        state.__featureHoverIdx = null;
+        scheduleFeatureDiffRender();
+        hideFeatureTooltip();
+      })
+      .on('click', (ev) => {
+        if (state.isFeatureZooming) return;
+        const [px] = d3.pointer(ev, fdOverlay.node());
+        const fidx = fidxFromPx(px);
+        selectFeature(fidx);
+      });
+
+    if (state.animateFeatureSortNext) state.animateFeatureSortNext = false;
   }
 
   function getKernel() {
+    if (state.kernelOverride && state.kernelOverride.weights) return state.kernelOverride;
     return state.kernels.find(k => k.id === state.selectedId) || state.kernels[0];
   }
 
   function setSelected(id) {
+    state.kernelOverride = null;
+    state.kernelOverrideKey = null;
     state.selectedId = id;
     fixAlignBounds();
     renderKernelPreview();
     renderKernelList();
     renderSeriesAndConv();
     closeDropdown();
+    closeAdvancedPopover();
     if (typeof gsap !== 'undefined') {
       gsap.fromTo(el.selectedKernelPlot, {
         opacity: 0.65
@@ -950,45 +1903,145 @@
     if (ev.key === 'Escape') closeDropdown();
   });
 
+
   function drawKernelMini(svgNode, weights) {
     if (!svgNode) return;
     const svg = d3.select(svgNode);
-    const bboxW = svgNode.getBoundingClientRect ? svgNode.getBoundingClientRect().width : 0;
+
+    // Animate only the main (selected) kernel preview when a kernel change triggered this render.
+    // Using GSAP here because d3 transitions can be easy to miss when multiple panels re-render.
+    const isMainPreview = (svgNode === el.selectedKernelPlot);
+    const animate = !!window.ANIMATE_TRANSITIONS && !!state.animateKernelTransitionNext && isMainPreview && (typeof gsap !== 'undefined');
+    const animDur = 0.5;
+    const animEase = 'power2.out';
+
+    const bboxW = svgNode.getBoundingClientRect().width;
     const w = bboxW > 0 ? bboxW : (svgNode.clientWidth || 320);
     const h = svgNode.clientHeight || 118;
+
     svg.attr('width', '100%').attr('height', h);
-    svg.selectAll('*').remove();
-    const m = {
-      left: 28,
-      right: 10,
-      top: 10,
-      bottom: 32
-    };
+
+    const m = { left: 28, right: 10, top: 10, bottom: 32 };
     const innerW = Math.max(10, w - m.left - m.right);
     const innerH = Math.max(10, h - m.top - m.bottom);
-    const g = svg.append('g').attr('transform', `translate(${m.left},${m.top})`);
+
+    let root = svg.select('g.km-root');
+    const first = root.empty();
+    if (first) {
+      svg.selectAll('*').remove();
+      root = svg.append('g').attr('class', 'km-root');
+      root.append('g').attr('class', 'km-x');
+      root.append('g').attr('class', 'km-y');
+      root.append('g').attr('class', 'km-stems');
+      root.append('path').attr('class', 'km-line');
+      root.append('g').attr('class', 'km-dots');
+    }
+
+    root.attr('transform', `translate(${m.left},${m.top})`);
+
     const x = d3.scaleLinear().domain([0, 8]).range([0, innerW]);
     const y = d3.scaleLinear().domain([-1.5, 2.5]).range([innerH, 0]);
-    const gx = g.append('g').attr('transform', `translate(0,${innerH})`);
-    const gy = g.append('g');
+
+    // Place the x-axis at the minimum y-value (bottom of chart)
+    const axisY = innerH;
+
+    const gx = root.select('g.km-x').attr('transform', `translate(0,${axisY})`);
+    const gy = root.select('g.km-y');
+
     gx.call(d3.axisBottom(x).ticks(9).tickFormat(d3.format('d')).tickSizeOuter(0));
     gy.call(d3.axisLeft(y).ticks(4).tickFormat(d3.format('d')).tickSizeOuter(0));
+
     [gx, gy].forEach(ax => {
       ax.selectAll('.domain').attr('stroke', 'rgba(17,24,39,.20)');
       ax.selectAll('.tick line').attr('stroke', 'rgba(17,24,39,.12)');
-      ax.selectAll('.tick text').attr('fill', 'rgba(17,24,39,.70)').attr('font-family', 'var(--mono)').attr('font-size', 10);
+      ax.selectAll('.tick text')
+        .attr('fill', 'rgba(17,24,39,.70)')
+        .attr('font-family', 'var(--mono)')
+        .attr('font-size', 10);
     });
-    const zeroY = y(0);
-    g.selectAll('line.stem').data(weights.map((w, i) => ({
-      w,
-      i
-    }))).enter().append('line').attr('class', 'stem').attr('x1', d => x(d.i)).attr('x2', d => x(d.i)).attr('y1', zeroY).attr('y2', d => y(d.w)).attr('stroke', 'rgba(17,24,39,.12)').attr('stroke-width', 1);
+
+    const pts = weights.map((w, i) => ({ w, i }));
+
+    const stems = root.select('g.km-stems')
+      .selectAll('line.stem')
+      .data(pts, d => d.i);
+
+    stems.join(
+      enter => enter.append('line')
+        .attr('class', 'stem')
+        .attr('stroke', 'rgba(17,24,39,.12)')
+        .attr('stroke-width', 1)
+        .attr('x1', d => x(d.i))
+        .attr('x2', d => x(d.i))
+        .attr('y1', axisY)
+        .attr('y2', axisY),
+      update => update,
+      exit => exit.remove()
+    ).each(function (d) {
+      const node = this;
+      const attrs = { x1: x(d.i), x2: x(d.i), y1: axisY, y2: y(d.w) };
+      if (animate) {
+        gsap.killTweensOf(node);
+        gsap.to(node, { duration: animDur, ease: animEase, attr: attrs });
+      } else {
+        d3.select(node)
+          .attr('x1', attrs.x1).attr('x2', attrs.x2)
+          .attr('y1', attrs.y1).attr('y2', attrs.y2);
+      }
+    });
+
     const line = d3.line().x((d, i) => x(i)).y(d => y(d));
-    g.append('path').attr('d', line(weights)).attr('fill', 'none').attr('stroke', 'rgba(37,99,235,.85)').attr('stroke-width', 2);
-    g.selectAll('circle.dot').data(weights.map((w, i) => ({
-      w,
-      i
-    }))).enter().append('circle').attr('class', 'dot').attr('cx', d => x(d.i)).attr('cy', d => y(d.w)).attr('r', 4.6).attr('fill', d => d.w === 2 ? 'rgba(16,185,129,.85)' : 'rgba(239,68,68,.70)').attr('stroke', 'rgba(17,24,39,.18)').attr('stroke-width', 1).append('title').text(d => `x=${d.i}, w=${d.w}`);
+    const linePath = root.select('path.km-line')
+      .attr('fill', 'none')
+      .attr('stroke', 'rgba(37,99,235,.85)')
+      .attr('stroke-width', 2);
+    const newD = line(weights);
+    const curD = linePath.attr('d');
+    if (animate && linePath.node() && curD) {
+      const pNode = linePath.node();
+      gsap.killTweensOf(pNode);
+      gsap.to(pNode, { duration: animDur, ease: animEase, attr: { d: newD } });
+    } else {
+      linePath.attr('d', newD);
+    }
+
+    const dots = root.select('g.km-dots')
+      .selectAll('circle.dot')
+      .data(pts, d => d.i);
+
+    const dotsEnter = dots.enter()
+      .append('circle')
+      .attr('class', 'dot')
+      .attr('r', 4.6)
+      .attr('stroke', 'rgba(17,24,39,.18)')
+      .attr('stroke-width', 1)
+      .attr('cx', d => x(d.i))
+      .attr('cy', axisY);
+
+    dotsEnter.append('title');
+
+    const merged = dotsEnter.merge(dots);
+    merged.select('title').text(d => `x=${d.i}, w=${d.w}`);
+
+    merged.call(sel => {
+      const fill = (d) => (Number.isFinite(d.w) && d.w > 0) ? 'rgba(16,185,129,.85)' : 'rgba(239,68,68,.70)';
+      sel.each(function (d) {
+        const node = this;
+        const attrs = { cx: x(d.i), cy: y(d.w), fill: fill(d) };
+        if (animate) {
+          gsap.killTweensOf(node);
+          // Animate both position and fill color.
+          gsap.to(node, { duration: animDur, ease: animEase, attr: attrs });
+        } else {
+          d3.select(node)
+            .attr('cx', attrs.cx)
+            .attr('cy', attrs.cy)
+            .attr('fill', attrs.fill);
+        }
+      });
+    });
+
+    dots.exit().remove();
   }
 
   function renderKernelPreview() {
@@ -999,7 +2052,6 @@
       return;
     }
     const k = getKernel();
-    el.selectedKernelId.textContent = k.id;
     el.selectedKernelDesc.textContent = k.desc;
     drawKernelMini(el.selectedKernelPlot, k.weights);
   }
@@ -1285,6 +2337,60 @@
     state.sInnerH = innerH;
   }
 
+  function renderSeriesWithReferenceMorph(fromReferenceSeries, toReferenceSeries) {
+    const {
+      innerW,
+      innerH
+    } = seriesChart.resize();
+    sOverlay.attr('x', 0).attr('y', 0).attr('width', innerW).attr('height', innerH);
+    if (seriesZoom) {
+      seriesZoom.extent([
+        [0, 0],
+        [innerW, innerH]
+      ]).translateExtent([
+        [0, 0],
+        [innerW, innerH]
+      ]);
+    }
+    sAxes.x.attr('transform', `translate(0,${innerH})`);
+    sAxes.y.attr('transform', 'translate(0,0)');
+    const x = currentXScale(innerW);
+    const drawRef = !!(el.showReference && el.showReference.checked);
+    const yVals = state.series.map(d => d.y);
+    [fromReferenceSeries, toReferenceSeries].forEach(series => {
+      if (!drawRef || !series || !series.length) return;
+      for (const d of series) {
+        if (Number.isFinite(d.y)) yVals.push(d.y);
+      }
+    });
+    const y = d3.scaleLinear().domain(d3.extent(yVals)).nice().range([innerH, 0]);
+    const line = d3.line().x(d => x(d.t)).y(d => y(d.y));
+    sPath.attr('d', line(state.series));
+    if (drawRef && toReferenceSeries && toReferenceSeries.length) {
+      const fromSeries = (fromReferenceSeries && fromReferenceSeries.length) ? fromReferenceSeries : toReferenceSeries;
+      sRefPath.interrupt()
+        .attr('d', line(fromSeries))
+        .attr('opacity', 1)
+        .transition()
+        .duration(320)
+        .ease(d3.easeCubicInOut)
+        .attr('d', line(toReferenceSeries))
+        .attr('opacity', 1);
+    } else {
+      sRefPath.interrupt().attr('d', '').attr('opacity', 0);
+    }
+    sAxes.x.call(d3.axisBottom(x).ticks(6).tickSizeOuter(0));
+    sAxes.y.call(d3.axisLeft(y).ticks(5).tickSizeOuter(0));
+    styleAxes(sG);
+    renderBetaHeatmap(x, innerW);
+    renderFootprintOverlay(x, innerW, innerH);
+    updateTapsAndHandle(x, y, innerW, innerH);
+    state.sX = x;
+    state.sY = y;
+    state.sInnerW = innerW;
+    state.sInnerH = innerH;
+  }
+
   function getTaps() {
     const k = getKernel();
     const weights = (k && k.weights) ? k.weights : Array(9).fill(0);
@@ -1375,17 +2481,28 @@
     };
 
 
+    const doAnim = !!window.ANIMATE_TRANSITIONS && !!state.animateKernelTransitionNext;
+    const tr = doAnim ? d3.transition().duration(320).ease(d3.easeCubicInOut) : null;
+
     const tapLines = sTapsG.selectAll('line.tap').data(taps, d => d.i);
-    tapLines.join(
+    const tapLinesMerged = tapLines.join(
       enter => enter.append('line')
         .attr('class', 'tap')
-        .attr('stroke-width', 2)
-        .attr('stroke', d => d.padded ? __wColor(d.w, 0.5, 0.5, 0.08) : __wColor(d.w, 0.5, 0.5, 0.18)),
+        .attr('stroke-width', 2),
       update => update,
       exit => exit.remove()
     )
-      .attr('x1', d => x(d.t)).attr('x2', d => x(d.t))
-      .attr('y1', d => y(d.y)).attr('y2', innerH);
+      .attr('stroke', d => d.padded ? __wColor(d.w, 0.5, 0.5, 0.08) : __wColor(d.w, 0.5, 0.5, 0.18));
+
+    if (doAnim) {
+      tapLinesMerged.transition(tr)
+        .attr('x1', d => x(d.t)).attr('x2', d => x(d.t))
+        .attr('y1', d => y(d.y)).attr('y2', innerH);
+    } else {
+      tapLinesMerged
+        .attr('x1', d => x(d.t)).attr('x2', d => x(d.t))
+        .attr('y1', d => y(d.y)).attr('y2', innerH);
+    }
 
     const tapCircles = sTapsG.selectAll('circle.tap').data(taps, d => d.i);
     const tapCirclesEnter = tapCircles.enter()
@@ -1393,20 +2510,29 @@
       .attr('class', 'tap')
       .attr('r', 6)
       .attr('stroke-width', 1.25)
-      .style('cursor', 'default');
+      .style('cursor', 'default')
+      .attr('cx', d => x(d.t))
+      .attr('cy', d => y(d.y));
     tapCirclesEnter.append('title');
 
-    tapCirclesEnter.merge(tapCircles)
-      .attr('cx', d => x(d.t))
-      .attr('cy', d => y(d.y))
-      .attr('fill', d => d.padded ? __wColor(d.w, 0.16, 0.14, 0.10) : __wColor(d.w, 0.80, 0.70, 0.45))
-      .attr('stroke', d => d.padded ? __wColor(d.w, 0.24, 0.22, 0.16) : __wColor(d.w, 1.0, 0.95, 0.70))
-      .select('title')
-      .text(d => `tap ${d.i} · w=${d.w}`);
+    const tapCirclesMerged = tapCirclesEnter.merge(tapCircles);
+    tapCirclesMerged.select('title').text(d => `tap ${d.i} · w=${d.w}`);
 
-    tapCircles.exit().remove();
+    if (doAnim) {
+      tapCirclesMerged.transition(tr)
+        .attr('cx', d => x(d.t))
+        .attr('cy', d => y(d.y))
+        .attr('fill', d => d.padded ? __wColor(d.w, 0.16, 0.14, 0.10) : __wColor(d.w, 0.80, 0.70, 0.45))
+        .attr('stroke', d => d.padded ? __wColor(d.w, 0.24, 0.22, 0.16) : __wColor(d.w, 1.0, 0.95, 0.70));
+    } else {
+      tapCirclesMerged
+        .attr('cx', d => x(d.t))
+        .attr('cy', d => y(d.y))
+        .attr('fill', d => d.padded ? __wColor(d.w, 0.16, 0.14, 0.10) : __wColor(d.w, 0.80, 0.70, 0.45))
+        .attr('stroke', d => d.padded ? __wColor(d.w, 0.24, 0.22, 0.16) : __wColor(d.w, 1.0, 0.95, 0.70));
+    }
 
-    // Handle and knob
+    tapCircles.exit().remove();    // Handle and knob
     const n = state.series.length;
     const dt = (n > 1) ? ((state.series[n - 1].t - state.series[0].t) / (n - 1)) : 1;
     const t0 = (n ? state.series[0].t : 0);
@@ -1583,19 +2709,17 @@
       if (state.__convFromFileKey !== key) {
         state.__convFromFileKey = key;
         state.convFromFile = null;
-        state.sigmaFromFile = null;
 
         peLoadConvForFeature(featureIdx)
           .then(pack => {
             if (!pack) return;
             if (state.__convFromFileKey !== key) return;
             state.convFromFile = pack.resp;
-            state.sigmaFromFile = pack.sigma;
             // Re-render once with the loaded file data.
             renderConv();
           })
           .catch(() => { });
-      } else if (state.convFromFile && state.sigmaFromFile) {
+      } else if (state.convFromFile) {
         fromFile = state.convFromFile;
       }
     }
@@ -1767,7 +2891,7 @@
     const x0 = 60;
     const x1 = 170;
     const xDelta = 245;
-    const xBar = 300;
+    const xFirstRect = 300;
 
     const y = d3.scaleLinear().domain([0, 1]).range([H - bottom, top]).clamp(true);
 
@@ -1804,21 +2928,19 @@
     }
     const alphaColor = (alpha != null && Number.isFinite(+alpha)) ? colorScale(alpha) : 'rgba(31,41,55,0.55)';
 
-
     const alphaLabelColor = (alpha != null && Number.isFinite(+alpha) && +alpha > 0)
       ? 'rgb(37,99,235)'
       : (+alpha < 0)
         ? 'rgb(239,68,68)'
         : 'rgba(31,41,55,0.55)';
 
-
-
     const stroke = 'rgba(31,41,55,0.18)';
     const bg = 'rgba(31,41,55,0.06)';
 
     const fmt2 = d3.format('.2f');
     const deltaLabel = fmt2(deltaAbs);
-    const alphaLabel = (alpha != null && Number.isFinite(+alpha)) ? `α=${fmt2(+alpha)}` : null;
+    const alphaLabel = (alpha != null && Number.isFinite(+alpha)) ? `${fmt2(+alpha)}` : null;
+
 
     const g = svg.append('g');
 
@@ -1884,8 +3006,6 @@
       .attr('stroke-dasharray', '4 3')
       .attr('opacity', 0.7);
 
-
-
     // Titles
     g.append('text').attr('x', x0).attr('y', 12).attr('text-anchor', 'middle')
       .attr('font-weight', 600).attr('font-size', 18).attr('fill', 'rgba(31,41,55,.92)')
@@ -1935,13 +3055,28 @@
       .attr('x', x0).attr('y', H + 4)
       .attr('text-anchor', 'middle')
       .attr('font-weight', 600).attr('font-size', 18).attr('fill', 'rgba(31,41,55,.92)')
-      .text(`Pred: ${Number.isFinite(+refPred) ? refPred : '—'}`);
+      .text(`Predicted`);
+
+    g.append('text')
+      .attr('x', x0).attr('y', H + 25)
+      .attr('text-anchor', 'middle')
+      .attr('font-weight', 'bold').attr('font-size', 18).attr('fill', 'rgba(31,41,55,.92)')
+      .text(`${refPred == 1 ? 'Abnormal' : 'Normal'}`);
+
+
+
 
     g.append('text')
       .attr('x', x1).attr('y', H + 4)
       .attr('text-anchor', 'middle')
       .attr('font-weight', 600).attr('font-size', 18).attr('fill', 'rgba(31,41,55,.92)')
-      .text(`Pred: ${Number.isFinite(+instPred) ? instPred : '—'}`);
+      .text(`Predicted`);
+
+    g.append('text')
+      .attr('x', x1).attr('y', H + 25)
+      .attr('text-anchor', 'middle')
+      .attr('font-weight', 'bold').attr('font-size', 18).attr('fill', 'rgba(31,41,55,.92)')
+      .text(`${instPred == 1 ? 'Abnormal' : 'Normal'}`);
 
     // Δ bracket (difference between reference and instance probabilities)
     const yA = y(refP);
@@ -1973,16 +3108,6 @@
       .attr('stroke-width', 3)
       .attr('stroke-linecap', 'round');
 
-    // const arrow = (delta > 0) ? '↑' : (delta < 0) ? '↓' : '→';
-    // g.append('text')
-    //   .attr('x', xDelta + 10).attr('y', yMid + 6)
-    //   .attr('text-anchor', 'start')
-    //   .attr('font-family', cssVar('--mono', 'monospace'))
-    //   .attr('font-weight', 900)
-    //   .attr('font-size', 22)
-    //   .attr('fill', contribColor)
-    //   .text(arrow);
-
     // White background for delta label
     g.append('rect')
       .attr('x', xDelta - 4).attr('y', yMid - 10)
@@ -2000,14 +3125,14 @@
       .text(deltaLabel);
 
     // Embedding contribution bar (|α| relative to |Δ|)
-    const barW = 30;
+    const rectWidth = 30;
     const barH = 150;
     const yBarTop = Math.round(top + (H - bottom - top - barH) / 2);
     const yBarBottom = yBarTop + barH;
 
     // Dotted guide lines: show that the right bar refers to the Δ range
     const xGuide0 = xDelta + tickLen + 4;
-    const xGuide1 = xBar - 2;
+    const xGuide1 = xFirstRect - 2;
     g.append('line')
       .attr('x1', xGuide0).attr('y1', yTop)
       .attr('x2', xGuide1).attr('y2', yBarTop)
@@ -2025,22 +3150,23 @@
       .attr('opacity', 0.7);
 
     g.append('rect')
-      .attr('x', xBar).attr('y', yBarTop)
-      .attr('width', barW).attr('height', barH)
+      .attr('x', xFirstRect)
+      .attr('y', yBarTop)
+      .attr('width', rectWidth).attr('height', barH)
       .attr('fill', bg)
       .attr('stroke', stroke);
 
     // Horizontal line at 0.5 - reference probability within the bar
     const lineY = yBarTop + (barH * (1 - (0.5 - refP) / deltaAbs));
     g.append('line')
-      .attr('x1', xBar).attr('x2', xBar + barW)
+      .attr('x1', xFirstRect).attr('x2', xFirstRect + rectWidth)
       .attr('y1', lineY).attr('y2', lineY)
       .attr('stroke', 'rgba(17,24,39,.40)')
       .attr('stroke-width', 1);
 
     // Label showing the reference probability value (0.5 marker)
     g.append('text')
-      .attr('x', xBar + barW / 2).attr('y', lineY - 4)
+      .attr('x', xFirstRect + rectWidth / 2).attr('y', lineY - 4)
       .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 700)
@@ -2048,10 +3174,9 @@
       .attr('fill', 'rgba(17,24,39,.70)')
       .text(fmtProb01(0.5 - refP));
 
-
     // Arrow showing the decision boundary (class change line)
     g.append('text')
-      .attr('x', xBar + barW + 4).attr('y', lineY + 4)
+      .attr('x', xFirstRect + rectWidth + 4).attr('y', lineY + 4)
       .attr('text-anchor', 'start')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 700)
@@ -2061,7 +3186,7 @@
 
     // Label showing the decision boundary (class change line)
     g.append('text')
-      .attr('x', xBar + barW + 16).attr('y', lineY - 2)
+      .attr('x', xFirstRect + rectWidth + 16).attr('y', lineY - 2)
       .attr('text-anchor', 'start')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 700)
@@ -2070,7 +3195,7 @@
       .text('Class');
 
     g.append('text')
-      .attr('x', xBar + barW + 16).attr('y', lineY + 12)
+      .attr('x', xFirstRect + rectWidth + 16).attr('y', lineY + 12)
       .attr('text-anchor', 'start')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 700)
@@ -2079,7 +3204,7 @@
       .text('flip');
 
     const dlineLenght = 70;
-    const secondDiffX = xBar + barW + dlineLenght;
+    const secondDiffX = xFirstRect + rectWidth + dlineLenght;
 
     // Vertical line connecting the decision boundary to the base of the rectangle
     g.append('line')
@@ -2103,11 +3228,9 @@
       .attr('stroke-width', 3)
       .attr('stroke-linecap', 'round');
 
-
-
     // Horizontal dotted line at the decision boundary (0.5)
     g.append('line')
-      .attr('x1', xBar + barW + 2).attr('x2', xBar + barW + dlineLenght)
+      .attr('x1', xFirstRect + rectWidth + 2).attr('x2', xFirstRect + rectWidth + dlineLenght)
       .attr('y1', lineY).attr('y2', lineY)
       .attr('stroke', 'rgba(17,24,39,.35)')
       .attr('stroke-width', 1)
@@ -2116,28 +3239,24 @@
 
     // Horizontal dotted line at the base of the rectangle
     g.append('line')
-      .attr('x1', xBar + barW + 2).attr('x2', xBar + barW + dlineLenght)
+      .attr('x1', xFirstRect + rectWidth + 2).attr('x2', xFirstRect + rectWidth + dlineLenght)
       .attr('y1', yBarBottom).attr('y2', yBarBottom)
       .attr('stroke', 'rgba(17,24,39,.35)')
       .attr('stroke-width', 1)
       .attr('stroke-dasharray', '4 3')
       .attr('opacity', 0.7);
 
-
-    const startSecondRect = xBar + barW + dlineLenght + 30;
-
-
+    const startSecondRect = xFirstRect + rectWidth + dlineLenght + 30;
 
     g.append('rect')
       .attr('x', startSecondRect).attr('y', yBarTop)
-      .attr('width', barW).attr('height', barH)
+      .attr('width', rectWidth).attr('height', barH)
       .attr('fill', bg)
       .attr('stroke', stroke);
 
-
     // Line connecting the secon difference to the top of the second rectangle
     g.append('line')
-      .attr('x1', xBar + barW + dlineLenght + tickLen / 2).attr('x2', startSecondRect)
+      .attr('x1', xFirstRect + rectWidth + dlineLenght + tickLen / 2).attr('x2', startSecondRect)
       .attr('y1', lineY).attr('y2', yBarTop)
       .attr('stroke', 'rgba(17,24,39,.35)')
       .attr('stroke-width', 1)
@@ -2146,7 +3265,7 @@
 
     // Line connecting the secon difference to the bottom of the second rectangle
     g.append('line')
-      .attr('x1', xBar + barW + dlineLenght + tickLen / 2).attr('x2', startSecondRect)
+      .attr('x1', xFirstRect + rectWidth + dlineLenght + tickLen / 2).attr('x2', startSecondRect)
       .attr('y1', yBarBottom).attr('y2', yBarBottom)
       .attr('stroke', 'rgba(17,24,39,.35)')
       .attr('stroke-width', 1)
@@ -2155,7 +3274,7 @@
 
     // Label at the bottom of the second rect showing the decision boundary value
     g.append('text')
-      .attr('x', startSecondRect + barW / 2).attr('y', yBarBottom + 16)
+      .attr('x', startSecondRect + rectWidth / 2).attr('y', yBarBottom + 16)
       .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 900)
@@ -2164,7 +3283,7 @@
       .text('0');
 
     g.append('text')
-      .attr('x', startSecondRect + barW / 2).attr('y', yBarTop - 10)
+      .attr('x', startSecondRect + rectWidth / 2).attr('y', yBarTop - 10)
       .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 900)
@@ -2172,17 +3291,30 @@
       .attr('fill', contribColor)
       .text(fmtProb01(0.5 - refP));
 
-
     const fillH = barH * ratio;
     const yFill = yBarTop + (barH - fillH);
 
     g.append('rect')
-      .attr('x', xBar).attr('y', yFill)
-      .attr('width', barW).attr('height', fillH)
+      .attr('x', xFirstRect).attr('y', yFill)
+      .attr('width', rectWidth)
+      .attr('height', fillH)
+      .attr('fill', alphaLabelColor);
+
+    const classFlipAbs = Math.abs(0.5 - refP);
+    const classFlipRatio = (classFlipAbs > 1e-12 && alpha != null && Number.isFinite(+alpha))
+      ? clamp(Math.abs(+alpha) / classFlipAbs, 0, 1)
+      : 0;
+    const secondFillH = barH * classFlipRatio;
+    const secondYFill = yBarTop + (barH - secondFillH);
+
+    g.append('rect')
+      .attr('x', startSecondRect).attr('y', secondYFill)
+      .attr('width', rectWidth)
+      .attr('height', secondFillH)
       .attr('fill', alphaLabelColor);
 
     g.append('text')
-      .attr('x', xBar + barW / 2).attr('y', yBarBottom + 16)
+      .attr('x', xFirstRect + rectWidth / 2).attr('y', yBarBottom + 16)
       .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 900)
@@ -2190,7 +3322,7 @@
       .text('0');
 
     g.append('text')
-      .attr('x', xBar + barW / 2).attr('y', yBarTop - 10)
+      .attr('x', xFirstRect + rectWidth / 2).attr('y', yBarTop - 10)
       .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 900)
@@ -2199,7 +3331,7 @@
 
     if (!alphaLabel) {
       g.append('text')
-        .attr('x', xBar + barW / 2).attr('y', yBarTop - 10)
+        .attr('x', xFirstRect + rectWidth / 2).attr('y', yBarTop - 10)
         .attr('text-anchor', 'middle')
         .attr('font-family', cssVar('--mono', 'monospace'))
         .attr('font-weight', 800)
@@ -2213,14 +3345,26 @@
     const yAlpha = clamp(yFill + 4, yBarTop + 10, yBarTop + barH - 6);
 
     g.append('text')
-      .attr('x', xBar + barW + 4).attr('y', yAlpha + 7)
-      .attr('text-anchor', 'start')
+      .attr('x', xFirstRect + rectWidth + (startSecondRect - xFirstRect - rectWidth) / 2)
+      .attr('y', 5)
+      .attr('text-anchor', 'middle')
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-weight', 800)
+      .attr('font-size', 20)
+      .attr('fill', alphaLabelColor)
+      .text("α =");
+
+    g.append('text')
+      .attr('x', xFirstRect + rectWidth + (startSecondRect - xFirstRect - rectWidth) / 2)
+      .attr('y', 25)
+      .attr('text-anchor', 'middle')
       .attr('font-family', cssVar('--mono', 'monospace'))
       .attr('font-weight', 800)
       .attr('font-size', 20)
       .attr('fill', alphaLabelColor)
       .text(alphaLabel);
   }
+
 
 
   function renderInstanceDetails() {
@@ -2374,6 +3518,70 @@
     });
   }
 
+  function initEmbeddingSortControls() {
+    if (!el.embSortKey || !el.embSortDir) return;
+
+    // Initialize from state (so you can later bind a checkbox etc.)
+    el.embSortKey.value = state.featureSortKey || 'index';
+    const dir0 = state.featureSortDir || 'asc';
+    try {
+      el.embSortDir.forEach(r => { r.checked = (r.value === dir0); });
+    } catch (e) { }
+
+    const apply = () => {
+      const key = (el.embSortKey && el.embSortKey.value) ? el.embSortKey.value : 'index';
+      const dirEl = document.querySelector('input[name="embSortDir"]:checked');
+      const dir = dirEl ? dirEl.value : 'asc';
+
+      if (key === state.featureSortKey && dir === state.featureSortDir) return;
+
+      state.featureSortKey = key;
+      state.featureSortDir = dir;
+      invalidateFeatureDisplayOrder();
+
+      state.animateFeatureSortNext = true;
+      renderFeatureCharts();
+    };
+
+    el.embSortKey.addEventListener('change', apply);
+    try {
+      el.embSortDir.forEach(r => r.addEventListener('change', apply));
+    } catch (e) { }
+  }
+
+  function initEmbeddingTabs() {
+    if (!el.embTabs || !el.embTabs.length) return;
+    const activate = (tab) => {
+      const key = tab || 'values';
+      state.activeEmbeddingTab = key;
+      el.embTabs.forEach(btn => {
+        const active = btn.getAttribute('data-emb-tab') === key;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (el.embValuesPanel) el.embValuesPanel.hidden = key !== 'values';
+      if (el.embDiffPanel) el.embDiffPanel.hidden = key !== 'diff';
+      requestAnimationFrame(() => renderFeatureCharts());
+    };
+    el.embTabs.forEach(btn => {
+      btn.addEventListener('click', () => activate(btn.getAttribute('data-emb-tab') || 'values'));
+    });
+    activate(state.activeEmbeddingTab || 'values');
+  }
+
+  function initEmbeddingSeriesControls() {
+    if (el.showReferenceEmbeddings) {
+      el.showReferenceEmbeddings.checked = state.showReferenceEmbeddings === true;
+      el.showReferenceEmbeddings.addEventListener('change', () => {
+        state.showReferenceEmbeddings = !!el.showReferenceEmbeddings.checked;
+        if ((state.activeEmbeddingTab || 'values') === 'values') renderFeatureCharts();
+      });
+    }
+  }
+
+
+
+
 
 
   function setTopBusy(on, text) { }
@@ -2382,7 +3590,24 @@
 
   function clearVisuals() {
     try {
-      d3.select(el.featureOverview).selectAll('*').remove();
+      fEmbedPath.attr('d', '').attr('opacity', 0);
+      fEmbedBarsG.selectAll('*').remove();
+      fHeatG.selectAll('*').remove();
+      fAxes.x.selectAll('*').remove();
+      fAxes.y.selectAll('*').remove();
+      fSep.attr('opacity', 0);
+      fSel.attr('opacity', 0);
+      fHover.attr('opacity', 0);
+    } catch (e) { }
+    try {
+      fdBarsG.selectAll('*').remove();
+      fdGrid.selectAll('*').remove();
+      fdAxes.x.selectAll('*').remove();
+      fdAxes.y.selectAll('*').remove();
+      fdZero.attr('opacity', 0);
+      fdSel.attr('opacity', 0);
+      fdHover.attr('opacity', 0);
+      fdStatus.attr('opacity', 0);
     } catch (e) { }
     try {
       d3.select(el.seriesChart).selectAll('*').remove();
@@ -2392,24 +3617,29 @@
     } catch (e) { }
     if (el.summary) el.summary.textContent = '';
     if (el.seriesInfo) el.seriesInfo.textContent = '';
-    if (el.featureInfo) el.featureInfo.textContent = '';
+    if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
   }
 
   function clearToEmptyState() {
     clearVisuals();
-    if (el.featureInfo) el.featureInfo.textContent = '';
+    if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
     if (el.seriesInfo) el.seriesInfo.textContent = '';
     if (el.summary) el.summary.textContent = '';
     if (el.emptyState) el.emptyState.style.display = 'block';
     document.body.classList.add('noInstance');
+    if (el.peSummaryBtn) el.peSummaryBtn.disabled = true;
     try {
       peState.instanceMeta = null;
       peState.instanceMetaFile = null;
       peState.instanceId = null;
       renderInstanceDetails();
     } catch (e) { }
-    if (el.featureInfo) el.featureInfo.textContent = '';
+    if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
     if (el.seriesInfo) el.seriesInfo.textContent = '';
+    clearBetaVariants();
+    clearReferencePolicySelect('Current reference');
+    retroShowProgress(false);
+    syncRetropropButtonState();
     if (el.status) el.status.textContent = 'No instance loaded';
   }
 
@@ -2505,7 +3735,7 @@
       if (el.peInstance) el.peInstance.value = String(t.instanceId);
       await peEnsureModelCaches(t.cfg);
       await peLoadInstance(t.cfg, t.instanceId);
-      if (el.featureInfo) el.featureInfo.textContent = '';
+      if (el.featureInfo) el.featureInfo.textContent = 'α = — · emb = —';
       if (el.seriesInfo) el.seriesInfo.textContent = '';
       try {
         d3.select(el.convChart).selectAll('*').remove();
@@ -2526,9 +3756,11 @@
 
   const peState = {
     lastRun: null,
+    modelCacheKey: null,
     instanceId: null,
     biases: null,
     dilations: null,
+    kernelMaskCache: new Map(),
     convCache: new Map(),
     lastBetaFile: null,
     fileList: null,
@@ -2538,6 +3770,305 @@
     instanceMeta: null,
     instanceMetaFile: null,
   };
+
+  function clearBetaVariants() {
+    state.betaVariants = new Map();
+    state.activeBetaKey = null;
+    state.betaRaw = [];
+    state.betaStats = null;
+    updateBetaVariantSelect();
+  }
+
+  function getDefaultBetaVariantKey() {
+    return state.betaVariants.has('__beta_default__') ? '__beta_default__' : null;
+  }
+
+  function listBetaVariants() {
+    const items = Array.from((state.betaVariants || new Map()).values());
+    items.sort((a, b) => {
+      if (!!a.isBase !== !!b.isBase) return a.isBase ? -1 : 1;
+      const af = Number.isFinite(+a.featureId) ? +a.featureId : Number.POSITIVE_INFINITY;
+      const bf = Number.isFinite(+b.featureId) ? +b.featureId : Number.POSITIVE_INFINITY;
+      return d3.ascending(af, bf) || String(a.label || '').localeCompare(String(b.label || ''));
+    });
+    return items;
+  }
+
+  function updateBetaVariantSelect(preferredKey) {
+    if (!el.betaFileSelect) return;
+    const variants = listBetaVariants();
+    el.betaFileSelect.innerHTML = '';
+    if (!variants.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Original β';
+      el.betaFileSelect.appendChild(opt);
+      el.betaFileSelect.disabled = true;
+      return;
+    }
+    variants.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.key;
+      opt.textContent = v.label;
+      el.betaFileSelect.appendChild(opt);
+    });
+    const activeKey = preferredKey || state.activeBetaKey || variants[0].key;
+    el.betaFileSelect.value = variants.some(v => v.key === activeKey) ? activeKey : variants[0].key;
+    el.betaFileSelect.disabled = false;
+  }
+
+  async function ensureBetaVariantLoaded(key) {
+    const v = state.betaVariants.get(key);
+    if (!v) return null;
+    if (v.loaded) return v;
+    if (!peState.lastRun || peState.instanceId == null || !v.file) return v;
+    const cfg = peState.lastRun;
+    const url = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${peState.instanceId}/${v.file}`;
+    const text = await peFetchText(url);
+    const raw = parseBetaRowCSV(text);
+    const next = {
+      ...v,
+      loaded: true,
+      raw,
+      stats: computeBetaStats(raw)
+    };
+    state.betaVariants.set(key, next);
+    return next;
+  }
+
+  async function setActiveBetaVariant(key, opts = {}) {
+    const variants = listBetaVariants();
+    if (!variants.length) {
+      state.activeBetaKey = null;
+      state.betaRaw = [];
+      state.betaStats = null;
+      updateBetaVariantSelect();
+      if (!opts.skipRender && state.series.length) renderSeries();
+      return null;
+    }
+    const targetKey = (key && state.betaVariants.has(key)) ? key : variants[0].key;
+    const v = await ensureBetaVariantLoaded(targetKey);
+    state.activeBetaKey = targetKey;
+    state.betaRaw = (v && v.raw) ? v.raw : [];
+    state.betaStats = (v && v.stats) ? v.stats : null;
+    updateBetaVariantSelect(targetKey);
+
+    const shouldSyncFeature = !!(
+      opts && opts.syncFeatureSelection &&
+      state.features && state.features.length &&
+      v && !v.isBase &&
+      Number.isFinite(+v.featureId) &&
+      !(opts && opts.skipFeatureSync) &&
+      !(opts && opts.skipRender)
+    );
+
+    if (shouldSyncFeature) {
+      selectFeature(Math.round(+v.featureId), {
+        silentTooltip: true,
+        focusEmbedding: true,
+        embeddingZoomK: Number.isFinite(+opts.embeddingZoomK) ? +opts.embeddingZoomK : 8
+      });
+      return v;
+    }
+
+    if (!opts.skipRender && state.series.length) renderSeries();
+    return v;
+  }
+
+  function findBetaVariantKeyForFeature(featureIdx) {
+    const f = Number.isFinite(+featureIdx) ? Math.round(+featureIdx) : null;
+    if (!Number.isFinite(f)) return null;
+    const hit = listBetaVariants().find(v => !v.isBase && +v.featureId === f);
+    return hit ? hit.key : null;
+  }
+
+  async function peRefreshBetaVariantsForInstance(cfg, instanceId, opts = {}) {
+    if (!cfg || instanceId == null) {
+      clearBetaVariants();
+      return state.betaVariants;
+    }
+
+    let files = opts.files || null;
+    if (!files) {
+      const entries = await peListEntries(`output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`, 'files');
+      files = entries.map(e => e.name);
+    }
+    peState.fileList = files;
+
+    const prev = new Map(state.betaVariants || []);
+    const next = new Map();
+    const baseFile = opts.baseFile || findBaseBetaFile(files, cfg, instanceId) || null;
+
+    if (baseFile) {
+      const prevBase = prev.get('__beta_default__');
+      next.set('__beta_default__', {
+        ...(prevBase && prevBase.file === baseFile ? prevBase : {}),
+        key: '__beta_default__',
+        isBase: true,
+        file: baseFile,
+        label: betaVariantLabel(baseFile, true),
+        featureId: null,
+        loaded: !!(prevBase && prevBase.file === baseFile && prevBase.loaded)
+      });
+    }
+
+    const backpropFiles = findFeatureBetaFiles(files, cfg, instanceId)
+      .sort((a, b) => {
+        const af = parseFeatureIdFromBetaFilename(a);
+        const bf = parseFeatureIdFromBetaFilename(b);
+        return d3.ascending(af, bf) || String(a).localeCompare(String(b));
+      });
+
+    backpropFiles.forEach(file => {
+      const key = file;
+      const prevV = prev.get(key);
+      next.set(key, {
+        ...(prevV || {}),
+        key,
+        isBase: false,
+        file,
+        label: betaVariantLabel(file, false),
+        featureId: parseFeatureIdFromBetaFilename(file),
+        loaded: !!(prevV && prevV.loaded)
+      });
+    });
+
+    if (opts.baseText != null && baseFile && next.has('__beta_default__')) {
+      const raw = parseBetaRowCSV(opts.baseText);
+      next.set('__beta_default__', {
+        ...next.get('__beta_default__'),
+        loaded: true,
+        raw,
+        stats: computeBetaStats(raw)
+      });
+    }
+
+    state.betaVariants = next;
+    updateBetaVariantSelect(opts.preferredKey || state.activeBetaKey || getDefaultBetaVariantKey());
+    return next;
+  }
+
+  function peArgsFromCfg(cfg) {
+    const c = (cfg && cfg.propagate === 'yes') ? 'yes' : 'no';
+    const tVal = (cfg && Number.isFinite(+cfg.t)) ? parseInt(cfg.t, 10) : NaN;
+    const args = [
+      'predict_and_explain.py',
+      '-M', cfg ? cfg.model : 'LogisticRegression',
+      '-D', cfg ? cfg.dataset : 'abnormal-heartbeat-c1',
+      '-s', String(cfg ? cfg.start : 0),
+      '-e', String(cfg ? cfg.end : 1),
+      '-E', cfg ? cfg.explainer : 'shap',
+      '-L', cfg ? cfg.label : 'predicted',
+      '-r', cfg ? cfg.refPolicy : 'opposite_class_farthest_instance'
+    ];
+    if (c === 'yes') {
+      args.push('-c', 'yes');
+    } else if (Number.isFinite(tVal) && tVal > 0) {
+      args.push('-t', String(tVal));
+    } else {
+      args.push('-c', 'no');
+    }
+    if (cfg && cfg.metric === 'pca-mr') {
+      args.push('-m', 'pca-mr');
+    }
+    return args;
+  }
+
+  function retroSetLog(text) {
+    if (!el.retroProgressLog) return;
+    el.retroProgressLog.textContent = text || '';
+    el.retroProgressLog.scrollTop = el.retroProgressLog.scrollHeight;
+  }
+
+  function retroShowProgress(show, modeText) {
+    if (!el.retroProgressWrap) return;
+    el.retroProgressWrap.hidden = !show;
+    if (!show) return;
+    if (el.retroProgressBar) el.retroProgressBar.classList.add('indeterminate');
+    if (el.retroProgressText) el.retroProgressText.textContent = modeText || 'Running…';
+    if (el.retroProgressPct) el.retroProgressPct.textContent = '…';
+    retroSetLog('');
+  }
+
+  function getRequestedFeatureIdx() {
+    const max = (state.features && state.features.length) ? (state.features.length - 1) : null;
+    const typed = parseInt(el.featureIdx ? el.featureIdx.value : '', 10);
+    let v = Number.isFinite(typed) ? typed : ((state.selectedFeatureIdx != null) ? +state.selectedFeatureIdx : NaN);
+    if (!Number.isFinite(v)) return null;
+    if (max != null) v = clamp(Math.round(v), 0, max);
+    return v;
+  }
+
+  function syncRetropropButtonState() {
+    if (!el.retropropFeatureBtn) return;
+    const featureIdx = getRequestedFeatureIdx();
+    el.retropropFeatureBtn.disabled = !(peState.lastRun && peState.instanceId != null && Number.isFinite(featureIdx));
+  }
+
+  async function retropropagateSelectedFeature() {
+    if (!el.retropropFeatureBtn) return;
+    const featureIdx = getRequestedFeatureIdx();
+    const instanceId = peState.instanceId;
+    const baseCfg = peState.lastRun;
+    if (!baseCfg || instanceId == null || !Number.isFinite(featureIdx)) return;
+
+    if (state.selectedFeatureIdx !== featureIdx) {
+      selectFeature(featureIdx, { silentTooltip: true });
+    }
+
+    const cfg = {
+      ...baseCfg,
+      start: instanceId,
+      end: instanceId + 1
+    };
+    const args = peArgsFromCfg(cfg);
+    args.push('-f', String(featureIdx));
+
+    retroShowProgress(true, `Retropropagating feature #${featureIdx}…`);
+    if (el.retropropFeatureBtn) el.retropropFeatureBtn.disabled = true;
+    retroSetLog(formatCliCommand(args));
+
+    try {
+      const res = await fetch(withApiOrigin('/api/run'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ args })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        const msg = (data && (data.error || data.stderr)) ? (data.error || data.stderr) : `Request failed (${res.status})`;
+        throw new Error(String(msg));
+      }
+
+      const logs = [data.stdout || '', data.stderr || ''].filter(Boolean).join('\n');
+
+      retroSetLog([formatCliCommand(args), logs].filter(Boolean).join('\n\n'));
+
+      await peRefreshBetaVariantsForInstance(cfg, instanceId, {
+        preferredKey: state.activeBetaKey
+      });
+
+      const featureKey = findBetaVariantKeyForFeature(featureIdx);
+      if (!featureKey) {
+        throw new Error(`The run finished, but no backpropagated beta file for feature ${featureIdx} was found.`);
+      }
+
+      await setActiveBetaVariant(featureKey);
+
+      if (el.retroProgressText) el.retroProgressText.textContent = `Loaded Feature #${featureIdx} β`;
+      if (el.retroProgressPct) el.retroProgressPct.textContent = '✓';
+      if (el.retroProgressBar) el.retroProgressBar.classList.remove('indeterminate');
+    } catch (err) {
+      retroSetLog([formatCliCommand(args), String(err)].filter(Boolean).join('\n\n'));
+      if (el.retroProgressText) el.retroProgressText.textContent = 'Failed';
+      if (el.retroProgressPct) el.retroProgressPct.textContent = '×';
+      if (el.retroProgressBar) el.retroProgressBar.classList.remove('indeterminate');
+    } finally {
+      syncRetropropButtonState();
+    }
+  }
 
   function peGetPropagateValue() {
     const sel = document.querySelector('input[name="pePropagate"]:checked');
@@ -2590,34 +4121,27 @@
     const label = el.peLabelSelect ? el.peLabelSelect.value : 'predicted';
     const explainer = el.peExplainer ? el.peExplainer.value : 'shap';
     const refPolicy = el.peRefPolicy ? el.peRefPolicy.value : 'opposite_class_farthest_instance';
-    const start = el.peStartNum ? parseInt(el.peStartNum.value, 10) : 0;
-    const end = el.peEndNum ? parseInt(el.peEndNum.value, 10) : start + 1;
-    const args = ['predict_and_explain.py', '-M', model, '-D', dataset, '-s', String(start), '-e', String(end), '-E', explainer, '-L', label, '-r', refPolicy];
+    const start = el.peStartNum ? parseInt(el.peStartNum.value, 10) : '';
+    const end = el.peEndNum ? parseInt(el.peEndNum.value, 10) : '';
     const c = peGetPropagateValue();
     const tRaw = el.peTopT ? String(el.peTopT.value || '').trim() : '';
     const tVal = tRaw ? parseInt(tRaw, 10) : NaN;
-    if (c === 'yes') {
-      args.push('-c', 'yes');
-    } else {
-      if (Number.isFinite(tVal) && tVal > 0) {
-        args.push('-t', String(tVal));
-      } else {
-        args.push('-c', 'no');
-      }
-    }
+    const metric = (el.peMetricPcaMr && el.peMetricPcaMr.checked) ? 'pca-mr' : 'euclidean';
+    const cfg = {
+      dataset,
+      model,
+      explainer,
+      label,
+      refPolicy,
+      start,
+      end,
+      propagate: c,
+      t: (Number.isFinite(tVal) ? tVal : null),
+      metric
+    };
     return {
-      args,
-      cfg: {
-        dataset,
-        model,
-        explainer,
-        label,
-        refPolicy,
-        start,
-        end,
-        propagate: c,
-        t: (Number.isFinite(tVal) ? tVal : null)
-      }
+      args: peArgsFromCfg(cfg),
+      cfg
     };
   }
 
@@ -2626,66 +4150,109 @@
     const {
       args
     } = peBuildArgs();
-    el.peCmd.textContent = `python3 ${args.map(a => (/[^\w\-\.\/]/.test(a) ? JSON.stringify(a) : a)).join(' ')}`;
+    el.peCmd.textContent = formatCliCommand(args);
+  }
+
+  function peSetLoadGenerateAvailability(hasLoadableInstances, statusText = null) {
+    if (el.peLoadBtn) el.peLoadBtn.disabled = !hasLoadableInstances;
+    if (el.peOpenTabBtn) el.peOpenTabBtn.disabled = !hasLoadableInstances;
+    if (el.peAdvancedBtn) {
+      el.peAdvancedBtn.disabled = false;
+      el.peAdvancedBtn.classList.toggle('attention', !hasLoadableInstances);
+    }
+    if (statusText != null && el.status) el.status.textContent = statusText;
+  }
+
+  function peHasLoadableReferenceArtifacts(files, cfg, instanceId) {
+    if (!cfg || instanceId == null) return false;
+    const safePolicy = String(cfg.refPolicy || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const safeId = String(instanceId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const alphaRx = new RegExp(`^alphas_mr_explanations_ref_policy_${safePolicy}_instance_${safeId}\\.csv$`, 'i');
+    return (files || []).some(f => alphaRx.test(String(f || '')));
+  }
+
+  async function peFilterInstanceIdsByReference(cfg, ids, baseDir) {
+    const checks = await Promise.all((ids || []).map(async id => {
+      try {
+        const folder = `${baseDir}/${id}`;
+        const entries = await peListEntries(folder, 'files');
+        const files = entries.map(e => e.name);
+        return peHasLoadableReferenceArtifacts(files, cfg, id) ? id : null;
+      } catch (e) {
+        return null;
+      }
+    }));
+    return checks.filter(Number.isFinite).sort((a, b) => a - b);
+  }
+
+  function peSetInstanceAvailability(ids, opts = {}) {
+    if (!el.peInstance) return [];
+    const list = (ids || []).filter(Number.isFinite).sort((a, b) => a - b);
+    const preferredInstanceId = Number.isFinite(+opts.preferredInstanceId) ? +opts.preferredInstanceId : null;
+    const noInstancesLabel = opts.noInstancesLabel || '(no instances found for this combination)';
+    const emptyStatusText = opts.emptyStatusText || 'No instances found for the current combination. Use Generate files.';
+
+    el.peInstance.innerHTML = '';
+
+    if (!list.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = noInstancesLabel;
+      el.peInstance.appendChild(opt);
+      el.peInstance.disabled = true;
+      peSetLoadGenerateAvailability(false, emptyStatusText);
+      return list;
+    }
+
+    list.forEach(id => {
+      const opt = document.createElement('option');
+      opt.value = String(id);
+      opt.textContent = String(id);
+      el.peInstance.appendChild(opt);
+    });
+
+    const cur = (preferredInstanceId != null && list.includes(preferredInstanceId))
+      ? preferredInstanceId
+      : ((peState.instanceId != null && list.includes(peState.instanceId)) ? peState.instanceId : list[0]);
+
+    el.peInstance.disabled = false;
+    el.peInstance.value = String(cur);
+    peSetLoadGenerateAvailability(true, `Selected instance ${cur} (click Load)`);
+    return list;
   }
 
   function pePopulateInstanceSelect(start, end) {
-    if (!el.peInstance) return;
-    el.peInstance.innerHTML = '';
-    for (let i = start; i < end; i++) {
-      const opt = document.createElement('option');
-      opt.value = String(i);
-      opt.textContent = String(i);
-      el.peInstance.appendChild(opt);
-    }
-    el.peInstance.disabled = false;
-    if (el.peLoadBtn) el.peLoadBtn.disabled = false;
-    if (el.peOpenTabBtn) el.peOpenTabBtn.disabled = false;
+    const ids = [];
+    for (let i = start; i < end; i++) ids.push(i);
+    peSetInstanceAvailability(ids, { preferredInstanceId: start });
   }
   async function peRefreshAvailableInstances(cfg) {
-    if (!el.peInstance) return;
+    if (!el.peInstance) return [];
     const baseDir = `output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}`;
     try {
       const entries = await peListEntries(baseDir, 'dirs');
       const ids = entries.map(e => e.name).filter(n => /^\d+$/.test(n)).map(n => parseInt(n, 10)).filter(Number.isFinite).sort((a, b) => a - b);
-      el.peInstance.innerHTML = '';
-      if (ids.length === 0) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = '(no instances found)';
-        el.peInstance.appendChild(opt);
-        el.peInstance.disabled = true;
-        if (el.peLoadBtn) el.peLoadBtn.disabled = true;
-        if (el.peOpenTabBtn) el.peOpenTabBtn.disabled = true;
-        return;
-      }
-      ids.forEach(id => {
-        const opt = document.createElement('option');
-        opt.value = String(id);
-        opt.textContent = String(id);
-        el.peInstance.appendChild(opt);
+      const loadableIds = ids.length ? await peFilterInstanceIdsByReference(cfg, ids, baseDir) : [];
+      peSetInstanceAvailability(loadableIds, {
+        preferredInstanceId: peState.instanceId,
+        noInstancesLabel: ids.length ? '(no files found for this reference policy)' : '(no instances found for this combination)',
+        emptyStatusText: ids.length
+          ? 'No files found for the selected reference policy. Use Generate files.'
+          : 'No instances found for the current combination. Use Generate files.'
       });
-      el.peInstance.disabled = false;
-      if (el.peLoadBtn) el.peLoadBtn.disabled = false;
-      if (el.peOpenTabBtn) el.peOpenTabBtn.disabled = false;
-      const cur = peState.instanceId;
-      const pick = (cur != null && ids.includes(cur)) ? cur : ids[0];
-      el.peInstance.value = String(pick);
       forceHideTopBusy();
+      return loadableIds;
     } catch (e) {
       console.error('[peRefreshAvailableInstances] failed', {
         baseDir,
         error: e
       });
-      el.peInstance.innerHTML = '';
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '(no output folder yet)';
       forceHideTopBusy();
-      el.peInstance.appendChild(opt);
-      el.peInstance.disabled = true;
-      if (el.peLoadBtn) el.peLoadBtn.disabled = true;
-      if (el.peOpenTabBtn) el.peOpenTabBtn.disabled = true;
+      peSetInstanceAvailability([], {
+        noInstancesLabel: '(no output folder yet for this combination)',
+        emptyStatusText: 'No output folder yet for this combination. Use Generate files.'
+      });
+      return [];
     }
   }
   async function peFetchText(url) {
@@ -2752,42 +4319,94 @@
     } catch (e) { }
   }
   async function peEnsureModelCaches(cfg) {
-    if (peState.biases && peState.dilations && peState.lastRun && peState.lastRun.dataset === cfg.dataset && peState.lastRun.model === cfg.model) {
+    const cacheKey = `${cfg.dataset}|${cfg.model}`;
+    if (peState.biases && peState.dilations && peState.modelCacheKey === cacheKey) {
       return;
     }
     try {
       const [bText, dText] = await Promise.all([peFetchText(`/output/${cfg.dataset}/${cfg.model}/biases.csv`), peFetchText(`/output/${cfg.dataset}/${cfg.model}/dilations.csv`)]);
-      const bRows = d3.csvParseRows(bText);
-      const dRows = d3.csvParseRows(dText);
-      peState.biases = (bRows[0] ? bRows[0].slice(1).map(x => +x) : null);
-      peState.dilations = (dRows[0] ? dRows[0].slice(1).map(x => +x) : null);
+      peState.biases = parseIndexValueMapCSV(bText);
+      peState.dilations = parseIndexValueMapCSV(dText);
+      peState.modelCacheKey = cacheKey;
     } catch (e) {
       console.warn('Could not load biases/dilations:', e);
       peState.biases = null;
       peState.dilations = null;
+      peState.modelCacheKey = null;
     }
   }
-  async function peLoadInstance(cfg, instanceId) {
+
+  function peBiasForFeature(fidx) {
+    if (peState.biases && peState.biases.has(fidx)) return +peState.biases.get(fidx);
+    return 0;
+  }
+
+  function peDilationForFeature(fidx) {
+    if (peState.dilations && peState.dilations.has(fidx)) {
+      const v = +peState.dilations.get(fidx);
+      return Number.isFinite(v) ? Math.max(1, Math.round(v)) : 1;
+    }
+    return 1;
+  }
+
+  async function peLoadKernelMaskForFeature(featureIdx) {
+    if (!peState.lastRun) return null;
+    const cfg = peState.lastRun;
+    const cacheKey = `${cfg.dataset}|${cfg.model}|${featureIdx}`;
+    if (peState.kernelMaskCache && peState.kernelMaskCache.has(cacheKey)) return peState.kernelMaskCache.get(cacheKey);
+
+    const url = `/output/${cfg.dataset}/${cfg.model}/base_mask_feature_${featureIdx}.csv`;
+    try {
+      const text = await peFetchText(url);
+      const weights = parseKernelMaskCSV(text, 9);
+      const pos2 = [];
+      for (let i = 0; i < weights.length; i++) if (weights[i] === 2) pos2.push(i);
+      const desc = (pos2.length === 3) ? describeKernel(pos2) : 'Custom mask';
+      const pack = { weights, pos2, desc };
+      if (peState.kernelMaskCache) peState.kernelMaskCache.set(cacheKey, pack);
+      return pack;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function kernelIdFromWeights(weights) {
+    if (!weights || !weights.length) return null;
+    for (const k of (state.kernels || [])) {
+      if (!k || !k.weights || k.weights.length !== weights.length) continue;
+      let ok = true;
+      for (let i = 0; i < weights.length; i++) {
+        if (+k.weights[i] !== +weights[i]) { ok = false; break; }
+      }
+      if (ok) return k.id;
+    }
+    return null;
+  }
+
+
+  async function peLoadInstance(cfg, instanceId, opts = {}) {
     peState.instanceId = instanceId;
+    retroShowProgress(false);
     peState.convCache.clear();
     peState.instanceMeta = null;
     peState.instanceMetaFile = null;
     state.convFromFile = null;
-    state.sigmaFromFile = null;
     const folder = `output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
     const entries = await peListEntries(folder, 'files');
     const files = entries.map(e => e.name);
     peState.fileList = files;
-    peState.availableConvFeatures = new Set(files.filter(f => f.startsWith('convolved_instance_') && f.includes('_feature_') && f.endsWith('.csv')).map(f => {
+    updateReferencePolicySelect(files, instanceId, cfg.refPolicy);
+    peState.availableConvFeatures = new Set(files.filter(f => /^convolved_instance_\d+_feature_\d+\.csv$/i.test(String(f || ''))).map(f => {
       const m = f.match(/\_feature\_(\d+)\.csv$/);
       return m ? parseInt(m[1], 10) : null;
     }).filter(Number.isFinite));
     const betasPrefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
-    const betasFile = files.find(f => f.startsWith(betasPrefix) && f.endsWith('.csv'));
+    const betasFile = findBaseBetaFile(files, cfg, instanceId);
     const instanceFile = `instance_${instanceId}.csv`;
     const refFile = `reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
     const alphasFile = `alphas_mr_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}.csv`;
     const mrExact = `mr_instance_${instanceId}.csv`;
+    const mrRefExact = `mr_reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
     const mrCandidates = (files || []).filter(f => {
       const fl = String(f || '').toLowerCase();
       if (fl === mrExact.toLowerCase()) return true;
@@ -2797,11 +4416,20 @@
       return false;
     }).sort((a, b) => (a.length - b.length) || String(a).localeCompare(String(b)));
     const mrFile = mrCandidates.length ? mrCandidates[0] : null;
+    const mrRefCandidates = (files || []).filter(f => {
+      const fl = String(f || '').toLowerCase();
+      if (fl === mrRefExact.toLowerCase()) return true;
+      if (fl.startsWith(`mr_reference_ref_policy_${String(cfg.refPolicy).toLowerCase()}_`) && fl.endsWith(`for_instance_${instanceId}.csv`)) return true;
+      if (fl.startsWith('mr_reference_') && fl.includes(`for_instance_${instanceId}.csv`)) return true;
+      return false;
+    }).sort((a, b) => (a.length - b.length) || String(a).localeCompare(String(b)));
+    const mrRefFile = mrRefCandidates.length ? mrRefCandidates[0] : null;
     const seriesUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${instanceFile}`;
     const refUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${refFile}`;
     const alphaUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${alphasFile}`;
     const betaUrl = betasFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${betasFile}` : null;
     const mrUrl = mrFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrFile}` : null;
+    const mrRefUrl = mrRefFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrRefFile}` : null;
 
     // Optional per-instance metadata file: metadata_ref_policy_<policy>_instance_<id>.json
     const metaJsonExact = `metadata_ref_policy_${cfg.refPolicy}_instance_${instanceId}.json`;
@@ -2826,22 +4454,30 @@
       console.log('series:', toLink(seriesUrl));
       console.log('alphas:', toLink(alphaUrl));
       console.log('embeddings:', mrUrl ? toLink(mrUrl) : '(missing)');
+      console.log('reference embeddings:', mrRefUrl ? toLink(mrRefUrl) : '(missing)');
       console.log('reference:', toLink(refUrl));
       console.log('betas:', betaUrl ? toLink(betaUrl) : '(missing)');
-      console.log('feature_meta:', toLink('data/feature_meta_instance_22.csv'));
       console.groupEnd();
     } catch (e) { }
 
     const featureSvg = document.getElementById('featureOverview');
     const seriesSvg = document.getElementById('seriesChart');
     const convSvg = document.getElementById('convChart');
-    await Promise.all([peFade(featureSvg, 0, 0.12), peFade(seriesSvg, 0, 0.12), peFade(convSvg, 0, 0.12)]);
+    const morphReference = !!(opts && opts.referenceMorphFrom && el.showReference && el.showReference.checked);
+    await Promise.all([
+      peFade(featureSvg, 0, 0.12),
+      morphReference ? Promise.resolve() : peFade(seriesSvg, 0, 0.12),
+      peFade(convSvg, 0, 0.12)
+    ]);
     const metaJsonPromise = metaJsonUrl ? peFetchJSON(metaJsonUrl).catch(() => null) : Promise.resolve(null);
-    const [seriesText, alphaText, metaText, mrText, instMetaJson] = await Promise.all([
+    const [seriesText, alphaText, mrText, mrRefText, instMetaJson] = await Promise.all([
       peFetchText(seriesUrl),
       peFetchText(alphaUrl),
-      fetchFirst(["data/feature_meta_instance_22.csv"]),
       mrUrl ? peFetchText(mrUrl) : Promise.resolve(''),
+      mrRefUrl ? peFetchText(mrRefUrl).catch(err => {
+        console.warn('Could not load reference embeddings:', err);
+        return '';
+      }) : Promise.resolve(''),
       metaJsonPromise
     ]);
     let refText = null;
@@ -2858,12 +4494,24 @@
         console.warn('Could not load betas:', e);
       }
     }
-    const meta = parseFeatureMetaCSV(metaText);
+
+    // console.log('metaText:', metaText);
+    // console.log('meta:', meta);
+
+
     const alphaMap = parseAlphaCSV(alphaText);
     const embMap = parseEmbeddingCSV(mrText);
+    const refEmbMap = parseEmbeddingCSV(mrRefText);
+    state.referenceEmbeddingMap = refEmbMap;
+    state.referenceEmbeddingFile = mrRefFile || null;
     if (mrUrl && embMap.size === 0) {
       console.warn('mr_instance file loaded but produced 0 values. Check CSV format:', mrUrl);
     }
+    if (mrRefUrl && refEmbMap.size === 0) {
+      console.warn('reference embedding file loaded but produced 0 values. Check CSV format:', mrRefUrl);
+    }
+
+    const meta = buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap);
 
     // Store & render per-instance metadata (if present)
     if (instMetaJson && typeof instMetaJson === 'object') {
@@ -2873,38 +4521,180 @@
       peState.instanceMeta = null;
       peState.instanceMetaFile = metaJsonFile || null;
     }
-    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap));
+
+    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap, refEmbMap));
+    if (opts && opts.resetFeatureSelection) resetFeatureSelectionUI();
+
     renderInstanceDetails();
     await peFade(featureSvg, 1, 0.18);
     setSeries(parseSeriesRowCSV(seriesText), {
       deferRender: true
     });
-    if (refText) {
+    const nextReferenceSeries = refText ? parseSeriesRowCSV(refText) : null;
+    if (nextReferenceSeries) {
       state.referenceSeriesMap = new Map();
-      state.referenceSeriesMap.set(cfg.refPolicy, parseSeriesRowCSV(refText));
+      state.referenceSeriesMap.set(cfg.refPolicy, nextReferenceSeries);
       state.referenceSeries = state.referenceSeriesMap.get(cfg.refPolicy);
     } else {
       state.referenceSeriesMap = new Map();
       state.referenceSeries = null;
     }
-    if (betaText) {
-      state.betaRaw = parseBetaRowCSV(betaText);
-      state.betaStats = computeBetaStats(state.betaRaw);
-      peState.lastBetaFile = betasFile;
+    clearBetaVariants();
+    peState.lastBetaFile = betasFile || null;
+    await peRefreshBetaVariantsForInstance(cfg, instanceId, {
+      files,
+      baseFile: peState.lastBetaFile,
+      baseText: betaText || null
+    });
+    if (getDefaultBetaVariantKey()) {
+      await setActiveBetaVariant(getDefaultBetaVariantKey(), { skipRender: true });
     } else {
       state.betaRaw = [];
       state.betaStats = null;
-      peState.lastBetaFile = null;
+      updateBetaVariantSelect();
     }
     renderConv();
-    renderSeries();
+    if (morphReference && nextReferenceSeries && Array.isArray(opts.referenceMorphFrom) && opts.referenceMorphFrom.length) {
+      renderSeriesWithReferenceMorph(opts.referenceMorphFrom, nextReferenceSeries);
+    } else {
+      renderSeries();
+    }
     renderSummary();
-    await peFade(seriesSvg, 1, 0.18);
+    if (!morphReference) await peFade(seriesSvg, 1, 0.18);
     await peFade(convSvg, 1, 0.18);
+    syncActiveTabToCurrentLoad(cfg, instanceId);
     renderKernelList();
     renderKernelPreview();
+    syncRetropropButtonState();
     console.log(`Loaded output: ${cfg.dataset} · ${cfg.model} · ${cfg.explainer} · ${cfg.label} · instance ${instanceId}`);
   }
+  function currentEmbeddingMap() {
+    const map = new Map();
+    (state.features || []).forEach(d => {
+      const fidx = +d.fidx;
+      const emb = +d.embedding;
+      if (Number.isFinite(fidx) && Number.isFinite(emb)) map.set(fidx, emb);
+    });
+    return map;
+  }
+
+  function findMetadataFileForPolicy(files, cfg, instanceId) {
+    const exact = `metadata_ref_policy_${cfg.refPolicy}_instance_${instanceId}.json`;
+    const exactLower = exact.toLowerCase();
+    const policyLower = String(cfg.refPolicy || '').toLowerCase();
+    return (files || []).find(f => String(f).toLowerCase() === exactLower)
+      || (files || []).find(f => String(f).toLowerCase().startsWith(`metadata_ref_policy_${policyLower}_instance_`) && String(f).toLowerCase().endsWith(`${instanceId}.json`))
+      || null;
+  }
+
+  async function peReloadReferenceForCurrentInstance(nextCfg, opts = {}) {
+    const instanceId = peState.instanceId;
+    if (!nextCfg || instanceId == null) return;
+
+    const folder = `output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
+    const files = peState.fileList || (await peListEntries(folder, 'files')).map(e => e.name);
+    peState.fileList = files;
+    updateReferencePolicySelect(files, instanceId, nextCfg.refPolicy);
+
+    const base = `/output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
+    const refFile = `reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
+    const alphasFile = `alphas_mr_explanations_ref_policy_${nextCfg.refPolicy}_instance_${instanceId}.csv`;
+    const mrRefExact = `mr_reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
+    const mrRefFile = (files || []).find(f => String(f).toLowerCase() === mrRefExact.toLowerCase())
+      || (files || []).find(f => {
+        const fl = String(f || '').toLowerCase();
+        return fl.startsWith(`mr_reference_ref_policy_${String(nextCfg.refPolicy).toLowerCase()}_`) && fl.endsWith(`for_instance_${instanceId}.csv`);
+      })
+      || (files || []).find(f => {
+        const fl = String(f || '').toLowerCase();
+        return fl.startsWith('mr_reference_') && fl.includes(`for_instance_${instanceId}.csv`);
+      })
+      || null;
+    const metaJsonFile = findMetadataFileForPolicy(files, nextCfg, instanceId);
+    const betasFile = findBaseBetaFile(files, nextCfg, instanceId);
+
+    const [alphaText, refText, mrRefText, instMetaJson, betaText] = await Promise.all([
+      peFetchText(`${base}/${alphasFile}`),
+      peFetchText(`${base}/${refFile}`).catch(err => {
+        console.warn('No reference file:', err);
+        return null;
+      }),
+      mrRefFile ? peFetchText(`${base}/${mrRefFile}`).catch(err => {
+        console.warn('Could not load reference embeddings:', err);
+        return '';
+      }) : Promise.resolve(''),
+      metaJsonFile ? peFetchJSON(`${base}/${metaJsonFile}`).catch(() => null) : Promise.resolve(null),
+      betasFile ? peFetchText(`${base}/${betasFile}`).catch(err => {
+        console.warn('Could not load betas:', err);
+        return null;
+      }) : Promise.resolve(null)
+    ]);
+
+    const prevSelected = state.selectedFeatureIdx;
+    const prevActiveBeta = state.activeBetaKey;
+    const prevActiveBetaFeature = (() => {
+      const v = prevActiveBeta && state.betaVariants ? state.betaVariants.get(prevActiveBeta) : null;
+      return v && Number.isFinite(+v.featureId) ? Math.round(+v.featureId) : null;
+    })();
+
+    const alphaMap = parseAlphaCSV(alphaText);
+    const embMap = currentEmbeddingMap();
+    const refEmbMap = parseEmbeddingCSV(mrRefText);
+    state.referenceEmbeddingMap = refEmbMap;
+    state.referenceEmbeddingFile = mrRefFile || null;
+    const meta = buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap);
+    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap, refEmbMap), {
+      preserveSelection: true
+    });
+
+    if (instMetaJson && typeof instMetaJson === 'object') {
+      peState.instanceMeta = instMetaJson;
+      peState.instanceMetaFile = metaJsonFile || null;
+    } else {
+      peState.instanceMeta = null;
+      peState.instanceMetaFile = metaJsonFile || null;
+    }
+
+    const nextReferenceSeries = refText ? parseSeriesRowCSV(refText) : null;
+    if (!state.referenceSeriesMap) state.referenceSeriesMap = new Map();
+    if (nextReferenceSeries) {
+      state.referenceSeriesMap.set(nextCfg.refPolicy, nextReferenceSeries);
+      state.referenceSeries = nextReferenceSeries;
+    } else {
+      state.referenceSeries = null;
+    }
+
+    peState.lastBetaFile = betasFile || null;
+    await peRefreshBetaVariantsForInstance(nextCfg, instanceId, {
+      files,
+      baseFile: peState.lastBetaFile,
+      baseText: betaText
+    });
+    const nextBetaKey = Number.isFinite(prevActiveBetaFeature)
+      ? findBetaVariantKeyForFeature(prevActiveBetaFeature)
+      : (state.betaVariants.has(prevActiveBeta) ? prevActiveBeta : getDefaultBetaVariantKey());
+    await setActiveBetaVariant(nextBetaKey || getDefaultBetaVariantKey(), {
+      skipRender: true
+    });
+
+    if (Number.isFinite(+prevSelected) && featureByIdx(+prevSelected)) {
+      state.selectedFeatureIdx = Math.round(+prevSelected);
+      if (el.featureIdx) el.featureIdx.value = String(state.selectedFeatureIdx);
+      updateFeatureHeaderWithReference(featureByIdx(state.selectedFeatureIdx));
+    }
+    renderInstanceDetails();
+    renderFeatureCharts();
+    focusSelectedFeatureAfterReferenceSwitch();
+    if (opts.referenceMorphFrom && nextReferenceSeries && el.showReference && el.showReference.checked) {
+      renderSeriesWithReferenceMorph(opts.referenceMorphFrom, nextReferenceSeries);
+    } else {
+      renderSeries();
+    }
+    renderSummary();
+    syncActiveTabToCurrentLoad(nextCfg, instanceId);
+    syncRetropropButtonState();
+  }
+
   async function peLoadConvForFeature(featureIdx) {
     if (!peState.lastRun || peState.instanceId == null) return null;
     if (peState.availableConvFeatures && !peState.availableConvFeatures.has(featureIdx)) return null;
@@ -2914,7 +4704,6 @@
     if (peState.convCache.has(key)) return peState.convCache.get(key);
     const base = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
     const convUrl = `${base}/convolved_instance_${instanceId}_feature_${featureIdx}.csv`;
-    const sigmaUrl = `${base}/convolved_instance_after_sigma_instance_${instanceId}_feature_${featureIdx}.csv`;
     try {
       try {
         const toLink = (u) => {
@@ -2927,34 +4716,24 @@
           }
         };
         console.log(`[peLoadConvForFeature] rendering files · instance ${instanceId} · feature ${featureIdx}`, {
-          convUrl: toLink(convUrl),
-          sigmaUrl: toLink(sigmaUrl)
+          convUrl: toLink(convUrl)
         });
       } catch (e) { }
     } catch (e) { }
     try {
       setTopBusy(true, 'Loading convolution…');
-      let __cText, __sText;
+      let __cText;
       try {
-        const [cText, sText] = await Promise.all([peFetchText(convUrl), peFetchText(sigmaUrl)]);
-        __cText = cText;
-        __sText = sText;
+        __cText = await peFetchText(convUrl);
       } finally {
         setTopBusy(false, '');
       }
-      const cText = __cText,
-        sText = __sText;
-      const resp = parseIndexValueCSV(cText, 1).map(d => ({
-        t: d.t,
-        v: d.v
-      }));
-      const sigma = parseIndexValueCSV(sText, 1).map(d => ({
+      const resp = parseIndexValueCSV(__cText, 1).map(d => ({
         t: d.t,
         v: d.v
       }));
       const pack = {
-        resp,
-        sigma
+        resp
       };
       peState.convCache.set(key, pack);
       return pack;
@@ -2964,7 +4743,11 @@
   }
   async function peRun() {
     if (!el.peRunBtn) return;
-    peNormalizeStartEnd();
+
+    if (el.peStartNum && el.peEndNum && el.peStartNum.value && el.peEndNum.value) {
+      peNormalizeStartEnd();
+    }
+
     peUpdateCmdPreview();
     const built = peBuildArgs();
     const args = built.args;
@@ -3026,6 +4809,31 @@
     await activateTab(tabId);
   }
 
+  async function switchLoadedReferencePolicy(nextPolicy) {
+    const policy = String(nextPolicy || '').trim();
+    if (!policy || !peState.lastRun || peState.instanceId == null) return;
+    const currentPolicy = String(peState.lastRun.refPolicy || '').trim();
+    if (policy === currentPolicy) return;
+    const prevReference = Array.isArray(state.referenceSeries) ? state.referenceSeries.map(d => ({ ...d })) : null;
+    const nextCfg = {
+      ...peState.lastRun,
+      refPolicy: policy
+    };
+    peState.lastRun = nextCfg;
+    if (el.peRefPolicy && Array.from(el.peRefPolicy.options || []).some(opt => String(opt.value) === policy)) {
+      el.peRefPolicy.value = policy;
+    }
+    setTopBusy(true, 'Switching reference…');
+    try {
+      await peEnsureModelCaches(nextCfg);
+      await peReloadReferenceForCurrentInstance(nextCfg, {
+        referenceMorphFrom: (el.showReference && el.showReference.checked) ? prevReference : null
+      });
+    } finally {
+      setTopBusy(false, '');
+    }
+  }
+
   function peCopy() {
     if (!el.peCmd) return;
     const text = el.peCmd.textContent || '';
@@ -3036,7 +4844,11 @@
   function peInitUI() {
     if (!el.peRunBtn) return;
     if (!el.peStartNum || !el.peEndNum) return;
-    peNormalizeStartEnd();
+
+    if (el.peStartNum && el.peEndNum && el.peStartNum.value && el.peEndNum.value) {
+      peNormalizeStartEnd();
+    }
+
     peUpdateTEnable();
     peUpdateCmdPreview();
     peDiscoverOutputOptions().then(() => {
@@ -3063,6 +4875,7 @@
       });
     });
     if (el.peTopT) el.peTopT.addEventListener('input', peUpdateCmdPreview);
+    if (el.peMetricPcaMr) el.peMetricPcaMr.addEventListener('change', peUpdateCmdPreview);
     if (el.peRunBtn) el.peRunBtn.addEventListener('click', peRun);
     if (el.peCopyBtn) el.peCopyBtn.addEventListener('click', peCopy);
     if (el.peLoadBtn) el.peLoadBtn.addEventListener('click', () => peLoadSelectedInstance(false));
@@ -3117,9 +4930,11 @@
 
   function renderSeriesAndConv() {
     if (state.series.length === 0) return;
+    const __animKernel = state.animateKernelTransitionNext;
     renderConv();
     renderSeries();
     renderSummary();
+    if (__animKernel) state.animateKernelTransitionNext = false;
   }
 
   function startSweep() {
@@ -3233,8 +5048,38 @@
       selectFeature(v);
     };
     el.goFeature.addEventListener('click', go);
+    el.featureIdx.addEventListener('input', syncRetropropButtonState);
     el.featureIdx.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') go();
+    });
+  }
+  if (el.betaFileSelect) {
+    el.betaFileSelect.addEventListener('change', () => {
+      const key = el.betaFileSelect.value;
+      setActiveBetaVariant(key, {
+        syncFeatureSelection: true,
+        embeddingZoomK: 8
+      }).catch(err => {
+        console.warn('Could not switch beta file:', err);
+      });
+    });
+  }
+  if (el.referencePolicySelect) {
+    el.referencePolicySelect.addEventListener('change', () => {
+      switchLoadedReferencePolicy(el.referencePolicySelect.value).catch(err => {
+        console.warn('Could not switch reference policy:', err);
+      });
+    });
+  }
+  if (el.retropropFeatureBtn) {
+    el.retropropFeatureBtn.addEventListener('click', () => {
+      retropropagateSelectedFeature().catch(err => {
+        retroSetLog(String(err));
+        if (el.retroProgressText) el.retroProgressText.textContent = 'Failed';
+        if (el.retroProgressPct) el.retroProgressPct.textContent = '×';
+        if (el.retroProgressBar) el.retroProgressBar.classList.remove('indeterminate');
+        syncRetropropButtonState();
+      });
     });
   }
 
@@ -3248,13 +5093,1736 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
+  // --- Generate new instance files popover --------------------------------------
+  const advancedUI = { open: false };
+
+  function positionAdvancedPopover() {
+    if (!el.peAdvancedPopover || !el.peAdvancedBtn) return;
+    try {
+      const btnR = el.peAdvancedBtn.getBoundingClientRect();
+      const pop = el.peAdvancedPopover;
+      const headerH = document.querySelector('header')?.offsetHeight || 0;
+
+      // If the popover is still hidden, width/height can be 0; ensure it's measurable.
+      const w = pop.offsetWidth || 420;
+      const h = pop.offsetHeight || 260;
+
+      let left = btnR.left;
+      let top = btnR.bottom + 8;
+
+      left = clamp(left, 8, Math.max(8, window.innerWidth - w - 8));
+      top = clamp(top, headerH + 6, Math.max(headerH + 6, window.innerHeight - h - 8));
+
+      pop.style.left = `${left}px`;
+      pop.style.top = `${top}px`;
+    } catch (e) { }
+  }
+
+  function openAdvancedPopover() {
+    if (!el.peAdvancedPopover || !el.peAdvancedBtn) return;
+    el.peAdvancedPopover.hidden = false;
+    advancedUI.open = true;
+    el.peAdvancedBtn.setAttribute('aria-expanded', 'true');
+    positionAdvancedPopover();
+  }
+
+  function closeAdvancedPopover() {
+    if (!el.peAdvancedPopover || !el.peAdvancedBtn) return;
+    el.peAdvancedPopover.hidden = true;
+    advancedUI.open = false;
+    el.peAdvancedBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleAdvancedPopover() {
+    advancedUI.open ? closeAdvancedPopover() : openAdvancedPopover();
+  }
+
+  function initAdvancedPopover() {
+    if (!el.peAdvancedBtn || !el.peAdvancedPopover) return;
+
+    // Safety: always start closed.
+    el.peAdvancedPopover.hidden = true;
+    advancedUI.open = false;
+    el.peAdvancedBtn.setAttribute('aria-expanded', 'false');
+
+    el.peAdvancedBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleAdvancedPopover();
+    });
+
+    if (el.peAdvancedCloseBtn) {
+      el.peAdvancedCloseBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        closeAdvancedPopover();
+      });
+    }
+
+    // Close on outside click
+    document.addEventListener('mousedown', (ev) => {
+      if (!advancedUI.open) return;
+      const t = ev.target;
+      if (el.peAdvancedPopover.contains(t) || el.peAdvancedBtn.contains(t)) return;
+      closeAdvancedPopover();
+    });
+
+    window.addEventListener('resize', () => {
+      if (advancedUI.open) positionAdvancedPopover();
+    });
+
+    // Escape always closes this popover (even when no instance is loaded)
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && advancedUI.open) closeAdvancedPopover();
+    });
+  }
+
+
+
+
+  // --- Summary modal (Top embeddings) ---------------------------------------------
+  const summaryUI = {
+    open: false,
+    dragging: false,
+    dragOffX: 0,
+    dragOffY: 0,
+    selectedFidx: null,
+    requestScrollToKernel: false,
+    refreshToken: 0,
+
+    // Feature-matrix sorting inside the Summary modal
+    sortKey: 'attribution',   // 'feature' | 'attribution' | 'threshold' | 'dilation'
+    sortDir: 'desc',       // 'asc' | 'desc'
+    lastPickedRows: null,
+    lastMaxAbsAlpha: 1
+  };
+
+  function cfgSig(cfg) {
+    if (!cfg) return '';
+    return `${cfg.dataset}|${cfg.model}|${cfg.explainer}|${cfg.label}|${cfg.refPolicy}`;
+  }
+
+  function getCurrentCfgForSummary() {
+    try {
+      const built = peBuildArgs();
+      return built ? built.cfg : (peState ? peState.lastRun : null);
+    } catch (e) {
+      return (peState ? peState.lastRun : null);
+    }
+  }
+
+  function modalSetStatus(text) {
+    if (el.peSummaryStatus) el.peSummaryStatus.textContent = text || '—';
+  }
+
+  function modalSetSubtitle(text) {
+    if (el.peSummarySubtitle) el.peSummarySubtitle.textContent = text || '—';
+  }
+
+  function updateSummaryScopeControlsVisibility(scope) {
+    if (el.peSummaryRangeControls) el.peSummaryRangeControls.style.display = (scope === 'range') ? 'block' : 'none';
+    if (el.peSummaryListControls) el.peSummaryListControls.style.display = (scope === 'list') ? 'block' : 'none';
+  }
+
+  function summaryScopeFromUI() {
+    const v = el.peSummaryScopeSelect ? String(el.peSummaryScopeSelect.value || '') : '';
+    return v || 'active';
+  }
+
+  function normalizeInt(v, fb = 0) {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : fb;
+  }
+
+  function mean(arr) {
+    if (!arr || !arr.length) return NaN;
+    let s = 0, k = 0;
+    for (const x of arr) {
+      if (!Number.isFinite(x)) continue;
+      s += x; k += 1;
+    }
+    return k ? (s / k) : NaN;
+  }
+
+
+  function fmtSci(x) {
+    if (x == null || !Number.isFinite(x)) return '—';
+    const ax = Math.abs(x);
+    // Scientific notation for very small / very large values (useful for thresholds)
+    if (ax > 0 && ax < 1e-4) return x.toExponential(2);
+    if (ax >= 1e5) return x.toExponential(2);
+    // Otherwise, keep a compact fixed format
+    if (ax >= 1000) return x.toFixed(0);
+    if (ax >= 10) return x.toFixed(2);
+    if (ax >= 1) return x.toFixed(3);
+    if (ax >= 0.01) return x.toFixed(5);
+    return x.toFixed(8);
+  }
+
+  function activeAlphaMap() {
+    const m = new Map();
+    (state.features || []).forEach(d => {
+      const f = +d.fidx;
+      const a = +d.alpha;
+      if (Number.isFinite(f) && Number.isFinite(a)) m.set(f, a);
+    });
+    return m;
+  }
+
+  async function loadAlphaMapForInstance(cfg, instanceId) {
+    if (!cfg || instanceId == null) return null;
+    const sig = cfgSig(cfg);
+    const key = `${sig}|${instanceId}`;
+    if (state.summaryCache && state.summaryCache.alphaMapCache && state.summaryCache.alphaMapCache.has(key)) {
+      return state.summaryCache.alphaMapCache.get(key);
+    }
+    const file = `alphas_mr_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}.csv`;
+    const url = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${file}`;
+    const text = await peFetchText(url);
+    const map = parseAlphaCSV(text);
+    if (state.summaryCache && state.summaryCache.alphaMapCache) state.summaryCache.alphaMapCache.set(key, map);
+    return map;
+  }
+
+  function parseInstanceListSpec(spec) {
+    const s0 = (spec == null) ? '' : String(spec);
+    const s = s0.replace(/\s+/g, '').trim();
+    if (!s) return [];
+    const parts = s.split(',').map(x => x.trim()).filter(Boolean);
+    const out = new Set();
+    parts.forEach(tok => {
+      const m1 = tok.match(/^(\d+)$/);
+      if (m1) { out.add(parseInt(m1[1], 10)); return; }
+      const m2 = tok.match(/^(\d+)[\-–](\d+)$/);
+      if (m2) {
+        let a = parseInt(m2[1], 10), b = parseInt(m2[2], 10);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+        if (b < a) [a, b] = [b, a];
+        for (let i = a; i <= b; i++) out.add(i);
+      }
+    });
+    return Array.from(out).filter(Number.isFinite).sort((a, b) => a - b);
+  }
+
+  function findClassFlipFile(files, instanceId) {
+    if (!files || instanceId == null) return null;
+    const id = String(instanceId);
+    const reId = new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`);
+    const candidates = (files || []).filter(f => {
+      const s = String(f || '');
+      if (!/selected[_-]?features/i.test(s)) return false;
+      if (!/top/i.test(s)) return false;
+      if (!/\.csv$/i.test(s)) return false;
+      return reId.test(s);
+    }).sort((a, b) => (a.length - b.length) || String(a).localeCompare(String(b)));
+    for (const f of candidates) {
+      const m = String(f).match(/top[_-]?(\d+)/i);
+      const topN = m ? parseInt(m[1], 10) : NaN;
+      return { file: f, topN: Number.isFinite(topN) ? topN : null };
+    }
+    return null;
+  }
+
+  function parseSelectedFeaturesCSV(text) {
+    const rows = d3.csvParseRows(text || '');
+    const ids = [];
+    rows.forEach(r => {
+      if (!r || r.length < 2) return;
+      const v = parseInt(String(r[1]).trim(), 10);
+      if (Number.isFinite(v)) ids.push(v);
+    });
+    return ids;
+  }
+
+  async function ensureClassFlipFeatureIds(cfg, instanceId) {
+    if (!cfg || instanceId == null) return null;
+    const sig = cfgSig(cfg);
+    const key = `${sig}|${instanceId}`;
+
+    if (state.summaryCache.classFlipKey === key &&
+      state.summaryCache.classFlipFeatureIds &&
+      state.summaryCache.classFlipTopN) {
+      return {
+        file: state.summaryCache.classFlipFile,
+        topN: state.summaryCache.classFlipTopN,
+        featureIds: state.summaryCache.classFlipFeatureIds
+      };
+    }
+
+    const info = findClassFlipFile(peState ? peState.fileList : null, instanceId);
+    if (!info || !info.file || !info.topN) return null;
+
+    const url = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${info.file}`;
+    const text = await peFetchText(url);
+    const ids = Array.from(new Set(parseSelectedFeaturesCSV(text).filter(Number.isFinite)));
+
+    state.summaryCache.classFlipKey = key;
+    state.summaryCache.classFlipFile = info.file;
+    state.summaryCache.classFlipTopN = info.topN;
+    state.summaryCache.classFlipFeatureIds = ids;
+
+    return { file: info.file, topN: info.topN, featureIds: ids };
+  }
+
+  function updateSummaryScopeSelectOptions() {
+    const sel = el.peSummaryScopeSelect;
+    if (!sel) return;
+
+    const activeId = (peState && peState.instanceId != null) ? peState.instanceId : null;
+
+    const optActive = sel.querySelector('option[value="active"]');
+    if (optActive) optActive.textContent = `active instance (${activeId != null ? activeId : '—'})`;
+
+    const optClass = sel.querySelector('option[value="classflip"]');
+    const info = findClassFlipFile(peState ? peState.fileList : null, activeId);
+
+    if (optClass) {
+      if (info && info.topN) {
+        optClass.disabled = false;
+        optClass.textContent = `ClassFlip (Top${info.topN})`;
+      } else {
+        optClass.disabled = true;
+        optClass.textContent = 'ClassFlip (Top—)';
+      }
+    }
+
+    if (sel.value === 'classflip' && optClass && optClass.disabled) sel.value = 'active';
+  }
+
+  async function loadAlphaMapsForIds(cfg, ids) {
+    const sig = cfgSig(cfg);
+    const uniq = Array.from(new Set((ids || []).filter(Number.isFinite))).sort((a, b) => a - b);
+    const base = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}`;
+    const refPolicy = cfg.refPolicy;
+
+    const limit = 6;
+    let done = 0;
+    const alphaMaps = [];
+    const errors = [];
+
+    async function worker(id) {
+      const file = `alphas_mr_explanations_ref_policy_${refPolicy}_instance_${id}.csv`;
+      const url = `${base}/${id}/${file}`;
+      try {
+        const text = await peFetchText(url);
+        const m = parseAlphaCSV(text);
+        alphaMaps.push({ id, map: m });
+        const key = `${sig}|${id}`;
+        if (state.summaryCache && state.summaryCache.alphaMapCache) state.summaryCache.alphaMapCache.set(key, m);
+      } catch (e) {
+        errors.push({ id, error: String(e) });
+      } finally {
+        done += 1;
+        modalSetStatus(`Loading α… ${done}/${uniq.length}`);
+      }
+    }
+
+    modalSetStatus(uniq.length ? `Loading α for ${uniq.length} instance(s)…` : 'No instance ids.');
+
+    const queue = uniq.slice();
+    const runners = new Array(Math.min(limit, queue.length)).fill(0).map(async () => {
+      while (queue.length) await worker(queue.shift());
+    });
+    await Promise.all(runners);
+
+    return { sig, ids: uniq, alphaMaps, errors };
+  }
+
+  function kernelIdForFeature(fidx) {
+    const meta = featureByFidx(fidx);
+    if (!meta) return 'K?';
+    if (meta.kernel_id) return String(meta.kernel_id);
+    if (meta.kernel_index != null && Number.isFinite(+meta.kernel_index)) return `K${String(+meta.kernel_index).padStart(2, '0')}`;
+    return 'K?';
+  }
+
+  function kernelDescForId(kernelId) {
+    const kObj = (state.kernels || []).find(k => k && k.id === kernelId);
+    return kObj ? (kObj.desc || '') : '';
+  }
+
+  function weightsForKernelId(kernelId) {
+    const kObj = (state.kernels || []).find(k => k && k.id === kernelId);
+    return kObj ? kObj.weights : Array(9).fill(0);
+  }
+
+  function computeModeDilation(rows) {
+    const counts = new Map();
+    rows.forEach(r => {
+      const d = +r.dilation;
+      if (!Number.isFinite(d)) return;
+      counts.set(d, (counts.get(d) || 0) + 1);
+    });
+    let bestD = 1;
+    let bestC = -1;
+    counts.forEach((c, d) => {
+      if (c > bestC || (c === bestC && d < bestD)) {
+        bestC = c; bestD = d;
+      }
+    });
+    return bestD;
+  }
+
+  function alphaFill(alpha, maxAbs) {
+    const v = +alpha;
+    const ma = Math.max(1e-9, +maxAbs || 1e-9);
+    const t = Math.min(1, Math.abs(v) / ma);
+    const a = 0.08 + 0.75 * t;
+    if (v > 0) return `rgba(37,99,235,${a})`;
+    if (v < 0) return `rgba(239,68,68,${a})`;
+    return `rgba(17,24,39,${0.08})`;
+  }
+
+  function barFillByCount(count, maxCount) {
+    const c = +count;
+    const m = Math.max(1, +maxCount || 1);
+    const t = Math.min(1, c / m);
+    const a = 0.10 + 0.75 * t;
+    return `rgba(37,99,235,${a})`;
+  }
+
+  function sortSummaryRows(rows) {
+    const key = summaryUI.sortKey || 'feature';
+    const dir = summaryUI.sortDir || 'asc';
+    const arr = (rows || []).slice();
+
+    const val = (r) => {
+      if (!r) return null;
+      if (key === 'feature') return +r.fidx;
+      if (key === 'attribution') return +r.meanAbs; // absolute magnitude
+      if (key === 'threshold') return +r.bias;
+      if (key === 'dilation') return +r.dilation;
+      return +r.fidx;
+    };
+
+    arr.sort((a, b) => {
+      const va = val(a);
+      const vb = val(b);
+      const aBad = (va == null || !Number.isFinite(va));
+      const bBad = (vb == null || !Number.isFinite(vb));
+      if (aBad && bBad) return d3.ascending(+a.fidx, +b.fidx);
+      if (aBad) return 1;
+      if (bBad) return -1;
+      const cmp = d3.ascending(va, vb) || d3.ascending(+a.fidx, +b.fidx);
+      return cmp;
+    });
+
+    if (dir === 'desc') arr.reverse();
+    return arr;
+  }
+
+  function setSummarySort(key) {
+    if (!key) return;
+    if (summaryUI.sortKey === key) {
+      summaryUI.sortDir = (summaryUI.sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+      summaryUI.sortKey = key;
+      summaryUI.sortDir = (key === 'feature') ? 'asc' : 'desc';
+    }
+
+    const st = el.peSummaryMatrixWrap ? el.peSummaryMatrixWrap.scrollTop : 0;
+    const rows = summaryUI.lastPickedRows ? summaryUI.lastPickedRows.slice() : [];
+    const maxAbs = Number.isFinite(+summaryUI.lastMaxAbsAlpha) ? +summaryUI.lastMaxAbsAlpha : 1;
+    renderSummaryMatrix(sortSummaryRows(rows), maxAbs);
+    if (el.peSummaryMatrixWrap) el.peSummaryMatrixWrap.scrollTop = st;
+  }
+
+
+  function scrollKernelPanelToCenter(kernelId) {
+    if (!kernelId || !el.peSummaryKernelStrip) return;
+    const host = el.peSummaryKernelStrip;
+    const rows = host.querySelectorAll('.krow');
+    let target = null;
+    rows.forEach(r => {
+      if (target) return;
+      const kid = r.dataset ? r.dataset.kernelId : null;
+      if (kid === kernelId) target = r;
+    });
+    if (!target) return;
+
+    const hostRect = host.getBoundingClientRect();
+    const tarRect = target.getBoundingClientRect();
+    const curTop = host.scrollTop;
+    const offsetTop = (tarRect.top - hostRect.top) + curTop;
+    const desired = offsetTop - (host.clientHeight / 2) + (target.clientHeight / 2);
+    const nextTop = clamp(desired, 0, Math.max(0, host.scrollHeight - host.clientHeight));
+
+    try { host.scrollTo({ top: nextTop, behavior: 'smooth' }); }
+    catch (_) { host.scrollTop = nextTop; }
+  }
+
+  function clearSummarySelection() {
+    summaryUI.selectedFidx = null;
+    summaryUI.requestScrollToKernel = false;
+    applySummaryHighlights();
+  }
+
+  function applySummaryHighlights() {
+    const fidx = summaryUI.selectedFidx;
+
+    // Matrix rows
+    if (el.peSummaryMatrixSvg) {
+      const sel = d3.select(el.peSummaryMatrixSvg).selectAll('g.matrixRow');
+      sel.classed('dim', d => (fidx != null && +d.fidx !== +fidx))
+        .classed('active', d => (fidx != null && +d.fidx === +fidx));
+    }
+
+    // Kernel rows
+    let selKernel = null;
+    if (fidx != null) selKernel = kernelIdForFeature(fidx);
+
+    if (el.peSummaryKernelStrip) {
+      const rows = el.peSummaryKernelStrip.querySelectorAll('.krow');
+      rows.forEach(r => {
+        const kid = r.dataset ? r.dataset.kernelId : null;
+        const isHit = (selKernel != null && kid === selKernel);
+        r.classList.toggle('active', !!isHit);
+        r.classList.toggle('dim', (selKernel != null && !isHit));
+      });
+    }
+
+    if (summaryUI.requestScrollToKernel && selKernel) {
+      summaryUI.requestScrollToKernel = false;
+      scrollKernelPanelToCenter(selKernel);
+    }
+  }
+
+  function drawKernelMiniShared(svgNode, weights, dilation, showDilated, sharedXMax) {
+    if (!svgNode) return;
+    const svg = d3.select(svgNode);
+    svg.selectAll('*').remove();
+
+    const W = 240;
+    const H = 96;
+    svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+    const m = { left: 16, right: 10, top: 8, bottom: 22 };
+    const innerW = W - m.left - m.right;
+    const innerH = H - m.top - m.bottom;
+
+    const g = svg.append('g').attr('transform', `translate(${m.left},${m.top})`);
+
+    const kLen = (weights && weights.length) ? weights.length : 9;
+    const d = Math.max(1, Math.round(+dilation || 1));
+    const xMax = showDilated ? Math.max(1, +sharedXMax || (kLen - 1) * d) : (kLen - 1);
+    const x = d3.scaleLinear().domain([0, xMax]).range([0, innerW]);
+    const y = d3.scaleLinear().domain([-1.5, 2.5]).range([innerH, 0]);
+
+    const axisY = innerH;
+
+    // Axes (min/max + a couple of reference ticks)
+    // X axis: 0 .. xMax
+    g.append('line')
+      .attr('x1', 0).attr('x2', innerW)
+      .attr('y1', axisY).attr('y2', axisY)
+      .attr('stroke', 'rgba(17,24,39,.20)');
+
+    const xTickVals = (() => {
+      const numTicks = showDilated ? 5 : 9;
+      const out = [];
+      const step = Math.max(1, Math.floor(xMax / (numTicks - 1)));
+      for (let i = 0; i <= xMax; i += step) {
+        out.push(i);
+      }
+      if (out[out.length - 1] !== xMax) {
+        out.push(xMax);
+      }
+      return out;
+    })();
+
+    g.selectAll('line.xTick').data(xTickVals).enter().append('line')
+      .attr('class', 'xTick')
+      .attr('x1', v => x(v)).attr('x2', v => x(v))
+      .attr('y1', axisY).attr('y2', axisY + 4)
+      .attr('stroke', 'rgba(17,24,39,.22)');
+
+    g.selectAll('text.xTickLab').data(xTickVals).enter().append('text')
+      .attr('class', 'xTickLab')
+      .attr('x', v => x(v))
+      .attr('y', axisY + 14)
+      .attr('text-anchor', v => (v === 0 ? 'start' : (v === xMax ? 'end' : 'middle')))
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 8.5)
+      .attr('fill', 'rgba(17,24,39,.55)')
+      .text(v => String(v));
+
+    // Y reference ticks (-1, 0, 2)
+    const yTickVals = [-1, 0, 2];
+    g.selectAll('line.yTick').data(yTickVals).enter().append('line')
+      .attr('class', 'yTick')
+      .attr('x1', -4).attr('x2', 0)
+      .attr('y1', v => y(v)).attr('y2', v => y(v))
+      .attr('stroke', 'rgba(17,24,39,.22)');
+
+    g.selectAll('text.yTickLab').data(yTickVals).enter().append('text')
+      .attr('class', 'yTickLab')
+      .attr('x', -6)
+      .attr('y', v => y(v) + 3)
+      .attr('text-anchor', 'end')
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 8.5)
+      .attr('fill', 'rgba(17,24,39,.55)')
+      .text(v => String(v));
+
+    const pts = (weights || []).map((w, i) => ({ w: +w, i, x: showDilated ? (i * d) : i }));
+
+    g.selectAll('line.stem').data(pts).enter().append('line')
+      .attr('class', 'stem')
+      .attr('x1', p => x(p.x)).attr('x2', p => x(p.x))
+      .attr('y1', axisY).attr('y2', p => y(p.w))
+      .attr('stroke', 'rgba(17,24,39,.12)')
+      .attr('stroke-width', 1);
+
+    const line = d3.line().x(p => x(p.x)).y(p => y(p.w));
+    g.append('path')
+      .attr('fill', 'none')
+      .attr('stroke', 'rgba(37,99,235,.85)')
+      .attr('stroke-width', 2)
+      .attr('d', line(pts));
+
+    g.selectAll('circle.dot').data(pts).enter().append('circle')
+      .attr('class', 'dot')
+      .attr('cx', p => x(p.x))
+      .attr('cy', p => y(p.w))
+      .attr('r', 4.0)
+      .attr('fill', p => (p.w > 0 ? 'rgba(16,185,129,.85)' : 'rgba(239,68,68,.70)'))
+      .attr('stroke', 'rgba(17,24,39,.18)')
+      .attr('stroke-width', 1);
+  }
+
+  function renderSummaryMatrix(rows, maxAbsAlpha) {
+    const svgEl = el.peSummaryMatrixSvg;
+    if (!svgEl) return;
+    const svg = d3.select(svgEl);
+    svg.selectAll('*').remove();
+
+    const wrapW = el.peSummaryMatrixWrap ? el.peSummaryMatrixWrap.clientWidth : 860;
+
+    const col = {
+      idW: 40, // feature id width
+      alphaW: 320, // attribution width
+      thrW: 320,
+      dW: 160,
+      gap: 62 // space between columns
+    };
+    const m = { left: 10, right: 10, top: 10, bottom: 10 };
+    const W = Math.max(860, Math.min(1040, wrapW || 900));
+    const innerW = W - m.left - m.right;
+
+    const x0 = 0;
+    const xId = x0;
+    const xA = xId + col.idW + col.gap;
+    const xThr = xA + col.alphaW + col.gap;
+    const xD = xThr + col.thrW + col.gap;
+    const usable = xD + col.dW;
+
+    const rowH = 22;
+    const headerH = 26;
+    const H = m.top + m.bottom + headerH + rowH * (rows ? rows.length : 0) + 10;
+
+    svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+    const g = svg.append('g').attr('transform', `translate(${m.left},${m.top})`);
+
+    const toggleSelect = (fidx) => {
+      const f = +fidx;
+      if (!Number.isFinite(f)) return;
+
+      if (summaryUI.selectedFidx != null && +summaryUI.selectedFidx === f) {
+        clearSummarySelection();
+        return;
+      }
+      summaryUI.selectedFidx = f;
+      summaryUI.requestScrollToKernel = true;
+      applySummaryHighlights();
+    };
+
+    // background click clears selection
+    g.append('rect')
+      .attr('x', 0).attr('y', 0)
+      .attr('width', innerW).attr('height', H)
+      .attr('fill', 'transparent')
+      .style('pointer-events', 'all')
+      .on('click', () => { clearSummarySelection(); });
+
+    const thrVals = (rows || []).map(r => +r.bias).filter(Number.isFinite);
+    let thrExtent = d3.extent(thrVals);
+    if (!thrExtent[0] && thrExtent[0] !== 0) thrExtent = [-1, 1];
+    if (thrExtent[0] === thrExtent[1]) {
+      const v = thrExtent[0];
+      thrExtent = [v - 1, v + 1];
+    }
+    const maxAbsThr = Math.max(Math.abs(thrExtent[0]), Math.abs(thrExtent[1]), 1e-6);
+
+    const dilVals = (rows || []).map(r => +r.dilation).filter(Number.isFinite);
+    const maxDil = Math.max(1, d3.max(dilVals) || 1);
+
+    const alphaBuffer = 40;
+    const xAlpha = d3.scaleLinear().domain([-maxAbsAlpha, maxAbsAlpha]).range([xA, xA + col.alphaW - alphaBuffer]).nice();
+
+    const thrBuffer = 40;
+    const xThrScale = d3.scaleLinear().domain([-maxAbsThr, maxAbsThr]).range([xThr, xThr + col.thrW - thrBuffer]).nice();
+
+    const dilBuffer = 40;
+    const xDil = d3.scaleLinear().domain([0, maxDil]).range([xD, xD + col.dW - dilBuffer]).nice();
+
+    // headers (click to sort asc/desc)
+    const header = g.append('g').attr('transform', `translate(0,0)`);
+    const hStyle = (sel) => sel
+      .attr('font-family', cssVar('--sans', 'sans-serif'))
+      .attr('font-size', 11)
+      .attr('font-weight', 900)
+      .attr('fill', 'rgba(17,24,39,.72)');
+
+    const arrowFor = (key) => {
+      if (summaryUI.sortKey !== key) return '';
+      return (summaryUI.sortDir === 'asc') ? ' ▲' : ' ▼';
+    };
+
+    function headerCell(x, w, label, key) {
+      const hg = header.append('g')
+        .attr('transform', `translate(${x},0)`)
+        .style('cursor', 'pointer')
+        .on('click', (ev) => {
+          ev.stopPropagation();
+          setSummarySort(key);
+        });
+
+      hg.append('rect')
+        .attr('x', 0).attr('y', 0)
+        .attr('width', w).attr('height', headerH)
+        .attr('fill', 'transparent');
+
+      hStyle(hg.append('text')
+        .attr('x', w / 2)
+        .attr('y', 16)
+        .attr('text-anchor', 'middle')
+        .text(label + arrowFor(key)));
+    }
+
+    headerCell(xId, col.idW, 'Feature #', 'feature');
+    headerCell(xA, col.alphaW - alphaBuffer, 'Attribution', 'attribution');
+    headerCell(xThr, col.thrW - thrBuffer, 'Threshold', 'threshold');
+    headerCell(xD, col.dW - dilBuffer, 'Dilation', 'dilation');
+
+    // Mini x-axes (show min/max for each column)
+    const axG = g.append('g').attr('class', 'matrixMiniAxes');
+    const axY = headerH - 3;
+
+    // Draw a mini axis with ticks and min/max labels
+    function drawMiniAxis(scale, xStart, w, tickVals, labelMin, labelMax) {
+      // baseline
+      axG.append('line')
+        .attr('x1', xStart).attr('x2', xStart + w)
+        .attr('y1', axY).attr('y2', axY)
+        .attr('stroke', 'rgba(17,24,39,.14)');
+
+      // ticks
+      (tickVals || []).forEach(v => {
+        const px = scale(v);
+        axG.append('line')
+          .attr('x1', px).attr('x2', px)
+          .attr('y1', axY - 2).attr('y2', axY + 2)
+          .attr('stroke', 'rgba(17,24,39,.16)');
+      });
+
+      // min/max labels
+      axG.append('text')
+        .attr('x', xStart)
+        .attr('y', axY - 5)
+        .attr('text-anchor', 'middle')
+        .attr('font-family', cssVar('--mono', 'monospace'))
+        .attr('font-size', 9)
+        .attr('fill', 'rgba(17,24,39,.55)')
+        .text(labelMin);
+
+      axG.append('text')
+        .attr('x', xStart + w)
+        .attr('y', axY - 5)
+        .attr('text-anchor', 'middle')
+        .attr('font-family', cssVar('--mono', 'monospace'))
+        .attr('font-size', 9)
+        .attr('fill', 'rgba(17,24,39,.55)')
+        .text(labelMax);
+    }
+
+    const aDom = xAlpha.domain();
+    const tDom = xThrScale.domain();
+    const dDom = xDil.domain();
+
+    drawMiniAxis(
+      xAlpha,
+      xA,
+      col.alphaW - alphaBuffer,
+      [aDom[0], 0, aDom[1]],
+      d3.format('.3f')(fmtSci(aDom[0])),
+      d3.format('.3f')(fmtSci(aDom[1]))
+    );
+
+    drawMiniAxis(
+      xThrScale,
+      xThr,
+      col.thrW - thrBuffer,
+      [tDom[0], 0, tDom[1]],
+      d3.format('.3f')(fmtSci(tDom[0])),
+      d3.format('.3f')(fmtSci(tDom[1]))
+    );
+
+    drawMiniAxis(
+      xDil,
+      xD,
+      col.dW - dilBuffer,
+      [dDom[0], (dDom[0] + dDom[1]) / 2, dDom[1]],
+      dDom[0].toFixed(0),
+      dDom[1].toFixed(0)
+    );
+
+
+    // axis zero lines for alpha + thr
+    g.append('line').attr('x1', xAlpha(0)).attr('x2', xAlpha(0)).attr('y1', headerH).attr('y2', H)
+      .attr('stroke', 'rgba(17,24,39,.16)');
+    g.append('line').attr('x1', xThrScale(0)).attr('x2', xThrScale(0)).attr('y1', headerH).attr('y2', H)
+      .attr('stroke', 'rgba(17,24,39,.12)');
+
+    const rowsG = g.append('g').attr('transform', `translate(0,${headerH})`);
+
+    const rowSel = rowsG.selectAll('g.matrixRow')
+      .data(rows || [], d => d.fidx)
+      .enter().append('g')
+      .attr('class', 'matrixRow')
+      .attr('transform', (d, i) => `translate(0,${i * rowH})`);
+
+    // Clicking outside bars (row background) clears selection
+    rowSel.append('rect')
+      .attr('class', 'rowBg')
+      .attr('x', 0).attr('y', 0)
+      .attr('width', Math.max(innerW, usable + 6)).attr('height', rowH - 2)
+      .attr('rx', 6).attr('ry', 6)
+      .attr('fill', 'transparent')
+      .style('pointer-events', 'all')
+      .style('cursor', 'default')
+      .on('click', (ev) => {
+        ev.stopPropagation();
+        clearSummarySelection();
+      });
+
+    // Feature id label (click toggles selection)
+    rowSel.append('text')
+      .attr('x', xId)
+      .attr('y', 15)
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 14)
+      .attr('fill', 'rgba(17,24,39,.78)')
+      .style('cursor', 'pointer')
+      .text(d => `${d.fidx}`)
+      .on('click', (ev, d) => {
+        ev.stopPropagation();
+        toggleSelect(d.fidx);
+      });
+
+    // Attribution bars (click toggles selection)
+    rowSel.append('rect')
+      .attr('class', 'aBar')
+      .attr('x', d => (d.meanAlpha >= 0 ? xAlpha(0) : xAlpha(d.meanAlpha)))
+      .attr('y', 4)
+      .attr('height', rowH - 10)
+      .attr('width', d => Math.max(1, Math.abs(xAlpha(d.meanAlpha) - xAlpha(0))))
+      .attr('fill', d => alphaFill(d.meanAlpha, maxAbsAlpha))
+      .attr('stroke', 'rgba(17,24,39,.10)')
+      .style('cursor', 'pointer')
+      .on('click', (ev, d) => {
+        ev.stopPropagation();
+        toggleSelect(d.fidx);
+      });
+
+    // Attribution value labels
+    rowSel.append('text')
+      .attr('class', 'aVal')
+      .attr('y', 15)
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 12)
+      .attr('fill', 'rgba(17,24,39,.55)')
+      .style('pointer-events', 'none')
+      .attr('text-anchor', d => {
+        const end = xAlpha(+d.meanAlpha);
+        if (+d.meanAlpha >= 0) return (end > (xA + col.alphaW - 24)) ? 'end' : 'start';
+        return (end < (xA + 24)) ? 'start' : 'end';
+      })
+      .attr('x', d => {
+        const v = +d.meanAlpha;
+        const end = xAlpha(v);
+        const pad = 4;
+        if (v >= 0) return Math.min(end + pad, xA + col.alphaW - 2);
+        return Math.max(end - pad, xA + 2);
+      })
+      .text(d => fmtSci(+d.meanAlpha));
+
+    // Threshold bars (click toggles selection)
+    rowSel.append('rect')
+      .attr('class', 'thrBar')
+      .attr('x', d => (d.bias >= 0 ? xThrScale(0) : xThrScale(d.bias)))
+      .attr('y', 4)
+      .attr('height', rowH - 10)
+      .attr('width', d => Math.max(1, Math.abs(xThrScale(d.bias) - xThrScale(0))))
+      .attr('fill', d => {
+        const ma = maxAbsThr;
+        const t = Math.min(1, Math.abs(+d.bias) / ma);
+        const a = 0.08 + 0.70 * t;
+        return `rgba(245,158,11,${a})`;
+      })
+      .attr('stroke', 'rgba(17,24,39,.10)')
+      .style('cursor', 'pointer')
+      .on('click', (ev, d) => {
+        ev.stopPropagation();
+        toggleSelect(d.fidx);
+      });
+
+    // Threshold value labels
+    rowSel.append('text')
+      .attr('class', 'thrVal')
+      .attr('y', 15)
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 12)
+      .attr('fill', 'rgba(17,24,39,.55)')
+      .style('pointer-events', 'none')
+      .attr('text-anchor', d => {
+        const end = xThrScale(+d.bias);
+        if (+d.bias >= 0) return (end > (xThr + col.thrW - 24)) ? 'end' : 'start';
+        return (end < (xThr + 24)) ? 'start' : 'end';
+      })
+      .attr('x', d => {
+        const v = +d.bias;
+        const end = xThrScale(v);
+        const pad = 4;
+        if (v >= 0) return Math.min(end + pad, xThr + col.thrW - 2);
+        return Math.max(end - pad, xThr + 2);
+      })
+      .text(d => fmtSci(+d.bias));
+
+    // Dilation bars (click toggles selection)
+    rowSel.append('rect')
+      .attr('class', 'dilBar')
+      .attr('x', xDil(0))
+      .attr('y', 4)
+      .attr('height', rowH - 10)
+      .attr('width', d => Math.max(1, xDil(+d.dilation) - xDil(0)))
+      .attr('fill', d => {
+        const t = Math.min(1, (+d.dilation) / maxDil);
+        const a = 0.10 + 0.65 * t;
+        return `rgba(16,185,129,${a})`;
+      })
+      .attr('stroke', 'rgba(17,24,39,.10)')
+      .style('cursor', 'pointer')
+      .on('click', (ev, d) => {
+        ev.stopPropagation();
+        toggleSelect(d.fidx);
+      });
+
+    // Dilation value labels
+    rowSel.append('text')
+      .attr('class', 'dilVal')
+      .attr('x', d => Math.min(xDil(+d.dilation) + 4, xD + col.dW - 2))
+      .attr('y', 15)
+      .attr('font-family', cssVar('--mono', 'monospace'))
+      .attr('font-size', 12)
+      .attr('fill', 'rgba(17,24,39,.55)')
+      .style('pointer-events', 'none')
+      .attr('text-anchor', d => (xDil(+d.dilation) > (xD + col.dW - 24)) ? 'end' : 'start')
+      .text(d => String(Math.round(+d.dilation)));
+
+    rowSel.append('title').text(d =>
+      `#${d.fidx}
+Attribution=${fmt(d.meanAlpha)}
+Threshold=${fmtSci(d.bias)}
+Dilation=${d.dilation}
+${d.kernelId}`
+    );
+
+    applySummaryHighlights();
+  }
+
+  function renderKernelStrip(kernelRows, thrBinGen, thrBinsTemplate, maxThrBinCount, maxDilCount, showDilated) {
+    const host = el.peSummaryKernelStrip;
+    if (!host) return;
+    host.innerHTML = '';
+
+    if (!kernelRows || !kernelRows.length) {
+      const p = document.createElement('div');
+      p.className = 'muted';
+      p.textContent = 'No kernel data.';
+      host.appendChild(p);
+      return;
+    }
+
+    const sharedXMax = (() => {
+      if (!showDilated) return 8;
+      let m = 8;
+      kernelRows.forEach(r => {
+        const d = Math.max(1, Math.round(+r.modeDilation || 1));
+        m = Math.max(m, (9 - 1) * d);
+      });
+      return m;
+    })();
+
+    kernelRows.forEach(r => {
+      const row = document.createElement('div');
+      row.className = 'krow';
+      row.dataset.kernelId = r.kernelId;
+
+      const left = document.createElement('div');
+      left.className = 'krowLeft';
+
+      const meta = document.createElement('div');
+      meta.className = 'krowMeta';
+
+      const idWrap = document.createElement('div');
+      idWrap.className = 'krowIdWrap';
+
+      const kid = document.createElement('div');
+      kid.className = 'krowId';
+      kid.textContent = String(r.kernelId || 'K?');
+
+      const desc = document.createElement('div');
+      desc.className = 'krowDesc';
+      desc.textContent = r.desc || '';
+
+      idWrap.appendChild(kid);
+      idWrap.appendChild(desc);
+
+      const cnt = document.createElement('div');
+      cnt.className = 'krowCount';
+      cnt.textContent = `×${r.count}`;
+
+      meta.appendChild(idWrap);
+      meta.appendChild(cnt);
+
+      const ksvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      ksvg.classList.add('krowKernelSvg');
+
+      left.appendChild(meta);
+      left.appendChild(ksvg);
+
+      const right = document.createElement('div');
+      right.className = 'krowRight';
+
+      // Threshold histogram (global bins)
+      // Rendered in the exact same style as the dilation chart below, but using numeric ranges (bins).
+      const thrBox = document.createElement('div');
+      thrBox.className = 'kdist';
+      const thrTitle = document.createElement('div');
+      thrTitle.className = 'kdistTitle';
+      thrTitle.textContent = 'Threshold Frequencies';
+      thrBox.appendChild(thrTitle);
+
+      const thrVals = (r.thrVals || []).filter(Number.isFinite);
+      const thrBins = thrBinGen(thrVals);
+      // Ensure same bin count as template
+      const thrCounts = (thrBinsTemplate || []).map((b, i) => (thrBins[i] ? thrBins[i].length : 0));
+
+      const thrEntries = thrCounts.map((c, i) => {
+        const b = thrBinsTemplate[i];
+        const x0 = (b && b.x0 != null) ? b.x0 : (thrBins[i] ? thrBins[i].x0 : null);
+        const x1 = (b && b.x1 != null) ? b.x1 : (thrBins[i] ? thrBins[i].x1 : null);
+        const label = (x0 != null && x1 != null) ? `${fmtSci(x0)}..${fmtSci(x1)}` : `bin ${i + 1}`;
+        return { i, c: +c, x0, x1, label };
+      });
+
+      if (!thrEntries.length) {
+        const p = document.createElement('div');
+        p.className = 'muted';
+        p.style.fontSize = '11px';
+        p.textContent = 'No threshold data.';
+        thrBox.appendChild(p);
+      } else {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('kdistSvg');
+        svg.style.display = 'block';
+        svg.style.width = '100%';
+        svg.style.marginTop = '4px';
+
+        // Match the dilation chart layout and styling (horizontal bars + shared baseline).
+        const W = 240;
+        const rowH = 26;
+        const barH = 20;
+        const topPad = 6;
+        const bottomPad = 6;
+
+        // Threshold labels are ranges, so we need a wider label area than for dilations.
+        const leftLabelW = 92;
+        const axisPad = 8;
+        const axisX = leftLabelW + axisPad;
+
+        const rightPad = 40;
+        const barW = Math.max(10, W - axisX - rightPad);
+
+        const H = topPad + bottomPad + rowH * thrEntries.length;
+
+
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+
+        const s = d3.select(svg);
+        const g = s.append('g').attr('transform', `translate(0,${topPad})`);
+
+        const x = d3.scaleLinear()
+          .domain([0, Math.max(1, maxThrBinCount)])
+          .range([0, barW - 15]);
+
+        const thrMid = Math.max(0, Math.round(maxThrBinCount / 2));
+        const tickVals = [thrMid, maxThrBinCount].filter(v => Number.isFinite(v) && v > 0);
+        const y1 = -2;
+        const y2 = rowH * thrEntries.length - (rowH - barH) / 2 + 2;
+
+
+        // Grid lines (vertical, aligned to the right edge of the bars)
+        // g.selectAll('line.thrGrid').data(tickVals).enter().append('line')
+        //   .attr('class', 'thrGrid')
+        //   .attr('x1', v => axisX + x(v) + 12 + extraForLabel)
+        //   .attr('x2', v => axisX + x(v) + 12 + extraForLabel)
+        //   .attr('y1', y1)
+        //   .attr('y2', y2)
+        //   .attr('stroke', 'rgba(17,24,39,.10)');
+
+        // Baseline
+        g.append('line')
+          .attr('x1', axisX + 12 + extraForLabel)
+          .attr('x2', axisX + 12 + extraForLabel)
+          .attr('y1', y1)
+          .attr('y2', y2)
+          .attr('stroke', 'rgba(17,24,39,.85)')
+          .attr('stroke-width', 2);
+
+        const rowsG = g.selectAll('g.thrRow')
+          .data(thrEntries)
+          .enter().append('g')
+          .attr('class', 'thrRow')
+          .attr('transform', (d, i) => `translate(0,${i * rowH})`);
+
+
+
+        rowsG.append('text')
+          .attr('x', axisX + 10 + extraForLabel)
+          .attr('y', rowH / 2 + 8)
+          .attr('text-anchor', 'end')
+          .attr('font-family', cssVar('--mono', 'monospace'))
+          .attr('font-size', 20)
+          .attr('font-weight', 'bold')
+          .attr('fill', 'rgba(17,24,39,.72)')
+          .text(d => {
+            const fmtShort = (v) => {
+              if (v == null || !Number.isFinite(v)) return '—';
+              // const ax = Math.abs(v);
+              // if (ax > 0 && ax < 1e-3) return v.toExponential(1);
+              // if (ax >= 1e4) return v.toExponential(1);
+              // if (ax >= 1) return v.toFixed(2);
+              // if (ax >= 0.01) return v.toFixed(3);
+              // return v.toFixed(4);
+              return v.toFixed(2);
+            };
+            if (d.x0 != null && d.x1 != null) return `${fmtShort(d.x0)}  ${fmtShort(d.x1)}`;
+            return d.label;
+          })
+          .append('title')
+          .text(d => {
+            const fmtShort = (v) => {
+              if (v == null || !Number.isFinite(v)) return '—';
+              const ax = Math.abs(v);
+              if (ax > 0 && ax < 1e-3) return v.toExponential(1);
+              if (ax >= 1e4) return v.toExponential(1);
+              if (ax >= 1) return v.toFixed(2);
+              if (ax >= 0.01) return v.toFixed(3);
+              return v.toFixed(4);
+            };
+            const label = (d.x0 != null && d.x1 != null) ? `${fmtShort(d.x0)} .. ${fmtShort(d.x1)}` : d.label;
+            return `range: ${label}`;
+          });
+
+        // Bars (same style as dilation bars, but horizontal and using a shared scale across kernels)
+        rowsG.append('rect')
+          .attr('x', axisX + 12 + extraForLabel)
+          .attr('y', (rowH - barH) / 2)
+          .attr('height', barH)
+          .attr('rx', 3)
+          .attr('ry', 3)
+          .attr('width', d => {
+            const w = x(d.c);
+            return (d.c > 0) ? Math.max(2, w) : 0;
+          })
+          .attr('fill', d => barFillByCount(d.c, Math.max(1, maxThrBinCount)))
+          .attr('stroke', 'rgba(17,24,39,.10)');
+
+        // Count labels (same style as dilation counts, but positioned on the right side of the bars)
+        rowsG.append('text')
+          .attr('y', rowH / 2 + 6)
+          .attr('font-family', cssVar('--mono', 'monospace'))
+          .attr('font-size', 20)
+          .attr('fill', 'rgba(17,24,39,.72)')
+          .attr('text-anchor', 'start')
+          .attr('x', d => {
+            const w = Math.max(2, x(d.c));
+            const at = axisX + w;
+            return 10 + ((at > W - rightPad - 10) ? (at - 4) : (at + 4)) + extraForLabel;
+          })
+          .text(d => d.c > 0 ? String(Math.round(d.c)) : '');
+
+        thrBox.appendChild(svg);
+      }
+
+      // Dilation frequencies (horizontal bar chart; shared scale across kernels)
+      const dilBox = document.createElement('div');
+      dilBox.className = 'kdist';
+      const dilTitle = document.createElement('div');
+      dilTitle.className = 'kdistTitle';
+      dilTitle.textContent = 'Dilation Frequencies';
+      dilBox.appendChild(dilTitle);
+
+      const dilMid = Math.max(0, Math.round(maxDilCount / 2));
+
+      const dilEntries = Array.from((r.dilCounts || new Map()).entries())
+        .map(([k, v]) => ({ d: +k, c: +v }))
+        .filter(e => Number.isFinite(e.d) && Number.isFinite(e.c) && e.d >= 1 && e.c >= 0)
+        .sort((a, b) => d3.ascending(a.d, b.d));
+
+      if (!dilEntries.length) {
+        const p = document.createElement('div');
+        p.className = 'muted';
+        p.style.fontSize = '11px';
+        p.textContent = 'No dilation data.';
+        dilBox.appendChild(p);
+      } else {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.classList.add('kdistSvg');
+        svg.style.display = 'block';
+        svg.style.width = '100%';
+        svg.style.marginTop = '4px';
+
+        // Layout tuned to match a standard horizontal bar chart:
+        // dilation labels on the left, a common vertical axis line, and bars starting from that axis.
+        const W = 240;
+        const rowH = 26;
+        const barH = 20;
+        const topPad = 6;
+        const bottomPad = 6;
+
+        const leftLabelW = 22;   // room for dilation labels (e.g., 256)
+        const axisPad = 8;       // gap between labels and the axis line
+        const axisX = leftLabelW + axisPad;
+
+        const rightPad = 40;     // room for count labels
+        const barW = W - axisX - rightPad;
+
+        const H = topPad + bottomPad + rowH * dilEntries.length;
+
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+        svg.style.height = `${H}px`;
+
+        const s = d3.select(svg);
+        const g = s.append('g').attr('transform', `translate(0,${topPad})`);
+
+        const x = d3.scaleLinear()
+          .domain([0, Math.max(1, maxDilCount)])
+          .range([0, barW - 15]);
+
+        // Optional shared grid lines for easier comparison
+        const tickVals = [dilMid, maxDilCount].filter(v => Number.isFinite(v) && v > 0);
+
+        const y1 = -2;
+        const y2 = rowH * dilEntries.length - (rowH - barH) / 2 + 2;
+
+        g.selectAll('line.dilGrid').data(tickVals).enter().append('line')
+          .attr('class', 'dilGrid')
+          .attr('x1', v => axisX + x(v) + 12)
+          .attr('x2', v => axisX + x(v) + 12)
+          .attr('y1', y1)
+          .attr('y2', y2)
+          .attr('stroke', 'rgba(17,24,39,.10)');
+
+        // Common vertical axis line (baseline)
+        g.append('line')
+          .attr('x1', axisX + 12)
+          .attr('x2', axisX + 12)
+          .attr('y1', y1)
+          .attr('y2', y2)
+          .attr('stroke', 'rgba(17,24,39,.85)')
+          .attr('stroke-width', 2);
+
+        const rowsG = g.selectAll('g.dilRow')
+          .data(dilEntries)
+          .enter().append('g')
+          .attr('class', 'dilRow')
+          .attr('transform', (d, i) => `translate(0,${i * rowH})`);
+
+        // Dilation labels
+        rowsG.append('text')
+          .attr('x', axisX + 10)
+          .attr('y', rowH / 2 + 8)
+          .attr('text-anchor', 'end')
+          .attr('font-family', cssVar('--mono', 'monospace'))
+          .attr('font-size', 20)
+          .attr('font-weight', 'bold')
+          .attr('fill', 'rgba(17,24,39,.72)')
+          .text(d => String(Math.round(d.d)));
+
+        // Bars
+        rowsG.append('rect')
+          .attr('x', axisX + 12)
+          .attr('y', (rowH - barH) / 2)
+          .attr('height', barH)
+          .attr('rx', 3)
+          .attr('ry', 3)
+          .attr('width', d => {
+            const w = x(d.c);
+            return (d.c > 0) ? Math.max(2, w) : 0;
+          })
+          .attr('fill', d => barFillByCount(d.c, Math.max(1, maxDilCount)))
+          .attr('stroke', 'rgba(17,24,39,.10)');
+
+        // Frequency labels (at bar end)
+        rowsG.append('text')
+          .attr('y', rowH / 2 + 6)
+          .attr('font-family', cssVar('--mono', 'monospace'))
+          .attr('font-size', 20)
+          .attr('fill', 'rgba(17,24,39,.72)')
+          .attr('text-anchor', 'start')
+          .attr('x', d => {
+            const w = Math.max(2, x(d.c));
+            const at = axisX + w;
+            return 20 + ((at > W - rightPad - 10) ? (at - 4) : (at + 4));
+          })
+          .text(d => String(Math.round(d.c)));
+
+        dilBox.appendChild(svg);
+      }
+      right.appendChild(thrBox);
+      right.appendChild(dilBox);
+
+      row.appendChild(left);
+      row.appendChild(right);
+
+      host.appendChild(row);
+
+      // draw kernel after insert
+      drawKernelMiniShared(ksvg, r.weights, r.modeDilation, showDilated, sharedXMax);
+    });
+
+    applySummaryHighlights();
+  }
+
+  async function refreshSummaryModal(token) {
+    if (!summaryUI.open) return;
+    if (token != null && token !== summaryUI.refreshToken) return;
+
+    updateSummaryScopeSelectOptions();
+
+    const scope = summaryScopeFromUI();
+    updateSummaryScopeControlsVisibility(scope);
+
+    const cfg = getCurrentCfgForSummary();
+    if (!cfg) {
+      modalSetStatus('No configuration available.');
+      modalSetSubtitle('—');
+      renderSummaryMatrix([], 1);
+      renderKernelStrip([], d3.bin(), [], 1, 1, false);
+      return;
+    }
+
+    const sig = cfgSig(cfg);
+    const activeId = (peState && peState.instanceId != null) ? peState.instanceId : null;
+
+    // TopK slider behavior
+    let topK = el.peSummaryTopK ? Math.max(1, parseInt(el.peSummaryTopK.value, 10) || 15) : 15;
+    if (el.peSummaryTopKLabel) el.peSummaryTopKLabel.textContent = String(topK);
+
+    const showDilated = !!(el.peSummaryShowDilated && el.peSummaryShowDilated.checked);
+    const kernelSort = el.peSummaryKernelSort ? String(el.peSummaryKernelSort.value || 'freq_desc') : 'freq_desc';
+
+    let alphaMaps = [];
+    let instIds = [];
+    let subtitle = '';
+
+    if (scope === 'active') {
+      if (activeId != null) {
+        alphaMaps = [{ id: activeId, map: activeAlphaMap() }];
+        instIds = [activeId];
+        subtitle = `active instance ${activeId}`;
+      } else {
+        subtitle = 'no instance';
+      }
+    } else if (scope === 'tabs') {
+      const tabs = (tabState && tabState.tabs) ? tabState.tabs : [];
+      const matching = tabs.filter(t => t && t.cfg && cfgSig(t.cfg) === sig && t.instanceId != null);
+      instIds = matching.map(t => t.instanceId);
+      subtitle = `${instIds.length} open tab(s)`;
+
+      if (instIds.length) {
+        modalSetStatus(`Loading α for ${instIds.length} tab(s)…`);
+        const maps = [];
+        for (const id of instIds) {
+          try {
+            const m = await loadAlphaMapForInstance(cfg, id);
+            maps.push({ id, map: m });
+          } catch (e) {
+            // skip missing
+          }
+        }
+        alphaMaps = maps;
+      }
+    } else if (scope === 'range') {
+      // Must be loaded explicitly
+      if (state.summaryCache.rangeSig === sig && state.summaryCache.rangeAlphaMaps && state.summaryCache.rangeAlphaMaps.length) {
+        alphaMaps = state.summaryCache.rangeAlphaMaps.slice();
+        instIds = alphaMaps.map(p => p.id);
+        subtitle = `range: ${instIds.length} instance(s)`;
+      } else {
+        subtitle = 'range: not loaded';
+      }
+    } else if (scope === 'list') {
+      if (state.summaryCache.listSig === sig && state.summaryCache.listAlphaMaps && state.summaryCache.listAlphaMaps.length) {
+        alphaMaps = state.summaryCache.listAlphaMaps.slice();
+        instIds = alphaMaps.map(p => p.id);
+        subtitle = `list: ${instIds.length} instance(s)`;
+      } else {
+        subtitle = 'list: not loaded';
+      }
+    } else if (scope === 'classflip') {
+      if (activeId == null) {
+        subtitle = 'ClassFlip: no instance';
+      } else {
+        const cf = await ensureClassFlipFeatureIds(cfg, activeId);
+        if (!cf || !cf.featureIds || !cf.featureIds.length) {
+          subtitle = 'ClassFlip: file not found';
+        } else {
+          subtitle = `ClassFlip Top${cf.topN} (instance ${activeId})`;
+          // force topK slider to reflect TopN and disable
+          if (el.peSummaryTopK) {
+            el.peSummaryTopK.value = String(Math.max(1, cf.topN));
+            el.peSummaryTopK.disabled = true;
+            topK = Math.max(1, cf.topN);
+          }
+          if (el.peSummaryTopKLabel) el.peSummaryTopKLabel.textContent = String(topK);
+
+          alphaMaps = [{ id: activeId, map: activeAlphaMap() }];
+          instIds = [activeId];
+        }
+      }
+    }
+
+    // Re-enable slider if not classflip
+    if (scope !== 'classflip' && el.peSummaryTopK) el.peSummaryTopK.disabled = false;
+
+    modalSetSubtitle(subtitle);
+
+    if (!state.features || !state.features.length) {
+      modalSetStatus('Load an instance first.');
+      renderSummaryMatrix([], 1);
+      renderKernelStrip([], d3.bin(), [], 1, 1, showDilated);
+      return;
+    }
+
+    if (!alphaMaps.length) {
+      modalSetStatus((scope === 'range' || scope === 'list') ? 'Click Load to fetch data.' : 'No α data in this scope.');
+      renderSummaryMatrix([], 1);
+      renderKernelStrip([], d3.bin(), [], 1, 1, showDilated);
+      return;
+    }
+
+    // Select features
+    let pickedFidx = null;
+
+    if (scope === 'classflip' && activeId != null) {
+      const cf = await ensureClassFlipFeatureIds(cfg, activeId);
+      pickedFidx = (cf && cf.featureIds) ? cf.featureIds.slice(0, topK) : [];
+    } else {
+      const rows = [];
+      for (const d of state.features) {
+        const fidx = +d.fidx;
+        if (!Number.isFinite(fidx)) continue;
+        const vals = [];
+        alphaMaps.forEach(p => {
+          if (p.map && p.map.has(fidx)) vals.push(+p.map.get(fidx));
+        });
+        if (!vals.length) continue;
+        const mA = mean(vals);
+        const mAbs = mean(vals.map(v => Math.abs(v)));
+        rows.push({ fidx, meanAlpha: mA, meanAbs: mAbs, n: vals.length });
+      }
+      rows.sort((a, b) => d3.descending(a.meanAbs, b.meanAbs));
+      pickedFidx = rows.slice(0, Math.min(topK, rows.length)).map(r => r.fidx);
+    }
+
+    // Build picked rows with attributes
+    const pickedRows = [];
+    const absA = [];
+    pickedFidx.forEach(fidx => {
+      const vals = [];
+      alphaMaps.forEach(p => {
+        if (p.map && p.map.has(fidx)) vals.push(+p.map.get(fidx));
+      });
+      if (!vals.length) return;
+      const meanAlpha = mean(vals);
+      const meanAbs = mean(vals.map(v => Math.abs(v)));
+      const kernelId = kernelIdForFeature(fidx);
+      const dilation = peDilationForFeature(fidx);
+      const bias = peBiasForFeature(fidx);
+      pickedRows.push({
+        fidx,
+        meanAlpha,
+        meanAbs,
+        n: vals.length,
+        kernelId,
+        dilation,
+        bias,
+        desc: kernelDescForId(kernelId)
+      });
+      absA.push(Math.abs(meanAlpha));
+    });
+
+    const maxAbsAlpha = Math.max(1e-9, d3.max(absA) || 1e-9);
+
+    // Bias stats overall
+    const biasVals = pickedRows.map(d => d.bias).filter(Number.isFinite);
+    const bMin = d3.min(biasVals), bMax = d3.max(biasVals), bMean = d3.mean(biasVals);
+    if (el.peSummaryBiasStats) {
+      el.peSummaryBiasStats.textContent = biasVals.length
+        ? `thr in selection: min=${fmt(bMin)} · mean=${fmt(bMean)} · max=${fmt(bMax)}`
+        : '';
+    }
+
+    // Render matrix (sortable)
+    summaryUI.lastPickedRows = pickedRows.slice();
+    summaryUI.lastMaxAbsAlpha = maxAbsAlpha;
+    renderSummaryMatrix(sortSummaryRows(pickedRows), maxAbsAlpha);
+
+    // Group by kernel
+    const byKernel = new Map();
+    pickedRows.forEach(r => {
+      const k = r.kernelId || 'K?';
+      if (!byKernel.has(k)) byKernel.set(k, []);
+      byKernel.get(k).push(r);
+    });
+
+    const allThr = pickedRows.map(r => r.bias).filter(Number.isFinite);
+    let thrExtent = d3.extent(allThr);
+    if (!thrExtent[0] && thrExtent[0] !== 0) thrExtent = [-1, 1];
+    if (thrExtent[0] === thrExtent[1]) {
+      const v = thrExtent[0];
+      thrExtent = [v - 1, v + 1];
+    }
+
+    const thrBinCount = 6; // global bins (option 1)
+    const thrBinGen = d3.bin().domain(thrExtent).thresholds(thrBinCount);
+    const thrBinsTemplate = thrBinGen(allThr);
+
+    // Precompute global maxima for bar scaling
+    let maxThrBinCount = 1;
+    let maxDilCount = 1;
+
+    const kernelRows = Array.from(byKernel.entries()).map(([kernelId, rows]) => {
+      const dilCounts = new Map();
+      rows.forEach(rr => {
+        const d = +rr.dilation;
+        if (!Number.isFinite(d)) return;
+        dilCounts.set(d, (dilCounts.get(d) || 0) + 1);
+        maxDilCount = Math.max(maxDilCount, dilCounts.get(d));
+      });
+
+      const thrVals = rows.map(rr => +rr.bias).filter(Number.isFinite);
+      const bins = thrBinGen(thrVals);
+      bins.forEach(b => { maxThrBinCount = Math.max(maxThrBinCount, b.length); });
+
+      return {
+        kernelId,
+        desc: kernelDescForId(kernelId),
+        count: rows.length,
+        weights: weightsForKernelId(kernelId),
+        modeDilation: computeModeDilation(rows),
+        thrVals,
+        dilCounts
+      };
+    });
+
+    kernelRows.sort((a, b) => {
+      const c = (kernelSort === 'freq_asc') ? d3.ascending(a.count, b.count) : d3.descending(a.count, b.count);
+      return c || String(a.kernelId).localeCompare(String(b.kernelId));
+    });
+
+    // Render kernel panel
+    renderKernelStrip(kernelRows, thrBinGen, thrBinsTemplate, maxThrBinCount, maxDilCount, showDilated);
+
+    modalSetStatus(`Computed on ${instIds.length} instance(s), selection=${pickedRows.length}.`);
+  }
+
+  function refreshSummaryModalSafe() {
+    const token = ++summaryUI.refreshToken;
+    return refreshSummaryModal(token);
+  }
+
+  async function openSummaryModal() {
+    if (!el.peSummaryOverlay || !el.peSummaryModal) return;
+    el.peSummaryOverlay.hidden = false;
+    summaryUI.open = true;
+
+    // Center if first open
+    try {
+      if (!el.peSummaryModal.style.left && !el.peSummaryModal.style.top) {
+        const mw = el.peSummaryModal.offsetWidth;
+        const mh = el.peSummaryModal.offsetHeight;
+        const left = Math.max(8, (window.innerWidth - mw) / 2);
+        const top = Math.max(8, (window.innerHeight - mh) / 2);
+        el.peSummaryModal.style.left = `${left}px`;
+        el.peSummaryModal.style.top = `${top}px`;
+      }
+    } catch (_) { }
+
+    // Range defaults based on current instance
+    try {
+      const cur = (peState && peState.instanceId != null) ? peState.instanceId : 0;
+      if (el.peSummaryStartId) el.peSummaryStartId.value = String(Math.max(0, cur));
+      if (el.peSummaryEndId) el.peSummaryEndId.value = String(Math.max(0, cur));
+    } catch (e) { }
+
+    // Slider max based on feature count
+    try {
+      const n = (state.features && state.features.length) ? state.features.length : 0;
+      const maxK = Math.max(1, Math.min(200, n || 50));
+      if (el.peSummaryTopK) {
+        el.peSummaryTopK.max = String(maxK);
+        const v0 = Math.min(maxK, Math.max(1, parseInt(el.peSummaryTopK.value, 10) || 15));
+        el.peSummaryTopK.value = String(v0);
+        if (el.peSummaryTopKLabel) el.peSummaryTopKLabel.textContent = String(v0);
+      }
+    } catch (e) { }
+
+    updateSummaryScopeSelectOptions();
+    updateSummaryScopeControlsVisibility(summaryScopeFromUI());
+    modalSetStatus('Ready.');
+    await refreshSummaryModalSafe();
+  }
+
+  function closeSummaryModal() {
+    if (!el.peSummaryOverlay) return;
+    el.peSummaryOverlay.hidden = true;
+    summaryUI.open = false;
+    summaryUI.dragging = false;
+  }
+
+  function initSummaryModal() {
+    if (!el.peSummaryBtn || !el.peSummaryOverlay || !el.peSummaryModal) return;
+
+    // Safety: ensure the overlay starts closed (some browsers/extensions may restore DOM state)
+    el.peSummaryOverlay.hidden = true;
+    summaryUI.open = false;
+    summaryUI.dragging = false;
+
+    el.peSummaryBtn.addEventListener('click', async () => {
+      if (!state.features || !state.features.length) return;
+      await openSummaryModal();
+    });
+
+    if (el.peSummaryCloseBtn) el.peSummaryCloseBtn.addEventListener('click', closeSummaryModal);
+    if (el.peSummaryRefreshBtn) el.peSummaryRefreshBtn.addEventListener('click', refreshSummaryModalSafe);
+
+    if (el.peSummaryOverlay) {
+      el.peSummaryOverlay.addEventListener('mousedown', (ev) => {
+        if (ev.target === el.peSummaryOverlay) closeSummaryModal();
+      });
+    }
+
+    // Dragging
+    if (el.peSummaryHeader) {
+      el.peSummaryHeader.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        summaryUI.dragging = true;
+        const r = el.peSummaryModal.getBoundingClientRect();
+        summaryUI.dragOffX = ev.clientX - r.left;
+        summaryUI.dragOffY = ev.clientY - r.top;
+        ev.preventDefault();
+      });
+    }
+
+    window.addEventListener('mousemove', (ev) => {
+      if (!summaryUI.dragging || !summaryUI.open) return;
+      const mw = el.peSummaryModal.offsetWidth;
+      const mh = el.peSummaryModal.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = ev.clientX - summaryUI.dragOffX;
+      let top = ev.clientY - summaryUI.dragOffY;
+      left = clamp(left, 8, Math.max(8, vw - mw - 8));
+      top = clamp(top, 8, Math.max(8, vh - mh - 8));
+      el.peSummaryModal.style.left = `${left}px`;
+      el.peSummaryModal.style.top = `${top}px`;
+    });
+
+    window.addEventListener('mouseup', () => {
+      summaryUI.dragging = false;
+    });
+
+    // UI controls
+    if (el.peSummaryScopeSelect) {
+      el.peSummaryScopeSelect.addEventListener('change', () => {
+        updateSummaryScopeSelectOptions();
+        updateSummaryScopeControlsVisibility(summaryScopeFromUI());
+        refreshSummaryModalSafe();
+      });
+    }
+
+    if (el.peSummaryTopK) el.peSummaryTopK.addEventListener('input', () => refreshSummaryModalSafe());
+    if (el.peSummaryShowDilated) el.peSummaryShowDilated.addEventListener('change', () => refreshSummaryModalSafe());
+    if (el.peSummaryKernelSort) el.peSummaryKernelSort.addEventListener('change', () => refreshSummaryModalSafe());
+
+    if (el.peSummaryLoadRangeBtn) {
+      el.peSummaryLoadRangeBtn.addEventListener('click', async () => {
+        const cfg = getCurrentCfgForSummary();
+        if (!cfg) { modalSetStatus('No configuration available.'); return; }
+        const s = normalizeInt(el.peSummaryStartId ? el.peSummaryStartId.value : 0, 0);
+        const e = normalizeInt(el.peSummaryEndId ? el.peSummaryEndId.value : 0, 0);
+        const a = Math.min(s, e), b = Math.max(s, e);
+        const ids = [];
+        for (let i = a; i <= b; i++) ids.push(i);
+        const res = await loadAlphaMapsForIds(cfg, ids);
+        state.summaryCache.rangeSig = res.sig;
+        state.summaryCache.rangeIds = res.ids;
+        state.summaryCache.rangeAlphaMaps = res.alphaMaps;
+        state.summaryCache.rangeErrors = res.errors;
+        refreshSummaryModalSafe();
+      });
+    }
+
+    if (el.peSummaryLoadListBtn) {
+      el.peSummaryLoadListBtn.addEventListener('click', async () => {
+        const cfg = getCurrentCfgForSummary();
+        if (!cfg) { modalSetStatus('No configuration available.'); return; }
+        const spec = el.peSummaryInstanceList ? String(el.peSummaryInstanceList.value || '') : '';
+        const ids = parseInstanceListSpec(spec);
+        if (!ids.length) { modalSetStatus('No valid instance ids.'); return; }
+        const res = await loadAlphaMapsForIds(cfg, ids);
+        state.summaryCache.listSig = res.sig;
+        state.summaryCache.listIds = res.ids;
+        state.summaryCache.listAlphaMaps = res.alphaMaps;
+        state.summaryCache.listErrors = res.errors;
+        refreshSummaryModalSafe();
+      });
+    }
+
+    // Disable by default (enabled when instance is loaded)
+    if (el.peSummaryBtn) el.peSummaryBtn.disabled = (!state.features || state.features.length === 0);
+  }
+
+
   initReferenceToggle();
+  initEmbeddingSortControls();
+  initEmbeddingSeriesControls();
+  initEmbeddingTabs();
+  initSummaryModal();
+  initAdvancedPopover();
   renderKernelPreview();
   renderKernelList();
   clearToEmptyState();
   forceHideTopBusy();
   peInitUI();
   forceHideTopBusy();
+  syncRetropropButtonState();
   let resizeRaf = null;
   window.addEventListener('resize', () => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
@@ -3264,3 +6832,53 @@
     });
   });
 })();
+
+
+function saveWebPageAsSVGForDownload() {
+  // Collect all SVG elements from the page
+  const svgElements = document.querySelectorAll('svg');
+  if (!svgElements.length) {
+    console.warn('No SVG elements found on the page');
+    return;
+  }
+
+  // Create a new SVG container
+  const container = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  container.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  container.setAttribute('width', window.innerWidth);
+  container.setAttribute('height', window.innerHeight);
+  container.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`);
+
+  // Add a white background
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('width', '100%');
+  bg.setAttribute('height', '100%');
+  bg.setAttribute('fill', 'white');
+  container.appendChild(bg);
+
+  // Clone and append each SVG element
+  svgElements.forEach(svg => {
+    const rect = svg.getBoundingClientRect();
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${rect.left},${rect.top})`);
+
+    // Clone children (not the SVG itself to avoid nesting issues)
+    Array.from(svg.childNodes).forEach(child => {
+      g.appendChild(child.cloneNode(true));
+    });
+
+    container.appendChild(g);
+  });
+
+  // Serialize and download
+  const svgString = new XMLSerializer().serializeToString(container);
+  const blob = new Blob([svgString], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'webpage.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

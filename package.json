@@ -1,5 +1,13 @@
 {
-  "dependencies": {
-    "express": "^5.2.1"
-  }
+	"dependencies": {
+		"express": "^5.2.1",
+		"numpy": "^0.0.1"
+	},
+	"scripts": {
+		"start": "node GUI/server.js",
+		"start:stable": "node GUI/stable/server.js",
+		"start:meh": "node GUI/meh/server.js",
+		"find-python": "which python3 || echo 'python3 NOT FOUND' && which python || echo 'python NOT FOUND' && echo '=== FULL PATH INFO ===' && echo $PATH",
+		"install-python-deps": "/usr/bin/python3 -m pip install --user --break-system-packages -r /p/vhosts/rocketlens.webs.upv.es/httpdocs/requirements-3_11.txt"
+	}
 }
