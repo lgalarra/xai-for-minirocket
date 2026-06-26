@@ -8,8 +8,8 @@ from matplotlib.patches import Patch
 import pandas as pd
 
 
-DEFAULT_PCA_MR_DIR = Path("/home/luis/Desktop/abnormal-heartbeat-newdistance")
-DEFAULT_NON_PCA_MR_DIR = Path("/home/luis/Desktop/abnormal-heartbeat-olddistance")
+DEFAULT_PCA_MR_DIR = Path("experiments/paper/new-distance-perturbation-results/abnormal-heartbeat-newdistance")
+DEFAULT_NON_PCA_MR_DIR = Path("experiments/paper/new-distance-perturbation-results/abnormal-heartbeat-olddistance")
 DEFAULT_OUT_DIR = Path("experiments/paper/pca_mr_distance_boxplots")
 
 CLASSIFIER_LABELS = {
@@ -28,15 +28,19 @@ REFERENCE_POLICY_LABELS = {
 }
 
 DISTANCE_ORDER = ["non pca-mr", "pca-mr"]
-DEFAULT_EXCLUDED_REFERENCE_POLICIES = [
-    "global_centroid",
-    "opposite_class_centroid",
-]
+DEFAULT_EXCLUDED_REFERENCE_POLICIES = []
 EXPLAINER_LABELS = {
     "shap": "SHAP",
     "stratoshap-k1": "ST-SHAP",
     "extreme_feature_coalitions": "EFC",
     "gradients": "Gradients",
+}
+
+PERTURBATION_POLICY_LABELS = {
+    "gaussian": "Gaussian",
+    "instance_to_reference": "Instance to reference",
+    "reference_to_instance": "Reference to instance",
+    "reference_to_instance_positive": "Reference to instance positive",
 }
 
 
@@ -60,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_EXCLUDED_REFERENCE_POLICIES,
         help=(
             "Reference policy to exclude. Can be passed multiple times. "
-            "Defaults to excluding global_centroid and opposite_class_centroid."
+            "By default, all reference policies are included."
         ),
     )
     return parser.parse_args()
@@ -99,7 +103,7 @@ def load_results(directory: Path, fallback_distance_type: str, glob_pattern: str
 
     for csv_file in csv_files:
         df = pd.read_csv(csv_file)
-        required = {"f_minus_f0", "mr_classifier", "reference_policy"}
+        required = {"f_minus_f0", "mr_classifier", "perturbation_policy", "reference_policy"}
         missing = required.difference(df.columns)
         if missing:
             raise ValueError(f"{csv_file} is missing required columns: {sorted(missing)}")
@@ -145,6 +149,7 @@ def normalize_labels(data: pd.DataFrame) -> pd.DataFrame:
     data = data.copy()
     data["mr_classifier_label"] = data["mr_classifier"].replace(CLASSIFIER_LABELS)
     data["base_explainer_label"] = data["base_explainer"].replace(EXPLAINER_LABELS)
+    data["perturbation_policy_label"] = data["perturbation_policy"].replace(PERTURBATION_POLICY_LABELS)
     data["reference_policy_label"] = data["reference_policy"].replace(REFERENCE_POLICY_LABELS)
     return data
 
@@ -223,13 +228,17 @@ def save_classifier_boxplots(data: pd.DataFrame, out_dir: Path) -> list[Path]:
     plt.style.use("seaborn-v0_8-whitegrid")
 
     written = []
-    for classifier, group in data.groupby("mr_classifier_label", sort=True):
+    grouped = data.groupby(["perturbation_policy", "perturbation_policy_label", "mr_classifier_label"], sort=True)
+    for (perturbation_policy, perturbation_policy_label, classifier), group in grouped:
         if group.empty:
             continue
 
+        safe_perturbation_policy = safe_filename_part(perturbation_policy)
         safe_classifier = safe_filename_part(classifier)
-        out_file = out_dir / f"{safe_classifier}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
-        save_boxplot(group, str(classifier), out_file)
+        policy_out_dir = out_dir / safe_perturbation_policy
+        policy_out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = policy_out_dir / f"{safe_classifier}_{safe_perturbation_policy}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
+        save_boxplot(group, f"{classifier} - {perturbation_policy_label}", out_file)
         written.append(out_file)
 
     return written
@@ -240,18 +249,24 @@ def save_classifier_explainer_boxplots(data: pd.DataFrame, out_dir: Path) -> lis
     plt.style.use("seaborn-v0_8-whitegrid")
 
     written = []
-    grouped = data.groupby(["mr_classifier_label", "base_explainer_label"], sort=True)
-    for (classifier, explainer), group in grouped:
+    grouped = data.groupby(
+        ["perturbation_policy", "perturbation_policy_label", "mr_classifier_label", "base_explainer_label"],
+        sort=True,
+    )
+    for (perturbation_policy, perturbation_policy_label, classifier, explainer), group in grouped:
         if group.empty:
             continue
 
+        safe_perturbation_policy = safe_filename_part(perturbation_policy)
         safe_classifier = safe_filename_part(classifier)
         safe_explainer = safe_filename_part(explainer)
+        policy_out_dir = out_dir / safe_perturbation_policy
+        policy_out_dir.mkdir(parents=True, exist_ok=True)
         out_file = (
-            out_dir
-            / f"{safe_classifier}_{safe_explainer}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
+            policy_out_dir
+            / f"{safe_classifier}_{safe_explainer}_{safe_perturbation_policy}_f_minus_f0_reference_policy_pca_mr_boxplot.png"
         )
-        save_boxplot(group, f"{classifier} - {explainer}", out_file)
+        save_boxplot(group, f"{classifier} - {explainer} - {perturbation_policy_label}", out_file)
         written.append(out_file)
 
     return written

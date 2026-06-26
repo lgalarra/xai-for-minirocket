@@ -5,6 +5,7 @@
 import os
 import random
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -37,13 +38,104 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification, get_handoutlines_for_classification,
                    get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS, COGNITIVE_CIRCLES_BASIC_CHANNELS,
-                   cognitive_circles_get_sorted_channels_from_df)
+                   cognitive_circles_get_sorted_channels_from_df, get_double_freq_test_for_classification)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
-from sklearn.metrics import accuracy_score, r2_score
+from sklearn.metrics import accuracy_score
 from export_data import DataExporter
 from reference import REFERENCE_POLICIES
 
 import argparse
+
+TSHAP_REPO_PATH = os.environ.get("TSHAP_REPO_PATH", "/home/lgalarraga/tshap")
+if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
+    sys.path.insert(0, TSHAP_REPO_PATH)
+
+from tshap.synthetic import DoubleFreqTest
+import tshap.tshap as tshap_module
+
+def _get_tshap_window_mask(series_length, window_start, window_length):
+    mask = np.zeros((1, series_length))
+    if window_start >= 0:
+        mask[..., window_start:(window_start + window_length)] = 1
+    else:
+        mask[..., :(window_length + window_start)] = 1
+    return mask
+
+
+def _fallback_tshap_window_explanation(fnc, input_sample, baselines, window_length=20, stride=5):
+    all_samples = np.array([input_sample])
+    series_length = input_sample.shape[-1]
+    window_positions = [ws for ws in range(0, series_length - window_length + stride, stride)]
+    baseline_count = len(baselines)
+    all_samples = np.vstack((all_samples, baselines))
+
+    for window_start in window_positions:
+        feature_mask = _get_tshap_window_mask(series_length, window_start, window_length)
+        for baseline in baselines:
+            fused_samples = np.array([
+                input_sample * (1 - feature_mask) + baseline * feature_mask,
+                input_sample * feature_mask + baseline * (1 - feature_mask),
+            ])
+            all_samples = np.vstack((all_samples, fused_samples))
+
+    payout = fnc(all_samples)
+    window_scores = np.zeros(series_length)
+
+    for i in range(series_length):
+        if i % stride == 0 and i <= window_positions[-1]:
+            current_position = baseline_count + (i // stride) * baseline_count * 2
+            value = 0
+            for baseline_idx in range(baseline_count):
+                value += (
+                    (payout[0] - payout[current_position + baseline_idx * 2 + 1])
+                    + (payout[current_position + baseline_idx * 2 + 2] - payout[1 + baseline_idx])
+                ) / 2
+            value = value / baseline_count
+            if i > 0:
+                window_scores[i - stride:i + 1] = np.linspace(window_scores[i - stride], value, stride + 1)
+            else:
+                window_scores[i] = value
+
+    interpolated = np.zeros(len(window_scores))
+    for i in range(len(window_scores)):
+        interpolated[i:i + window_length] += window_scores[i] / (window_length * min(i + 1, stride))
+    return interpolated
+
+
+if hasattr(tshap_module, "tshap_explanation"):
+    tshap_explanation = tshap_module.tshap_explanation
+else:
+    def tshap_explanation(fnc, X, baselines, window_length=20, stride=5, roi=True):
+        final_fnc = (lambda X_: fnc(X_)[:, 1]) if getattr(fnc, "__name__", "") == "predict_proba" else fnc
+        X_attribs = np.zeros(X.shape)
+        X_roi_attribs = np.zeros(X.shape)
+        if hasattr(tshap_module, "tshap_explanation_single_instance"):
+            for i in range(X.shape[0]):
+                X_attribs[[i]], X_roi_attribs[[i]] = tshap_module.tshap_explanation_single_instance(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride, roi=roi
+                )
+        elif hasattr(tshap_module, "tshap_window_explanation_pi"):
+            if roi:
+                raise ImportError(
+                    "The configured TSHAP clone does not provide ROI explanations. "
+                    "Use roi=False or update /home/lgalarraga/tshap."
+                )
+            for i in range(X.shape[0]):
+                X_attribs[i] = tshap_module.tshap_window_explanation_pi(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride
+                )
+        else:
+            if roi:
+                available = ", ".join(name for name in dir(tshap_module) if "tshap" in name.lower() or "window" in name.lower())
+                raise ImportError(
+                    "The configured TSHAP clone does not expose ROI-compatible functions. "
+                    f"Available TSHAP/window names: {available}"
+                )
+            for i in range(X.shape[0]):
+                X_attribs[i] = _fallback_tshap_window_explanation(
+                    final_fnc, X[i], baselines, window_length=window_length, stride=stride
+                )
+        return X_attribs, X_roi_attribs
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -150,6 +242,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--tshap_explanations",
+        "-T",
+        type=str,
+        default="yes",
+        choices=["yes", "no", "true", "false", "1", "0"],
+        help="Whether to compute the t-shap explanations (yes/no)."
+    )
+
+    parser.add_argument(
         "--metric",
         "-m",
         type=str,
@@ -163,6 +264,7 @@ def parse_args():
     # post-processing for boolean
     should_export_data = args.dump_data.lower() in ("yes", "true", "1")
     compute_p2p_explanations = args.p2p_explanations.lower() in ("yes", "true", "1")
+    compute_tshap_explanations = args.tshap_explanations.lower() in ("yes", "true", "1")
 
     return (
         should_export_data,
@@ -175,7 +277,8 @@ def parse_args():
         args.start,
         args.end,
         args.metric,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        compute_tshap_explanations
     )
 
 MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
@@ -184,11 +287,8 @@ MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
 
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
-    "abnormal-heartbeat-c0": ("get_abnormal_hearbeat_for_classification('0')", [('A', 'Amplitude Change')]),
+    "double-freq-test": ("get_double_freq_test_for_classification(n_samples=250)", [('X', 'Frequency')]),
     "abnormal-heartbeat-c1": ("get_abnormal_hearbeat_for_classification('1')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c2": ("get_abnormal_hearbeat_for_classification('2')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c3": ("get_abnormal_hearbeat_for_classification('3')", [('A', 'Amplitude Change')]),
-    "abnormal-heartbeat-c4": ("get_abnormal_hearbeat_for_classification('4')", [('A', 'Amplitude Change')]),
     "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
     "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
     "starlight-c3": ("get_starlightcurves_for_classification('3')", [('B', 'Brightness')]),
@@ -207,26 +307,79 @@ def build_map_of_already_trained_classifiers(datasets: list, classifiers):
             }
 
 MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(['starlight-c1', 'starlight-c2', 'starlight-c3',
-                                             'abnormal-heartbeat-c0', 'abnormal-heartbeat-c1',
-                                          'abnormal-heartbeat-c2', 'abnormal-heartbeat-c3',
-                                          'abnormal-heartbeat-c4', 'ford-a', 'cognitive-circles', 'handoutlines'],
-                                                                                     ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
+                                             'abnormal-heartbeat-c1', 'ford-a', 'cognitive-circles', 'handoutlines',
+                                          'double-freq-test'], ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier'])
 
-
-MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
-                          'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
-                          'handoutlines': {'num_features': 500},
-                          'cognitive-circles': {'num_features': 1000},
-                          'abnormal-heartbeat-c0' : {'num_features': 1000},
-                          'abnormal-heartbeat-c1' : {'num_features': 1000},
-                          'abnormal-heartbeat-c2' : {'num_features': 1000},
-                          'abnormal-heartbeat-c3' : {'num_features': 1000},
-                          'abnormal-heartbeat-c4' : {'num_features': 1000},
+### Some notes:
+MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 5000}, 'starlight-c1': {'num_features': 5000},
+                          'starlight-c2': {'num_features': 1000}, 'starlight-c3': {'num_features': 5000},
+                          'handoutlines': {'num_features': 5000},
+                          'cognitive-circles': {'num_features': 500},
+                          'abnormal-heartbeat-c1' : {'num_features': 10000},
+                          'double-freq-test': {'num_features': 5000},
                           }
+
+SEGMENTED_EXPLANATION_SEGMENTS = (10, 20, 50, 100)
+TSHAP_CONFIGS = tuple(
+    (window_size_percent, stride)
+    for window_size_percent in (10, 15, 20)
+    for stride in (5, 20)
+)
+
+def get_segmented_runtime_columns(num_segments: int) -> tuple:
+    prefix = "runtimes-segmented" if num_segments == 10 else f"runtimes-segmented-n{num_segments}"
+    return f"{prefix}-seconds", f"{prefix}-mean", f"{prefix}-std"
+
+def get_segmented_complexity_columns(num_segments: int) -> tuple:
+    prefix = "complexity-segmented" if num_segments == 10 else f"complexity-segmented-n{num_segments}"
+    return prefix, f"{prefix}-mean", f"{prefix}-std"
+
+def get_tshap_key(window_size_percent: int, stride: int) -> str:
+    return f"w{window_size_percent}_s{stride}"
+
+def get_tshap_runtime_columns(window_size_percent: int, stride: int) -> tuple:
+    prefix = f"runtimes-tshap-{get_tshap_key(window_size_percent, stride)}"
+    return f"{prefix}-seconds", f"{prefix}-mean", f"{prefix}-std"
+
+def get_tshap_complexity_columns(window_size_percent: int, stride: int) -> tuple:
+    prefix = f"complexity-tshap-{get_tshap_key(window_size_percent, stride)}"
+    return prefix, f"{prefix}-mean", f"{prefix}-std"
+
+def compute_tshap_explanations_for_instance(classifier: MinirocketClassifier, instance: np.ndarray, reference: np.ndarray,
+                               y_target) -> dict:
+    tshap_explanations = {}
+    model_fn = lambda X: classifier.predict_proba(X)[:, int(y_target)]
+    series_length = instance.shape[-1]
+    for window_size_percent, stride in TSHAP_CONFIGS:
+        window_length = max(1, int(series_length * window_size_percent / 100))
+        start = time.perf_counter()
+        tshap_window_attribs, _ = tshap_explanation(
+            model_fn,
+            np.array([instance]),
+            baselines=np.array([reference]),
+            window_length=window_length,
+            stride=stride,
+            roi=False
+        )
+        time_elapsed = time.perf_counter() - start
+        key = get_tshap_key(window_size_percent, stride)
+        print(
+            f"Time elapsed (tshap {key}, window_length={window_length}, stride={stride}): "
+            f"{time_elapsed}"
+        )
+        tshap_explanations[key] = {
+            "coefficients": tshap_window_attribs[0],
+            "time_elapsed": time_elapsed,
+            "window_size_percent": window_size_percent,
+            "window_length": window_length,
+            "stride": stride,
+        }
+    return tshap_explanations
 
 
 def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
-                         reference_policy: str, compute_p2p_explanations=True, compute_segmented_explanations=True, top_alpha=None):
+                         reference_policy: str, compute_p2p_explanations=True,
+                         compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
@@ -245,43 +398,71 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
     else:
         explanation_p2p = None
 
+    segmented_explanations = {}
     if compute_segmented_explanations:
         ## Segmented explanation
-        segmented_explanation = MinirocketSegmentedClassifier(classifier.classifier, instance,
-                                                              reference).explain_instances(instance, reference,
-            explainer=explainer_method,
-            reference_policy=reference_policy
-        )
-    else:
-        segmented_explanation = None
+        for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+            segmented_explanations[num_segments] = MinirocketSegmentedClassifier(
+                classifier.classifier,
+                instance,
+                reference,
+                num_segments=num_segments
+            ).explain_instances(
+                instance,
+                reference,
+                explainer=explainer_method,
+                reference_policy=reference_policy
+            )
 
-    return explanation, explanation_p2p, segmented_explanation
+    tshap_explanations = {}
+    if compute_tshap_explanations_enabled:
+        tshap_explanations = compute_tshap_explanations_for_instance(classifier, instance, reference, y_target)
+
+    return explanation, explanation_p2p, segmented_explanations, tshap_explanations
 
 
-def update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, complexity_backpropagated,
-           complexity_p2p, complexity_segmented, local_accuracy, error, reference_policy):
-    if reference_policy not in r2s:
-        r2s[reference_policy] = []
+def update(explanation, explanation_p2p, segmented_explanations, tshap_explanations,
+           kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, runtimes_tshap,
+           complexity_backpropagated, complexity_p2p, complexity_segmented, complexity_tshap,
+           local_accuracy, error, reference_policy):
+    if reference_policy not in kendalls:
         error[reference_policy] = []
         kendalls[reference_policy] = []
         runtimes_backpropagated[reference_policy] = []
         runtimes_p2p[reference_policy] = []
-        runtimes_segmented[reference_policy] = []
+        runtimes_segmented[reference_policy] = {num_segments: [] for num_segments in SEGMENTED_EXPLANATION_SEGMENTS}
+        runtimes_tshap[reference_policy] = {get_tshap_key(*config): [] for config in TSHAP_CONFIGS}
         complexity_backpropagated[reference_policy] = []
         complexity_p2p[reference_policy] = []
-        complexity_segmented[reference_policy] = []
+        complexity_segmented[reference_policy] = {num_segments: [] for num_segments in SEGMENTED_EXPLANATION_SEGMENTS}
+        complexity_tshap[reference_policy] = {get_tshap_key(*config): [] for config in TSHAP_CONFIGS}
         local_accuracy[reference_policy] = 0
 
-    r2, kendall = (0.0, 0.0) if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
-    r2s[reference_policy].append(r2)
+    kendall = 0.0 if explanation_p2p is None else compare_explanations(explanation, explanation_p2p)
     kendalls[reference_policy].append(kendall)
     runtimes_backpropagated[reference_policy].append(explanation.get_runtime())
     runtimes_p2p[reference_policy].append(-1.0 if explanation_p2p is None else explanation_p2p.get_runtime())
-    runtimes_segmented[reference_policy].append(-1.0 if segmented_explanation is None else segmented_explanation.get_runtime())
     complexity_backpropagated[reference_policy].append(np.count_nonzero(explanation.explanation['coefficients']))
     complexity_p2p[reference_policy].append(-1.0 if explanation_p2p is None else np.count_nonzero(explanation_p2p.explanation['coefficients']))
-    complexity_segmented[reference_policy].append(
-        -1.0 if segmented_explanation is None else np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space()))
+    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+        segmented_explanation = segmented_explanations.get(num_segments)
+        runtimes_segmented[reference_policy][num_segments].append(
+            -1.0 if segmented_explanation is None else segmented_explanation.get_runtime()
+        )
+        complexity_segmented[reference_policy][num_segments].append(
+            -1.0 if segmented_explanation is None
+            else np.count_nonzero(segmented_explanation.get_distributed_explanations_in_original_space())
+        )
+    for window_size_percent, stride in TSHAP_CONFIGS:
+        key = get_tshap_key(window_size_percent, stride)
+        tshap_explanation_dict = tshap_explanations.get(key)
+        runtimes_tshap[reference_policy][key].append(
+            -1.0 if tshap_explanation_dict is None else tshap_explanation_dict["time_elapsed"]
+        )
+        complexity_tshap[reference_policy][key].append(
+            -1.0 if tshap_explanation_dict is None
+            else np.count_nonzero(tshap_explanation_dict["coefficients"])
+        )
     (respects_local_accuracy, delta) = explanation.check_explanation_local_accuracy_wrt_minirocket()
     local_accuracy[reference_policy] += 1 if respects_local_accuracy else 0
     error[reference_policy].append(delta)
@@ -317,7 +498,8 @@ if __name__ == '__main__':
         start,
         end,
         metric,
-        compute_p2p_explanations
+        compute_p2p_explanations,
+        compute_tshap_explanations
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -331,6 +513,7 @@ if __name__ == '__main__':
     print("end:", end)
     print("metric:", metric)
     print("compute_p2p_explanations:", compute_p2p_explanations)
+    print("compute_tshap_explanations:", compute_tshap_explanations)
 
 
     LABELS = ['predicted', 'training']
@@ -351,7 +534,8 @@ if __name__ == '__main__':
 
 
     # In[42]:
-    OUTPUT_FILE = 'approximation-results.csv'
+    OUTPUT_FILE = 'results/approximation-results.csv'
+    os.makedirs('results', exist_ok=True)
     if datasets is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(datasets)}.csv')
     if labels is not None:
@@ -375,21 +559,28 @@ if __name__ == '__main__':
 
     OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'metric-{metric}.csv')
 
-    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> (float, float):
+    def compare_explanations(explanation: Explanation, explanation_p2p: Explanation) -> float:
         explanation_vector = explanation.get_attributions_as_single_vector()
         explanation_p2p_vector = explanation_p2p.get_attributions_as_single_vector()
         res = kendalltau(explanation_p2p_vector, explanation_vector)
-        return r2_score(explanation_p2p_vector, explanation_vector), res.statistic
+        return res.statistic
     
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
-                 'dataset': [], 'r2s': [], 'r2s-mean': [], 'r2s-std': [],
-                 'local_accuracy': [], 'error': [], 'runtimes-seconds': [], 'runtimes-mean': [], 'runtimes-std': [],
+                 'dataset': [], 'local_accuracy': [], 'error': [], 'runtimes-seconds': [], 'runtimes-mean': [], 'runtimes-std': [],
                  'runtimes-p2p-seconds': [], 'runtimes-p2p-mean': [], 'runtimes-p2p-std': [],
-                 'runtimes-segmented-seconds': [], 'runtimes-segmented-mean': [], 'runtimes-segmented-std': [],
                  'complexity': [], 'complexity-mean': [], 'complexity-std': [],
                  'complexity-p2p': [], 'complexity-p2p-mean': [], 'complexity-p2p-std': [],
-                 'complexity-segmented': [], 'complexity-segmented-mean': [], 'complexity-segmented-std': [],
                  'kendall-taus': [], 'kendall-taus-mean': [], 'kendall-taus-std': []}
+    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+        for column in get_segmented_runtime_columns(num_segments):
+            df_schema[column] = []
+        for column in get_segmented_complexity_columns(num_segments):
+            df_schema[column] = []
+    for window_size_percent, stride in TSHAP_CONFIGS:
+        for column in get_tshap_runtime_columns(window_size_percent, stride):
+            df_schema[column] = []
+        for column in get_tshap_complexity_columns(window_size_percent, stride):
+            df_schema[column] = []
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
@@ -410,7 +601,10 @@ if __name__ == '__main__':
                     print(f"Evaluating configuration {configuration}")
                     if should_export_data:
                         exporter = DataExporter(dataset_name, mr_classifier_name, explainer_method, label, metric)
-                        exporter.prepare_export(DATASET_FETCH_FUNCTIONS[dataset_name])
+                        exporter.prepare_export(
+                            DATASET_FETCH_FUNCTIONS[dataset_name],
+                            studied_reference_policies=studied_reference_policies
+                        )
                         exporters_dict[configuration] = exporter
 
                     results_df_dict = {}
@@ -423,14 +617,15 @@ if __name__ == '__main__':
                     for reference_policy in studied_reference_policies:
                         results_df_dict[reference_policy] = copy.deepcopy(results_df)
                     dataset_measures = []
-                    r2s = {}
                     kendalls = {}
                     runtimes_backpropagated = {}
                     runtimes_p2p = {}
                     runtimes_segmented = {}
+                    runtimes_tshap = {}
                     complexity_backpropagated = {}
                     complexity_p2p = {}
                     complexity_segmented = {}
+                    complexity_tshap = {}
                     local_accuracy = {}
                     error = {}
                     for idx in range(start, end_dataset):
@@ -441,25 +636,30 @@ if __name__ == '__main__':
                         y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
                         for reference_policy in studied_reference_policies:
                             explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
-                            explanation, explanation_p2p, segmented_explanation = (
+                            explanation, explanation_p2p, segmented_explanations, tshap_explanations = (
                                 compute_explanations(x_target, y_target, classifier, explainer, configuration,
                                                      reference_policy,
                                                      compute_p2p_explanations=(topk is None and compute_p2p_explanations),
                                                      compute_segmented_explanations=(topk is None),
+                                                     compute_tshap_explanations_enabled=compute_tshap_explanations,
                                                      top_alpha=topk)
                             )
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
-                                                                           segmented_explanation)
+                                                                           segmented_explanations,
+                                                                           tshap_explanations)
 
-                            update(r2s, kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented,
-                                   complexity_backpropagated, complexity_p2p, complexity_segmented,
+                            update(explanation, explanation_p2p, segmented_explanations, tshap_explanations,
+                                   kendalls, runtimes_backpropagated, runtimes_p2p, runtimes_segmented, runtimes_tshap,
+                                   complexity_backpropagated, complexity_p2p, complexity_segmented, complexity_tshap,
                                    local_accuracy, error, reference_policy)
 
-                            measures_for_instance[reference_policy] = (kendalls[reference_policy], r2s[reference_policy],
+                            measures_for_instance[reference_policy] = (kendalls[reference_policy],
                                                                        runtimes_backpropagated[reference_policy],
                                                                    runtimes_p2p[reference_policy], runtimes_segmented[reference_policy],
+                                                                   runtimes_tshap[reference_policy],
                                                                    complexity_backpropagated[reference_policy], complexity_p2p[reference_policy],
-                                                                   complexity_segmented[reference_policy], local_accuracy[reference_policy], error[reference_policy])
+                                                                   complexity_segmented[reference_policy], complexity_tshap[reference_policy],
+                                                                   local_accuracy[reference_policy], error[reference_policy])
                         dataset_measures.append(measures_for_instance)
                         if should_export_data:
                             print(f"Exporting instance {idx} to {exporter.output_path} ({configuration})")
@@ -469,10 +669,11 @@ if __name__ == '__main__':
 
                     for reference_policy in studied_reference_policies:
                         for instance_measures in dataset_measures:
-                            (kendalls, r2s, runtimes_backpropagated,
-                             runtimes_p2p, runtimes_segmented,
+                            (kendalls, runtimes_backpropagated,
+                             runtimes_p2p, runtimes_segmented, runtimes_tshap,
                              complexity_backpropagated, complexity_p2p,
-                             complexity_segmented, local_accuracy, error) = instance_measures[reference_policy]
+                             complexity_segmented, complexity_tshap,
+                             local_accuracy, error) = instance_measures[reference_policy]
                             results_df_rp = copy.deepcopy(results_df_dict[reference_policy])
                             results_df_rp['reference_policy'].append(reference_policy)
                             results_df_rp['complexity'].append(to_sep_list(complexity_backpropagated))
@@ -483,10 +684,6 @@ if __name__ == '__main__':
                             results_df_rp['complexity-p2p-mean'].append(np.mean(complexity_p2p))
                             results_df_rp['complexity-p2p-std'].append(np.std(complexity_p2p))
 
-                            results_df_rp['complexity-segmented'].append(to_sep_list(complexity_segmented))
-                            results_df_rp['complexity-segmented-mean'].append(np.mean(complexity_segmented))
-                            results_df_rp['complexity-segmented-std'].append(np.std(complexity_segmented))
-
                             results_df_rp['runtimes-seconds'].append(to_sep_list(runtimes_backpropagated))
                             results_df_rp['runtimes-mean'].append(np.mean(runtimes_backpropagated))
                             results_df_rp['runtimes-std'].append(np.std(runtimes_backpropagated))
@@ -495,19 +692,40 @@ if __name__ == '__main__':
                             results_df_rp['runtimes-p2p-mean'].append(np.mean(runtimes_p2p))
                             results_df_rp['runtimes-p2p-std'].append(np.std(runtimes_p2p))
 
-                            results_df_rp['runtimes-segmented-seconds'].append(to_sep_list(runtimes_segmented))
-                            results_df_rp['runtimes-segmented-mean'].append(np.mean(runtimes_segmented))
-                            results_df_rp['runtimes-segmented-std'].append(np.std(runtimes_segmented))
+                            for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+                                (runtimes_column, runtimes_mean_column, runtimes_std_column) = get_segmented_runtime_columns(num_segments)
+                                (complexity_column, complexity_mean_column, complexity_std_column) = get_segmented_complexity_columns(num_segments)
+                                segmented_runtimes = runtimes_segmented[num_segments]
+                                segmented_complexity = complexity_segmented[num_segments]
 
-                            results_df_rp['r2s'].append(to_sep_list(r2s))
-                            results_df_rp['r2s-mean'].append(np.mean(r2s))
-                            results_df_rp['r2s-std'].append(np.std(r2s))
+                                results_df_rp[runtimes_column].append(to_sep_list(segmented_runtimes))
+                                results_df_rp[runtimes_mean_column].append(np.mean(segmented_runtimes))
+                                results_df_rp[runtimes_std_column].append(np.std(segmented_runtimes))
+
+                                results_df_rp[complexity_column].append(to_sep_list(segmented_complexity))
+                                results_df_rp[complexity_mean_column].append(np.mean(segmented_complexity))
+                                results_df_rp[complexity_std_column].append(np.std(segmented_complexity))
+
+                            for window_size_percent, stride in TSHAP_CONFIGS:
+                                key = get_tshap_key(window_size_percent, stride)
+                                (runtimes_column, runtimes_mean_column, runtimes_std_column) = get_tshap_runtime_columns(window_size_percent, stride)
+                                (complexity_column, complexity_mean_column, complexity_std_column) = get_tshap_complexity_columns(window_size_percent, stride)
+                                tshap_runtimes = runtimes_tshap[key]
+                                tshap_complexity = complexity_tshap[key]
+
+                                results_df_rp[runtimes_column].append(to_sep_list(tshap_runtimes))
+                                results_df_rp[runtimes_mean_column].append(np.mean(tshap_runtimes))
+                                results_df_rp[runtimes_std_column].append(np.std(tshap_runtimes))
+
+                                results_df_rp[complexity_column].append(to_sep_list(tshap_complexity))
+                                results_df_rp[complexity_mean_column].append(np.mean(tshap_complexity))
+                                results_df_rp[complexity_std_column].append(np.std(tshap_complexity))
 
                             results_df_rp['kendall-taus'].append(to_sep_list(kendalls))
                             results_df_rp['kendall-taus-mean'].append(np.mean(kendalls))
                             results_df_rp['kendall-taus-std'].append(np.std(kendalls))
 
-                            results_df_rp['local_accuracy'].append(local_accuracy / len(r2s))
+                            results_df_rp['local_accuracy'].append(local_accuracy / len(kendalls))
                             results_df_rp['error'].append(to_sep_list(error))
                             print(results_df_rp)
                             pd.DataFrame(results_df_rp).to_csv(OUTPUT_FILE, mode='a', index=False, header=False)

@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 
 from curses.ascii import isdigit
@@ -19,6 +20,12 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split
 from sktime.datasets import load_UCR_UEA_dataset
+
+TSHAP_REPO_PATH = os.environ.get("TSHAP_REPO_PATH", "/home/lgalarraga/tshap")
+if os.path.isdir(TSHAP_REPO_PATH) and TSHAP_REPO_PATH not in sys.path:
+    sys.path.insert(0, TSHAP_REPO_PATH)
+
+from tshap.synthetic import DoubleFreqTest
 
 COGNITIVE_CIRCLES_CHANNELS = dict([('X', 'X coordinate'), ('V', 'Velocity'), ('VA', 'Angular Velocity'),
  ('DR', 'Radial Velocity'), ('Y', 'Y'), ('D', 'Radius'), ('A', 'Acceleration')])
@@ -248,3 +255,14 @@ def transform_soft_heaviside_gradient(X, L, parameters, k):
     jacobian_fn = make_jacobian_fn(X, L, parameters, k)
     return jacobian_fn(X)  # Shape: (num_examples, num_features, *X.shape)
 
+def get_double_freq_test_for_classification(n_samples=100):
+    synth_gen = DoubleFreqTest()
+    X_train, y_train, _ = synth_gen.generate_classification_data_and_attribs(
+        n_samples=n_samples,
+        random_seed=0
+    )
+    X_test, y_test, _ = synth_gen.generate_classification_data_and_attribs(
+        n_samples=int(n_samples/5),
+        random_seed=1
+    )
+    return (X_train.astype(np.float32), y_train.astype(int)), (X_test.astype(np.float32), y_test.astype(int))

@@ -12,6 +12,7 @@
 
 from numba import njit, prange, vectorize
 import numpy as np
+from joblib import Parallel, delayed
 
 HEAVYSIDE_K = 40
 
@@ -259,7 +260,7 @@ def _PPV(a, b):
     else:
         return 0
 
-@njit("float32[:,:](float32[:,:],int32[:],Tuple((int32[:],int32[:],int32[:],int32[:],float32[:],bool)))", fastmath = True, parallel = True, cache = True)
+@njit("float32[:,:](float32[:,:],int32[:],Tuple((int32[:],int32[:],int32[:],int32[:],float32[:],boolean)))", fastmath = True, parallel = True, cache = True)
 def transform(X, L, parameters):
 
     num_examples = len(L)
@@ -455,23 +456,21 @@ def _compute_sigma_traces_one(Xi_CL, *parameters):
             channels_this_comb = channel_indices[num_channels_start:num_channels_end]
 
             idx0, idx1, idx2 = indices[kernel_index]
+            channels = list(map(int, channels_this_comb))
 
-            # --- Serie convolutiva por canal (antes de sumar canales) ---
-            conv_by_channel = {}
-            for i_ch in channels_this_comb:
-                conv_i = (
-                    C_alpha[i_ch] +
-                    C_gamma[idx0][i_ch] +
-                    C_gamma[idx1][i_ch] +
-                    C_gamma[idx2][i_ch]
-                ).astype(np.float32)  # (L,)
-                conv_by_channel[int(i_ch)] = conv_i
+            conv_by_channel_values = (
+                C_alpha[channels_this_comb] +
+                C_gamma[idx0, channels_this_comb] +
+                C_gamma[idx1, channels_this_comb] +
+                C_gamma[idx2, channels_this_comb]
+            ).astype(np.float32, copy=False)
+            conv_by_channel = {
+                channel: conv_by_channel_values[channel_index]
+                for channel_index, channel in enumerate(channels)
+            }
 
-            # Agregada sobre canales (base para σ/PPV)
-            C_series = np.sum(
-                [conv_by_channel[int(i)] for i in channels_this_comb],
-                axis=0
-            ).astype(np.float32)  # (L,)
+            # Agregada sobre canales (base para sigma/PPV)
+            C_series = conv_by_channel_values.sum(axis=0, dtype=np.float32)
 
             # Kernel MiniRocket "real": -1 en todas y +2 en (idx0, idx1, idx2)
             kappa = np.full(9, -1.0, dtype=np.float64)
@@ -487,9 +486,9 @@ def _compute_sigma_traces_one(Xi_CL, *parameters):
                     sigma=sigma,
                     bias_b=b,
                     dilation=dilation,
-                    channels=list(map(int, channels_this_comb)),
+                    channels=channels,
                     kernel=kappa,
-                    conv_sum=C_series.copy(),
+                    conv_sum=C_series,
                     conv_by_channel=conv_by_channel
                 ))
 
@@ -531,13 +530,9 @@ def _transform_batch(X, parameters):
     """
     assert X.ndim == 3, f"Esperaba (n,C,L), recibí {X.shape}"
     n, C, L = X.shape
-    feats = []
-    for i in range(n):
-        Xi = X[i].astype(np.float32)           # (C, L)
-        Li = np.array([L], dtype=np.int32)
-        phi_i = transform(Xi, Li, parameters)  # tu transform numba
-        feats.append(phi_i[0])                 # (1,F) -> (F,)
-    return np.vstack(feats).astype(np.float32)
+    X_stack = X.transpose(1, 0, 2).reshape(C, n * L).astype(np.float32, copy=False)
+    L_batch = np.full(n, L, dtype=np.int32)
+    return transform(X_stack, L_batch, parameters).astype(np.float32, copy=False)
 
 # =========================
 # B) transform_prime: ϕ + traces
@@ -736,7 +731,9 @@ def back_propagate_attribution(
     sigma_ref=None,
     per_channel=False,
     dt=None,
-    params
+    params,
+    n_jobs=-1,
+    parallel_backend="threading",
 ):
     """
     Fiel a la corrección:
@@ -815,13 +812,13 @@ def back_propagate_attribution(
         traces0_all = transform_prime(x0_tc[None, ...], parameters=params)["traces"]
 
     idx = np.arange(T, dtype=np.int64)
-    #differences = 0.0
-    for k, tr in enumerate(traces_x):
+
+    def _attribution_for_feature(k, tr):
         alpha_k = float(alphas[k])
         #print(f'alpha_{k} = {alpha_k}')
         #cake = 0.0
         if alpha_k == 0.0:
-            continue
+            return None
 
         #sigma_x  = np.asarray(tr["sigma"], dtype=np.int8)
         #sigma_0  = np.asarray(sigma_ref[k], dtype=np.int8)
@@ -829,7 +826,7 @@ def back_propagate_attribution(
         sigma_0  = np.asarray(sigma_ref[k], dtype=np.float64)
         delta_sig = sigma_x - sigma_0
         if not np.any(delta_sig):
-            continue
+            return None
 
         kappa = np.asarray(tr["kernel"], dtype=np.float64)  # (q,)
         delta = int(tr["dilation"])
@@ -848,7 +845,7 @@ def back_propagate_attribution(
 
         mask = (gate != 0.0)
         if not np.any(mask):
-            continue
+            return None
 
         w_eff = np.zeros_like(w); w_eff[mask] = w[mask]
 
@@ -871,9 +868,10 @@ def back_propagate_attribution(
             elif Wp > 0:
                 contrib_t[pos] = alpha_k * (w_eff[pos] * dt_vec[pos]) / Wp
 
+        beta_k = np.zeros_like(beta)
         if not per_channel:
             #cake += contrib_t
-            beta[:, 0] += contrib_t
+            beta_k[:, 0] += contrib_t
         else:
             chans = tr.get("channels", list(range(C)))
 
@@ -904,13 +902,33 @@ def back_propagate_attribution(
                     share = contrib_t[j] / max(len(chans), 1)
                     for i_ch in chans:
                         #cake += share
-                        beta[j, i_ch] += share
+                        beta_k[j, i_ch] += share
                 else:
                     for i_ch in chans:
                         #cake += contrib_t[j] * (e[j, i_ch] / Ej)
-                        beta[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
+                        beta_k[j, i_ch] += contrib_t[j] * (e[j, i_ch] / Ej)
         #print(f'cake_{k}={cake}, difference : {alphas[k] - cake}')
         #differences += alphas[k] - cake
+        return beta_k
+
+    feature_items = [
+        (k, tr)
+        for k, tr in enumerate(traces_x)
+        if float(alphas[k]) != 0.0
+    ]
+
+    if len(feature_items) == 1 or n_jobs == 1:
+        parts = (_attribution_for_feature(k, tr) for k, tr in feature_items)
+    else:
+        parts = Parallel(n_jobs=n_jobs, backend=parallel_backend)(
+            delayed(_attribution_for_feature)(k, tr)
+            for k, tr in feature_items
+        )
+
+    for beta_k in parts:
+        if beta_k is not None:
+            beta += beta_k
+
     #print(f'Differences: {differences}')
 
     return beta.T
