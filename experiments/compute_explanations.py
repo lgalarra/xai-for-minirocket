@@ -475,9 +475,7 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         print(f'Loading existing classifier at {model_path}')
         classifier = eval(MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT[dataset_name][mr_classifier_name])
         mmv.MINIROCKET_PARAMETERS = classifier.minirocket_params
-        if not hasattr(classifier, 'pca'):
-            classifier._X_transform = mmv._transform_batch(classifier._X_train, parameters=mmv.MINIROCKET_PARAMETERS)
-            classifier.pca = PCA(n_components=0.9, random_state=42).fit(classifier._X_transform)
+        classifier.ensure_training_transform_and_pca()
     else:
         print('Training new classifier...')
         mr_classifier = MR_CLASSIFIERS[mr_classifier_name]()
@@ -553,6 +551,7 @@ if __name__ == '__main__':
 
     if end != sys.maxsize-1:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{start}-{end}.csv')
+        DataExporter.METADATA_FILE = DataExporter.METADATA_FILE.replace('.csv', f'-{start}-{end}.csv')
 
     if not should_export_data:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-NOTDUMPED.csv')

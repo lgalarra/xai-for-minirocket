@@ -36,6 +36,31 @@ class MinirocketClassifier:
         self._X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
         self.pca = PCA(n_components=0.9, random_state=42).fit(self._X_transform)
 
+    def ensure_training_transform_and_pca(self):
+        refresh_transform = (
+            not hasattr(self, '_X_transform')
+            or self._X_transform is None
+            or self._X_transform.shape[0] != self._X_train.shape[0]
+            or not np.isfinite(self._X_transform).all()
+        )
+        if refresh_transform:
+            self._X_transform = mmv._transform_batch(self._X_train, parameters=self.minirocket_params)
+            if not np.isfinite(self._X_transform).all():
+                num_nan = np.isnan(self._X_transform).sum()
+                num_inf = np.isinf(self._X_transform).sum()
+                raise ValueError(
+                    f"MiniRocket training transform contains non-finite values after recomputation "
+                    f"(NaN={num_nan}, Inf={num_inf})."
+                )
+
+        refresh_pca = (
+            refresh_transform
+            or not hasattr(self, 'pca')
+            or getattr(self.pca, 'n_features_in_', self._X_transform.shape[1]) != self._X_transform.shape[1]
+        )
+        if refresh_pca:
+            self.pca = PCA(n_components=0.9, random_state=42).fit(self._X_transform)
+
     def minirocket_transform(self, X) -> dict:
         return mmv.transform_prime(X, parameters=self.minirocket_params)
 
@@ -92,6 +117,8 @@ class MinirocketClassifier:
         if X is None or y is None:
             X = self._X_train
             y = self._y_train
+
+        self.ensure_training_transform_and_pca()
 
         return MinirocketExplainer(X, y, minirocket_classifier=self.classifier,
                                    X_transformed=self.pca.transform(self._X_transform),

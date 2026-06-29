@@ -1,5 +1,7 @@
+import glob
 import os.path
 import pickle
+import re
 
 import numpy as np
 import pandas as pd
@@ -21,6 +23,26 @@ class DataImporter:
             return path + f"/{distance}"
         return path
 
+    @staticmethod
+    def _metadata_sort_key(path):
+        filename = os.path.basename(path)
+        match = re.match(r"metadata(?:-\d+)?-(\d+)-(\d+)_ref_policy_", filename)
+        if match is None:
+            return (-1, -1, filename)
+        return (int(match.group(1)), int(match.group(2)), filename)
+
+    @staticmethod
+    def _read_metadata_files(metadata_paths):
+        metadata_paths = sorted(set(metadata_paths), key=DataImporter._metadata_sort_key)
+        if len(metadata_paths) == 1:
+            return pd.read_csv(metadata_paths[0])
+        return pd.concat((pd.read_csv(path) for path in metadata_paths), ignore_index=True)
+
+    @staticmethod
+    def _range_metadata_paths(attributions_path, reference_policy):
+        base, ext = os.path.splitext(DataExporter.METADATA_FILE)
+        return glob.glob(f"{attributions_path}/{base}-*-*_ref_policy_{reference_policy}{ext}")
+
     def get_metadata(self, classifier_name, explainer_method, label, distance, reference_policy=None) -> pd.DataFrame:
         attributions_path = self.get_attributions_path(classifier_name, explainer_method, label, distance)
         if distance == 'euclidean' and not os.path.exists(attributions_path):
@@ -32,6 +54,9 @@ class DataImporter:
             )
             if os.path.exists(policy_metadata_path):
                 return pd.read_csv(policy_metadata_path)
+            range_metadata_paths = DataImporter._range_metadata_paths(attributions_path, reference_policy)
+            if range_metadata_paths:
+                return DataImporter._read_metadata_files(range_metadata_paths)
 
         legacy_metadata_path = f"{attributions_path}/{DataExporter.METADATA_FILE}"
         if os.path.exists(legacy_metadata_path):
@@ -45,6 +70,9 @@ class DataImporter:
             )
             if os.path.exists(policy_metadata_path):
                 metadata_frames.append(pd.read_csv(policy_metadata_path))
+            range_metadata_paths = DataImporter._range_metadata_paths(attributions_path, policy)
+            if range_metadata_paths:
+                metadata_frames.append(DataImporter._read_metadata_files(range_metadata_paths))
         if metadata_frames:
             return pd.concat(metadata_frames, ignore_index=True)
 
