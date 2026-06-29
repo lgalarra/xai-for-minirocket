@@ -5,7 +5,13 @@ import pandas as pd
 import numpy as np
 from scipy.spatial.distance import cdist
 
-from counterfactual import optimize_minirocket_counterfactual
+from counterfactual import (
+    _as_batch,
+    _classifier_classes,
+    _get_minirocket_transform,
+    _get_predict_proba,
+    optimize_minirocket_counterfactual,
+)
 
 COUNTERFACTUAL_REFERENCE_POLICY = "counterfactual"
 
@@ -23,20 +29,21 @@ REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class"
                              }
 
 COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
-    "seed_reference_policy": "opposite_class_closest_instance",
+    "seed_reference_policy": "opposite_class_medoid",
     "target_class": None,
     "weights": {
         "dwt": 1.0,
-        "frequency": 0.0,
+        "frequency": 1.0,
         "minirocket": 1.0,
         "probability": 1.0,
     },
     "probability_mode": "margin",
     "wavelet_levels": None,
-    "method": "Powell",
+    "initial_blend": 1.0,
+    "method": "COBYLA",
     "maxiter": 100,
     "tol": 1e-4,
-    "optimizer_options": None,
+    "optimizer_options": {"rhobeg": 0.25},
 }
 
 COUNTERFACTUAL_REFERENCE_PARAMS = {
@@ -66,9 +73,30 @@ def compute_counterfactual_reference(
         classifier,
         dataset_name=None,
         minirocket_parameters=None,
-        transform_fn=None) -> np.ndarray:
+        transform_fn=None,
+        initial_blend=None) -> np.ndarray:
     params = get_counterfactual_reference_params(dataset_name)
     params.pop("seed_reference_policy", None)
+    configured_initial_blend = params.pop("initial_blend", None)
+    if initial_blend is None:
+        initial_blend = configured_initial_blend
+    if initial_blend is not None:
+        if not 0.0 <= initial_blend <= 1.0:
+            raise ValueError(f"initial_blend must be between 0 and 1; got {initial_blend}.")
+        params["initial"] = (
+            (1.0 - initial_blend) * np.asarray(x_target, dtype=np.float64)
+            + initial_blend * np.asarray(seed_reference, dtype=np.float64)
+        )
+    transform_minirocket = _get_minirocket_transform(classifier, minirocket_parameters, transform_fn)
+    predict_proba = _get_predict_proba(classifier, transform_minirocket)
+    seed_reference_proba = predict_proba(_as_batch(seed_reference))[0]
+    seed_reference_class_idx = int(np.argmax(seed_reference_proba))
+    classes = _classifier_classes(classifier)
+    params["target_class"] = (
+        classes[seed_reference_class_idx]
+        if classes is not None
+        else seed_reference_class_idx
+    )
 
     start = time.perf_counter()
     counterfactual_reference, info = optimize_minirocket_counterfactual(
