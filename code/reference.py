@@ -1,17 +1,85 @@
+import copy
+import time
+
 import pandas as pd
 import numpy as np
 from scipy.spatial.distance import cdist
 
+from counterfactual import optimize_minirocket_counterfactual
+
+COUNTERFACTUAL_REFERENCE_POLICY = "counterfactual"
+
 REFERENCE_POLICIES = ['opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid',
                       'global_medoid', 'global_centroid', 'opposite_class_farthest_instance',
+                      COUNTERFACTUAL_REFERENCE_POLICY,
                       ]
 
 REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class",
                              'opposite_class_centroid': "Centroid of Opposite Class",
                              'global_medoid': "Global Medoid", 'global_centroid': "Global Centroid",
                              'opposite_class_farthest_instance': "Farthest Instance of Opposite Class",
-                             'opposite_class_closest_instance': "Closest Instance of Opposite Class"
+                             'opposite_class_closest_instance': "Closest Instance of Opposite Class",
+                             COUNTERFACTUAL_REFERENCE_POLICY: "Counterfactual"
                              }
+
+COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
+    "seed_reference_policy": "opposite_class_closest_instance",
+    "target_class": None,
+    "weights": {
+        "dwt": 1.0,
+        "frequency": 0.0,
+        "minirocket": 1.0,
+        "probability": 1.0,
+    },
+    "probability_mode": "margin",
+    "wavelet_levels": None,
+    "method": "Powell",
+    "maxiter": 100,
+    "tol": 1e-4,
+    "optimizer_options": None,
+}
+
+COUNTERFACTUAL_REFERENCE_PARAMS = {
+    "ford-a": {"maxiter": 100, "tol": 1e-4},
+    "double-freq-test": {"maxiter": 100, "tol": 1e-4},
+    "abnormal-heartbeat-c1": {"maxiter": 100, "tol": 1e-4},
+    "starlight-c1": {"maxiter": 100, "tol": 1e-4},
+    "starlight-c2": {"maxiter": 100, "tol": 1e-4},
+    "starlight-c3": {"maxiter": 100, "tol": 1e-4},
+    "cognitive-circles": {"maxiter": 75, "tol": 1e-4},
+    "handoutlines": {"maxiter": 50, "tol": 1e-4},
+}
+
+
+def get_counterfactual_reference_params(dataset_name: str) -> dict:
+    params = copy.deepcopy(COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS)
+    dataset_params = copy.deepcopy(COUNTERFACTUAL_REFERENCE_PARAMS.get(dataset_name, {}))
+    if "weights" in dataset_params:
+        params["weights"].update(dataset_params.pop("weights"))
+    params.update(dataset_params)
+    return params
+
+
+def compute_counterfactual_reference(x_target, y_target, classifier, explainer, dataset_name: str) -> np.ndarray:
+    params = get_counterfactual_reference_params(dataset_name)
+    seed_reference_policy = params.pop("seed_reference_policy")
+    seed_reference = explainer.get_reference(x_target, y_target, seed_reference_policy)
+
+    start = time.perf_counter()
+    counterfactual_reference, info = optimize_minirocket_counterfactual(
+        classifier,
+        x_target,
+        seed_reference,
+        return_info=True,
+        **params,
+    )
+    time_elapsed = time.perf_counter() - start
+    print(
+        "Time elapsed (counterfactual reference): "
+        f"{time_elapsed}; success={info['success']}; "
+        f"target_probability={info['probability_target_X_double_prime']}"
+    )
+    return counterfactual_reference
 
 def medoid_time_series_idx(X: np.ndarray, distance='euclidean') -> int:
     """

@@ -280,7 +280,7 @@ def plot_curves(
             ax.plot(
                 time_axis,
                 X_prime_raw[channel_idx],
-                label="raw X': opposite-class medoid",
+                label=f"raw X': opposite-class medoid",
                 linewidth=1.0,
                 linestyle="--",
                 alpha=0.45,

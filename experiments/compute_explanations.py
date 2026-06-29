@@ -42,7 +42,7 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score
 from export_data import DataExporter
-from reference import REFERENCE_POLICIES
+from reference import COUNTERFACTUAL_REFERENCE_POLICY, REFERENCE_POLICIES, compute_counterfactual_reference
 
 import argparse
 
@@ -199,7 +199,7 @@ def parse_args():
         "-r",
         type=lambda s: s.split(','),
         default=None,
-        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance'"
+        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance', 'counterfactual'"
     )
 
     parser.add_argument(
@@ -326,6 +326,7 @@ TSHAP_CONFIGS = tuple(
     for stride in (5, 20)
 )
 
+
 def get_segmented_runtime_columns(num_segments: int) -> tuple:
     prefix = "runtimes-segmented" if num_segments == 10 else f"runtimes-segmented-n{num_segments}"
     return f"{prefix}-seconds", f"{prefix}-mean", f"{prefix}-std"
@@ -382,9 +383,27 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                          compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
-    explanation = list(explainer.explain_instances(x_target, y_target,
-                                                   classifier_explainer=explainer_method,
-                                                   reference_policy=reference_policy, top_alpha=top_alpha))[0]
+    if reference_policy == COUNTERFACTUAL_REFERENCE_POLICY:
+        reference = compute_counterfactual_reference(
+            x_target,
+            y_target,
+            classifier,
+            explainer,
+            dataset_name,
+        )
+        explanation = list(explainer.explain_instances(
+            x_target,
+            y_target,
+            classifier_explainer=explainer_method,
+            reference_policy="custom",
+            reference=reference,
+            top_alpha=top_alpha,
+        ))[0]
+        explanation.explanation["reference_policy"] = reference_policy
+    else:
+        explanation = list(explainer.explain_instances(x_target, y_target,
+                                                       classifier_explainer=explainer_method,
+                                                       reference_policy=reference_policy, top_alpha=top_alpha))[0]
 
     ## Point to point explanation
     reference = explanation.get_reference()
