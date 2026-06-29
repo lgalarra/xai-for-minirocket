@@ -60,16 +60,23 @@ def get_counterfactual_reference_params(dataset_name: str) -> dict:
     return params
 
 
-def compute_counterfactual_reference(x_target, y_target, classifier, explainer, dataset_name: str) -> np.ndarray:
+def compute_counterfactual_reference(
+        x_target,
+        seed_reference,
+        classifier,
+        dataset_name=None,
+        minirocket_parameters=None,
+        transform_fn=None) -> np.ndarray:
     params = get_counterfactual_reference_params(dataset_name)
-    seed_reference_policy = params.pop("seed_reference_policy")
-    seed_reference = explainer.get_reference(x_target, y_target, seed_reference_policy)
+    params.pop("seed_reference_policy", None)
 
     start = time.perf_counter()
     counterfactual_reference, info = optimize_minirocket_counterfactual(
         classifier,
         x_target,
         seed_reference,
+        minirocket_parameters=minirocket_parameters,
+        transform_fn=transform_fn,
         return_info=True,
         **params,
     )

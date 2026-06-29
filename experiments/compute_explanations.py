@@ -42,7 +42,7 @@ from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_cl
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
 from sklearn.metrics import accuracy_score
 from export_data import DataExporter
-from reference import COUNTERFACTUAL_REFERENCE_POLICY, REFERENCE_POLICIES, compute_counterfactual_reference
+from reference import REFERENCE_POLICIES
 
 import argparse
 
@@ -383,27 +383,11 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                          compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
-    if reference_policy == COUNTERFACTUAL_REFERENCE_POLICY:
-        reference = compute_counterfactual_reference(
-            x_target,
-            y_target,
-            classifier,
-            explainer,
-            dataset_name,
-        )
-        explanation = list(explainer.explain_instances(
-            x_target,
-            y_target,
-            classifier_explainer=explainer_method,
-            reference_policy="custom",
-            reference=reference,
-            top_alpha=top_alpha,
-        ))[0]
-        explanation.explanation["reference_policy"] = reference_policy
-    else:
-        explanation = list(explainer.explain_instances(x_target, y_target,
-                                                       classifier_explainer=explainer_method,
-                                                       reference_policy=reference_policy, top_alpha=top_alpha))[0]
+    explanation = list(explainer.explain_instances(x_target, y_target,
+                                                   classifier_explainer=explainer_method,
+                                                   reference_policy=reference_policy,
+                                                   top_alpha=top_alpha,
+                                                   dataset_name=dataset_name))[0]
 
     ## Point to point explanation
     reference = explanation.get_reference()

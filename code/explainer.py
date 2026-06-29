@@ -9,7 +9,8 @@ import numdifftools as nd
 import minirocket_multivariate_variable as mmv
 from minirocket_multivariate_variable import back_propagate_attribution, get_feature_signature
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class, \
-    farthest_series_euclidean, closest_series_euclidean
+    farthest_series_euclidean, closest_series_euclidean, COUNTERFACTUAL_REFERENCE_POLICY, \
+    compute_counterfactual_reference, get_counterfactual_reference_params
 from stratoshap.StratoShap import SHAPStratum
 
 
@@ -238,7 +239,8 @@ class MinirocketExplainer:
 
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
                                  reference_policy, reference=None, top_alpha=None,
-                                 top_alpha_that_change_class=None, feature_to_backpropagate=None) -> dict:
+                                 top_alpha_that_change_class=None, feature_to_backpropagate=None,
+                                 dataset_name=None) -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -248,7 +250,7 @@ class MinirocketExplainer:
         if reference_policy == 'custom':
             reference = reference
         else:
-            reference = self.get_reference(x_target, y_label, reference_policy)
+            reference = self.get_reference(x_target, y_label, reference_policy, dataset_name=dataset_name)
 
         start = time.perf_counter()
         is_multichannel = x_target.shape[1] > 1
@@ -310,7 +312,7 @@ class MinirocketExplainer:
                 'selected_features': selected_features
                 }
 
-    def get_reference(self, x_target, y, reference_policy) -> np.ndarray:
+    def get_reference(self, x_target, y, reference_policy, dataset_name=None) -> np.ndarray:
         if reference_policy == 'global_medoid':
             return self.global_medoid
         elif reference_policy == 'global_centroid':
@@ -341,12 +343,29 @@ class MinirocketExplainer:
                                                                   self.minirocket_params)),
                                                     self.subsets_transformed[1 - y])
                 return self.subsets[1 - y][idx]
+        elif reference_policy == COUNTERFACTUAL_REFERENCE_POLICY:
+            params = get_counterfactual_reference_params(dataset_name)
+            seed_reference_policy = params["seed_reference_policy"]
+            seed_reference = self.get_reference(
+                x_target,
+                y,
+                seed_reference_policy,
+                dataset_name=dataset_name,
+            )
+            return compute_counterfactual_reference(
+                x_target,
+                seed_reference,
+                self.minirocket_classifier,
+                dataset_name=dataset_name,
+                minirocket_parameters=self.minirocket_params,
+            )
         else:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")
 
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
                           reference_policy = 'global_centroid', reference=None, top_alpha=None,
-                          top_alpha_that_change_class=None, feature_to_backpropagate=None) -> Generator:
+                          top_alpha_that_change_class=None, feature_to_backpropagate=None,
+                          dataset_name=None) -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
@@ -364,14 +383,16 @@ class MinirocketExplainer:
                                                             reference,
                                                             top_alpha=top_alpha,
                                                             top_alpha_that_change_class=top_alpha_that_change_class,
-                                                            feature_to_backpropagate=feature_to_backpropagate))
+                                                            feature_to_backpropagate=feature_to_backpropagate,
+                                                            dataset_name=dataset_name))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],
                                                                 classifier_explainer, reference_policy,
                                                                 reference, top_alpha=top_alpha,
                                                                 top_alpha_that_change_class=top_alpha_that_change_class,
-                                                                feature_to_backpropagate=feature_to_backpropagate))
+                                                                feature_to_backpropagate=feature_to_backpropagate,
+                                                                dataset_name=dataset_name))
 
     def _retain_attributions_that_change_class(self, alphas, reference_logit, instance_logit):
         sum = reference_logit
@@ -402,4 +423,3 @@ class SegmentedMinirocketExplainer(MinirocketExplainer):
     def __init__(self, X, y, minirocket_classifier, minirocket_params, num_segments=10):
         self.num_segments = num_segments
         super().__init__(X, y, minirocket_classifier, minirocket_params)
-
