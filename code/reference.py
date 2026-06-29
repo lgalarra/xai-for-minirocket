@@ -47,8 +47,8 @@ COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
 }
 
 COUNTERFACTUAL_REFERENCE_PARAMS = {
-    "ford-a": {"maxiter": 100, "tol": 1e-4},
-    "double-freq-test": {"maxiter": 100, "tol": 1e-4},
+    "ford-a": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
+    "double-freq-test": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "abnormal-heartbeat-c1": {"maxiter": 100, "tol": 1e-4},
     "starlight-c1": {"maxiter": 100, "tol": 1e-4},
     "starlight-c2": {"maxiter": 100, "tol": 1e-4},
