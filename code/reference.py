@@ -50,9 +50,9 @@ COUNTERFACTUAL_REFERENCE_PARAMS = {
     "ford-a": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "double-freq-test": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "abnormal-heartbeat-c1": {"maxiter": 100, "tol": 1e-4},
-    "starlight-c1": {"maxiter": 100, "tol": 1e-4},
-    "starlight-c2": {"maxiter": 100, "tol": 1e-4},
-    "starlight-c3": {"maxiter": 100, "tol": 1e-4},
+    "starlight-c1": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
+    "starlight-c2": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
+    "starlight-c3": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "cognitive-circles": {"maxiter": 75, "tol": 1e-4},
     "handoutlines": {"maxiter": 50, "tol": 1e-4},
 }
