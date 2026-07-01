@@ -62,6 +62,15 @@ def parse_args() -> argparse.Namespace:
         help="DTW-align X' to X before building the initial blend.",
     )
     parser.add_argument(
+        "--dtw-max-points",
+        type=int,
+        default=None,
+        help=(
+            "If set, approximate DTW alignment on at most this many uniformly sampled points "
+            "and interpolate back to the original length."
+        ),
+    )
+    parser.add_argument(
         "--aligned-reference-objective",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -83,6 +92,15 @@ def parse_args() -> argparse.Namespace:
         help="Probability loss passed to optimize_minirocket_counterfactual.",
     )
     parser.add_argument("--wavelet-levels", type=int, default=None)
+    parser.add_argument(
+        "--regularizer-stride",
+        type=int,
+        default=1,
+        help=(
+            "Use every Nth time point for DWT/frequency regularizers during optimization. "
+            "Higher values are faster for long series but lower quality."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=Path("/tmp/forda_counterfactual_curves.png"))
     return parser.parse_args()
 
@@ -204,7 +222,10 @@ def predict_label_and_probability(classifier: MinirocketClassifier, x: np.ndarra
     return pred, float(proba[class_idx])
 
 
-def dtw_align_to_reference(reference: np.ndarray, series: np.ndarray) -> tuple[np.ndarray, float]:
+def dtw_align_to_reference(
+        reference: np.ndarray,
+        series: np.ndarray,
+        max_points: int | None = None) -> tuple[np.ndarray, float]:
     """
     Warp `series` onto the time axis of `reference` using multivariate DTW.
 
@@ -221,6 +242,25 @@ def dtw_align_to_reference(reference: np.ndarray, series: np.ndarray) -> tuple[n
 
     _, ref_len = reference.shape
     _, series_len = series.shape
+    if max_points is not None:
+        max_points = int(max_points)
+        if max_points < 2:
+            raise ValueError(f"max_points must be >= 2; got {max_points}.")
+        if max(ref_len, series_len) > max_points:
+            ref_idx = np.unique(np.round(np.linspace(0, ref_len - 1, max_points)).astype(int))
+            series_idx = np.unique(np.round(np.linspace(0, series_len - 1, max_points)).astype(int))
+            aligned_sampled, sampled_cost = dtw_align_to_reference(
+                reference[:, ref_idx],
+                series[:, series_idx],
+                max_points=None,
+            )
+            full_axis = np.arange(ref_len)
+            aligned = np.empty((reference.shape[0], ref_len), dtype=np.float64)
+            for channel_idx in range(reference.shape[0]):
+                aligned[channel_idx] = np.interp(full_axis, ref_idx, aligned_sampled[channel_idx])
+            cost_scale = ref_len / max(len(ref_idx), 1)
+            return aligned.astype(series.dtype, copy=False), float(sampled_cost * cost_scale)
+
     costs = np.full((ref_len + 1, series_len + 1), np.inf, dtype=np.float64)
     costs[0, 0] = 0.0
 
@@ -340,7 +380,7 @@ def main() -> None:
     _, p_ref_source = predict_label_and_probability(classifier, X_prime_raw, class_idx=y_pred)
 
     if args.dtw_align_reference:
-        X_prime_initial, dtw_cost = dtw_align_to_reference(X, X_prime_raw)
+        X_prime_initial, dtw_cost = dtw_align_to_reference(X, X_prime_raw, max_points=args.dtw_max_points)
     else:
         X_prime_initial = X_prime_raw
         dtw_cost = None
@@ -361,6 +401,7 @@ def main() -> None:
         weights=weights,
         probability_mode=args.probability_mode,
         wavelet_levels=args.wavelet_levels,
+        regularizer_stride=args.regularizer_stride,
         initial=initial,
         method=args.method,
         maxiter=args.optimizer_maxiter,
@@ -400,6 +441,7 @@ def main() -> None:
     print(f"probability_source_X_double_prime={p_cf_source:.6f}")
     print(f"probability_margin_X_double_prime={p_cf_target - p_cf_source:.6f}")
     print(f"dtw_align_reference={args.dtw_align_reference}")
+    print(f"dtw_max_points={args.dtw_max_points}")
     if dtw_cost is not None:
         print(f"dtw_cost_X_to_X_prime={dtw_cost:.6f}")
     print(f"aligned_reference_objective={args.aligned_reference_objective}")
@@ -413,6 +455,7 @@ def main() -> None:
     print(f"frequency_term_final={info['frequency_term']:.6f}")
     print(f"minirocket_distance_X_double_prime_to_X_prime={info['minirocket_distance']:.6f}")
     print(f"probability_mode={info['probability_mode']}")
+    print(f"regularizer_stride={info['regularizer_stride']}")
     print(f"probability_margin_initial={info['probability_margin_initial']:.6f}")
     print(f"probability_margin_final={info['probability_margin_X_double_prime']:.6f}")
     print(f"objective_initial={info['initial_objective']:.6f} objective_final={info['objective']:.6f}")

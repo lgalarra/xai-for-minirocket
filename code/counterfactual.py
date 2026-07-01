@@ -196,6 +196,7 @@ def optimize_minirocket_counterfactual(
         weights: dict[str, float] | None = None,
         probability_mode: str = "margin",
         wavelet_levels: int | None = None,
+        regularizer_stride: int = 1,
         initial: ArrayLike | None = None,
         bounds: Any = None,
         method: str = "Powell",
@@ -250,6 +251,11 @@ def optimize_minirocket_counterfactual(
         "target_log" maximizes only P(target_class | Z).
     wavelet_levels
         Number of Haar-DWT levels. Defaults to all possible levels.
+    regularizer_stride
+        Use every Nth time point for the DWT and frequency regularizers. Values
+        greater than 1 reduce objective cost for long series at the expense of
+        less faithful shape/frequency matching. MiniROCKET and probability terms
+        are still evaluated on the full candidate.
     initial
         Initial candidate with shape (C, L). Defaults to X.
     bounds
@@ -283,6 +289,9 @@ def optimize_minirocket_counterfactual(
             raise ValueError(f"weights[{key!r}] must be non-negative.")
     if probability_mode not in {"margin", "target_log"}:
         raise ValueError("probability_mode must be either 'margin' or 'target_log'.")
+    regularizer_stride = int(regularizer_stride)
+    if regularizer_stride < 1:
+        raise ValueError(f"regularizer_stride must be >= 1; got {regularizer_stride}.")
 
     transform_minirocket = _get_minirocket_transform(minirocket_classifier, minirocket_parameters, transform_fn)
     predict_proba = _get_predict_proba(minirocket_classifier, transform_minirocket)
@@ -290,8 +299,9 @@ def optimize_minirocket_counterfactual(
     X_batch = _as_batch(X)
     X_prime_batch = _as_batch(X_prime)
     phi_prime = transform_minirocket(X_prime_batch)[0]
-    dwt_X = haar_dwt_coefficients(X, levels=wavelet_levels)
-    frequency_X = frequency_magnitude_spectrum(X)
+    X_regularized = X[..., ::regularizer_stride]
+    dwt_X = haar_dwt_coefficients(X_regularized, levels=wavelet_levels) if weights["dwt"] else None
+    frequency_X = frequency_magnitude_spectrum(X_regularized) if weights["frequency"] else None
     proba_X = predict_proba(X_batch)[0]
     proba_X_prime = predict_proba(X_prime_batch)[0]
     source_idx = int(np.argmax(proba_X))
@@ -300,15 +310,24 @@ def optimize_minirocket_counterfactual(
     source_class = classes[source_idx] if classes is not None else source_idx
     resolved_target_class = classes[target_idx] if classes is not None else target_idx
 
-    dwt_scale = max(float(np.linalg.norm(dwt_X)), 1.0)
-    frequency_scale = max(float(np.linalg.norm(frequency_X)), 1.0)
+    dwt_scale = max(float(np.linalg.norm(dwt_X)), 1.0) if dwt_X is not None else 1.0
+    frequency_scale = max(float(np.linalg.norm(frequency_X)), 1.0) if frequency_X is not None else 1.0
     minirocket_scale = max(float(np.linalg.norm(phi_prime)), 1.0)
 
     def objective_terms(flat_candidate: np.ndarray) -> tuple[float, float, float, float, float, float, float, float]:
         candidate = flat_candidate.reshape(X.shape)
         candidate_batch = _as_batch(candidate)
-        dwt_delta = haar_dwt_coefficients(candidate, levels=wavelet_levels) - dwt_X
-        frequency_delta = frequency_magnitude_spectrum(candidate) - frequency_X
+        candidate_regularized = candidate[..., ::regularizer_stride]
+        if dwt_X is not None:
+            dwt_delta = haar_dwt_coefficients(candidate_regularized, levels=wavelet_levels) - dwt_X
+            dwt_term = float((np.linalg.norm(dwt_delta) / dwt_scale) ** 2)
+        else:
+            dwt_term = 0.0
+        if frequency_X is not None:
+            frequency_delta = frequency_magnitude_spectrum(candidate_regularized) - frequency_X
+            frequency_term = float((np.linalg.norm(frequency_delta) / frequency_scale) ** 2)
+        else:
+            frequency_term = 0.0
         phi_delta = transform_minirocket(candidate_batch)[0] - phi_prime
         proba = predict_proba(candidate_batch)[0]
         target_probability = float(np.clip(proba[target_idx], probability_eps, 1.0))
@@ -317,8 +336,6 @@ def optimize_minirocket_counterfactual(
             probability_margin = target_probability
         else:
             probability_margin = target_probability - source_probability
-        dwt_term = float((np.linalg.norm(dwt_delta) / dwt_scale) ** 2)
-        frequency_term = float((np.linalg.norm(frequency_delta) / frequency_scale) ** 2)
         minirocket_term = float((np.linalg.norm(phi_delta) / minirocket_scale) ** 2)
         if probability_mode == "margin":
             probability_term = float(1.0 - probability_margin)
@@ -395,6 +412,7 @@ def optimize_minirocket_counterfactual(
         "initial_minirocket_term": initial_minirocket,
         "initial_probability_term": initial_probability_term,
         "probability_mode": probability_mode,
+        "regularizer_stride": regularizer_stride,
         "source_class": source_class,
         "source_class_index": source_idx,
         "target_class": resolved_target_class,

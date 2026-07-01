@@ -39,6 +39,7 @@ COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
     },
     "probability_mode": "margin",
     "wavelet_levels": None,
+    "regularizer_stride": 1,
     "initial_blend": 1.0,
     "method": "COBYLA",
     "maxiter": 100,
@@ -49,7 +50,7 @@ COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
 COUNTERFACTUAL_REFERENCE_PARAMS = {
     "ford-a": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "double-freq-test": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
-    "abnormal-heartbeat-c1": {"maxiter": 100, "tol": 1e-4},
+    "abnormal-heartbeat-c1": {"maxiter": 100, "tol": 1e-4, "regularizer_stride": 16},
     "starlight-c1": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "starlight-c2": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
     "starlight-c3": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},

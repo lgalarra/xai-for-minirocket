@@ -15,7 +15,7 @@ OUT_DIR = Path("./figures")       # output directory
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PERTURBATION_POLICY = 'gaussian'
 EVOLUTION_FACTOR = 'percentile_cut'
-EXPLANATION_METHOD = 'stratoshap-k1'
+EXPLANATION_METHOD = 'shap'
 MODEL = None
 #MODEL = "MLPClassifier"
 
