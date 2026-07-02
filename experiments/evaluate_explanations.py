@@ -174,6 +174,15 @@ def get_n_perturbed_points(nonzero_attribution_count: int, percentile_cut: float
     return int(np.ceil(nonzero_attribution_count * (100.0 - percentile_cut) / 100.0))
 
 
+def get_perturbation_args_for_explainer(all_args: dict, explainer_method: str) -> dict:
+    args_for_explainer = copy.deepcopy(all_args)
+    if explainer_method == 'shap' and 'percentile_cut' in args_for_explainer:
+        percentile_cuts = args_for_explainer['percentile_cut']
+        if 10 not in percentile_cuts:
+            args_for_explainer['percentile_cut'] = [*percentile_cuts, 10]
+    return args_for_explainer
+
+
 def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations, explainer_method,
                                  perturbation_policy, args, budget):
     X_test_for_explanations = X_test.copy()
@@ -358,13 +367,14 @@ if __name__ == '__main__':
                         )
                         print('Label, explainer_method, distance: ', label, explainer_method, distance)
                         for perturbation_policy, all_args in PERTURBATIONS.items():
-                            for combo in itertools.product(*all_args.values()):
-                                args = dict(zip(all_args.keys(), combo))
+                            args_for_explainer = get_perturbation_args_for_explainer(all_args, explainer_method)
+                            for combo in itertools.product(*args_for_explainer.values()):
+                                args = dict(zip(args_for_explainer.keys(), combo))
                                 print('Perturbation', perturbation_policy, 'Args: ', args)
                                 for reference_policy in reference_policies:
                                     df_results = copy.deepcopy(df_schema)
                                     args['y'] = y_test if label == 'training' else classifier.predict(X_test)
-                                    perturbation_budget = PERTURBATIONS[perturbation_policy]['budget'][0]
+                                    perturbation_budget = args_for_explainer['budget'][0]
                                     count_source, nonzero_attribution_count, avg_nonzero_per_series = get_perturbation_count_basis(
                                         reference_policy,
                                         explanations_dict,

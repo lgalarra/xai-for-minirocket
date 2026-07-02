@@ -89,19 +89,25 @@ def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, r
     if n_perturbed_points is None:
         return mask
 
-    n_perturbed_points = int(n_perturbed_points)
     selected_indices = np.flatnonzero(mask)
-    if n_perturbed_points >= selected_indices.size:
+    effective_n_perturbed_points = min(int(n_perturbed_points), selected_indices.size)
+    #print(
+    #    f'Effective perturbed points: {effective_n_perturbed_points} in total)'
+    #    f'(requested: {int(n_perturbed_points)}, available after percentile cut: {selected_indices.size})'
+    #)
+    if effective_n_perturbed_points == selected_indices.size:
         return mask
-    if n_perturbed_points <= 0:
+    if effective_n_perturbed_points <= 0:
         return np.zeros(mask.shape, dtype=bool)
 
     if random_select:
         rng = np.random.default_rng(rng)
-        kept_indices = rng.choice(selected_indices, size=n_perturbed_points, replace=False)
+        kept_indices = rng.choice(selected_indices, size=effective_n_perturbed_points, replace=False)
     else:
         flat_scores = np.asarray(scores).ravel()[selected_indices]
-        kept_indices = selected_indices[np.argpartition(flat_scores, -n_perturbed_points)[-n_perturbed_points:]]
+        kept_indices = selected_indices[
+            np.argpartition(flat_scores, -effective_n_perturbed_points)[-effective_n_perturbed_points:]
+        ]
 
     limited_mask = np.zeros(mask.size, dtype=bool)
     limited_mask[kept_indices] = True
