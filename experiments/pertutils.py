@@ -83,6 +83,31 @@ def _random_unconstrained_mask(explanation: np.ndarray, percentile_cut: float, r
         mask[idx] = mask_i.reshape(explanation_i.shape)
     return mask
 
+
+def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, rng=None,
+                random_select: bool = False) -> np.ndarray:
+    if n_perturbed_points is None:
+        return mask
+
+    n_perturbed_points = int(n_perturbed_points)
+    selected_indices = np.flatnonzero(mask)
+    if n_perturbed_points >= selected_indices.size:
+        return mask
+    if n_perturbed_points <= 0:
+        return np.zeros(mask.shape, dtype=bool)
+
+    if random_select:
+        rng = np.random.default_rng(rng)
+        kept_indices = rng.choice(selected_indices, size=n_perturbed_points, replace=False)
+    else:
+        flat_scores = np.asarray(scores).ravel()[selected_indices]
+        kept_indices = selected_indices[np.argpartition(flat_scores, -n_perturbed_points)[-n_perturbed_points:]]
+
+    limited_mask = np.zeros(mask.size, dtype=bool)
+    limited_mask[kept_indices] = True
+    return limited_mask.reshape(mask.shape)
+
+
 def zero_out_random_ones(arr, x, rng=None):
     arr = arr.copy()
     rng = np.random.default_rng(rng)
@@ -114,13 +139,12 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
     X_perturb = np.random.normal(avg, kwargs['sigma'] * std, size=new_shape)
     percentile_mask = np.vectorize(filter_explanation_fn)
     explanation_mask = percentile_mask(padded_explanation)
+    explanation_mask = _limit_mask(
+        explanation_mask.astype(bool),
+        padded_explanation,
+        n_perturbed_points=kwargs.get('n_perturbed_points')
+    ).astype(float)
     explanation_size = np.count_nonzero(explanation_mask)
-    #print('Original explanation size:', explanation_size)
-    #if 'n_perturbed_points' in kwargs and kwargs['n_perturbed_points'] < explanation_size:
-    #    n_zeros =  explanation_size - kwargs['n_perturbed_points']
-    #    explanation_mask = zero_out_random_ones(explanation_mask, n_zeros, rng=np.random.default_rng())
-    #    explanation_size = np.count_nonzero(explanation_mask)
-    #    print('New explanation size:', explanation_size)
 
     return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb, explanation_size
 
@@ -177,6 +201,11 @@ def get_reference_perturbation(xfrom, xto, explanation, filter_explanation_fn, *
     percentile_value = np.percentile(np.abs(masked_explanation), percentile)
     percentile_mask = np.vectorize(lambda x: x if np.abs(x) > percentile_value else 0.0)
     percentile_vector = percentile_mask(masked_explanation)
+    percentile_vector = _limit_mask(
+        percentile_vector != 0.0,
+        np.abs(percentile_vector),
+        n_perturbed_points=kwargs.get('n_perturbed_points')
+    ).astype(float) * percentile_vector
     return apply_explanation_mask(xto, xfrom, percentile_vector, kwargs['interpolation'])
 
 
@@ -188,7 +217,16 @@ def get_reference_perturbation_on_mask(xfrom, xto, explanation_mask, **kwargs):
 def get_random_reference_perturbation(xfrom, xto, explanation, unconstrained=False, **kwargs):
     mask_fn = _random_unconstrained_mask if unconstrained else _random_positive_mask
     masks = [
-        np.where(mask_fn(explanation, kwargs['percentile_cut']), 1.0, 0.0)
+        np.where(
+            _limit_mask(
+                mask_fn(explanation, kwargs['percentile_cut']),
+                np.abs(explanation),
+                n_perturbed_points=kwargs.get('n_perturbed_points'),
+                random_select=True
+            ),
+            1.0,
+            0.0
+        )
         for _ in range(kwargs['budget'])
     ]
     percentile_vectors = np.stack(masks, axis=1).reshape(
@@ -251,11 +289,22 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                                              **args)
         elif policy == 'gaussian_bottom':
             explanation_mask = _bottom_mask(X_e, args['percentile_cut'])
+            explanation_mask = _limit_mask(
+                explanation_mask,
+                -X_e,
+                n_perturbed_points=args.get('n_perturbed_points')
+            )
             return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
                                                      explanation_mask=explanation_mask, **args)
         elif policy in ('gaussian_random', 'gaussian random'):
             masks = [
-                _random_mask(X_e, args['percentile_cut']) for _ in range(args['budget'])
+                _limit_mask(
+                    _random_mask(X_e, args['percentile_cut']),
+                    np.abs(X_e),
+                    n_perturbed_points=args.get('n_perturbed_points'),
+                    random_select=True
+                )
+                for _ in range(args['budget'])
             ]
             explanation_mask = np.stack(masks, axis=1).reshape(
                 X_e.shape[0] * args['budget'], *X_e.shape[1:]
@@ -264,7 +313,13 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                                                      explanation_mask=explanation_mask, **args)
         else:
             masks = [
-                _random_unconstrained_mask(X_e, args['percentile_cut']) for _ in range(args['budget'])
+                _limit_mask(
+                    _random_unconstrained_mask(X_e, args['percentile_cut']),
+                    np.abs(X_e),
+                    n_perturbed_points=args.get('n_perturbed_points'),
+                    random_select=True
+                )
+                for _ in range(args['budget'])
             ]
             explanation_mask = np.stack(masks, axis=1).reshape(
                 X_e.shape[0] * args['budget'], *X_e.shape[1:]
@@ -276,6 +331,11 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)
     elif policy == 'instance_to_reference_bottom':
         explanation_mask = _bottom_mask(X_explanations, args['percentile_cut'])
+        explanation_mask = _limit_mask(
+            explanation_mask,
+            -X_explanations,
+            n_perturbed_points=args.get('n_perturbed_points')
+        )
         return get_reference_perturbation_on_mask(xfrom=X_target, xto=X_references,
                                                   explanation_mask=explanation_mask, **args)
     elif policy == 'instance_to_reference_random':

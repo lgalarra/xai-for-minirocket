@@ -109,6 +109,71 @@ def has_explanations(explanations) -> bool:
     return values.size > 0 and any(value is not None for value in values.flat)
 
 
+def count_nonzero_attributions(explanations) -> int:
+    try:
+        values = np.asarray(explanations, dtype=float)
+        if values.size == 0:
+            return 0
+        values = values[np.isfinite(values)]
+        return int(np.count_nonzero(values))
+    except (TypeError, ValueError):
+        values = np.asarray(explanations, dtype=object)
+        total = 0
+        for value in values.flat:
+            if value is None:
+                continue
+            total += count_nonzero_attributions(value)
+        return total
+
+
+def count_explanation_series(explanations) -> int:
+    values = np.asarray(explanations, dtype=object)
+    if values.size == 0:
+        return 0
+    if values.ndim == 0:
+        return 1
+    return len(values)
+
+
+def get_explanation_count_info(name, explanations):
+    nonzero_count = count_nonzero_attributions(explanations)
+    series_count = count_explanation_series(explanations)
+    avg_nonzero_per_series = nonzero_count / series_count if series_count > 0 else 0.0
+    return name, nonzero_count, avg_nonzero_per_series
+
+
+def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explanations_dict,
+                                 segmented_explanations_dict, tshap_explanations_dict):
+    p2p_name, p2p_count, p2p_avg = get_explanation_count_info(
+        'p2p/end-to-end',
+        p2p_explanations_dict[reference_policy]
+    )
+    if p2p_count > 0:
+        return p2p_name, p2p_count, p2p_avg
+
+    counts = [get_explanation_count_info('backpropagated', explanations_dict[reference_policy])]
+    for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
+        counts.append(get_explanation_count_info(
+            f'segmented_{num_segments}',
+            segmented_explanations_dict[reference_policy][num_segments]
+        ))
+    for window_size_percent, stride in TSHAP_CONFIGS:
+        key = get_tshap_key(window_size_percent, stride)
+        counts.append(get_explanation_count_info(f'tshap_{key}', tshap_explanations_dict[reference_policy][key]))
+
+    positive_counts = [(name, count, avg) for name, count, avg in counts if count > 0]
+    if not positive_counts:
+        raise ValueError(
+            f"No non-zero explanations found for reference policy {reference_policy}. "
+            "Cannot decide how many observations to perturb."
+        )
+    return min(positive_counts, key=lambda item: item[1])
+
+
+def get_n_perturbed_points(nonzero_attribution_count: int, percentile_cut: float) -> int:
+    return int(np.ceil(nonzero_attribution_count * (100.0 - percentile_cut) / 100.0))
+
+
 def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations, explainer_method,
                                  perturbation_policy, args, budget):
     X_test_for_explanations = X_test.copy()
@@ -298,10 +363,30 @@ if __name__ == '__main__':
                                 print('Perturbation', perturbation_policy, 'Args: ', args)
                                 for reference_policy in reference_policies:
                                     df_results = copy.deepcopy(df_schema)
-                                    print('Backpropagated explanations')
                                     args['y'] = y_test if label == 'training' else classifier.predict(X_test)
                                     perturbation_budget = PERTURBATIONS[perturbation_policy]['budget'][0]
+                                    count_source, nonzero_attribution_count, avg_nonzero_per_series = get_perturbation_count_basis(
+                                        reference_policy,
+                                        explanations_dict,
+                                        p2p_explanations_dict,
+                                        segmented_explanations_dict,
+                                        tshap_explanations_dict
+                                    )
+                                    args['n_perturbed_points'] = get_n_perturbed_points(
+                                        nonzero_attribution_count,
+                                        args['percentile_cut']
+                                    )
+                                    print(
+                                        f'Perturbation count source: {count_source} '
+                                        f'({nonzero_attribution_count} non-zero attributions, '
+                                        f'{avg_nonzero_per_series:.2f} per series on average)'
+                                    )
+                                    print(
+                                        f'Percentile cut {args["percentile_cut"]}: '
+                                        f'perturbing at most {args["n_perturbed_points"]} observations'
+                                    )
 
+                                    print('Backpropagated explanations')
                                     metric, norm_metric, change_ratio, n_perturbed_points = compute_perturbation_metrics(
                                         classifier,
                                         X_test,
@@ -312,11 +397,12 @@ if __name__ == '__main__':
                                         args,
                                         perturbation_budget
                                     )
+                                    print(f'Backpropagated perturbed observations: {n_perturbed_points}')
                                     append_metrics(df_results, '', metric, norm_metric, change_ratio)
 
                                     if has_explanations(p2p_explanations_dict[reference_policy]):
                                         print('P2p explanations')
-                                        metric, norm_metric, change_ratio, _ = compute_perturbation_metrics(
+                                        metric, norm_metric, change_ratio, p2p_perturbed_points = compute_perturbation_metrics(
                                             classifier,
                                             X_test,
                                             references_dict[reference_policy],
@@ -326,17 +412,18 @@ if __name__ == '__main__':
                                             args,
                                             perturbation_budget
                                         )
+                                        print(f'P2p perturbed observations: {p2p_perturbed_points}')
                                         append_metrics(df_results, 'p2p_', metric, norm_metric, change_ratio)
                                     else:
+                                        print('P2p explanations missing')
                                         append_missing_metrics(df_results, 'p2p_')
 
-                                    args['n_perturbed_points'] = n_perturbed_points
                                     for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
                                         prefix = 'segmented_' if num_segments == 10 else f'segmented_n{num_segments}_'
                                         segmented_explanations = segmented_explanations_dict[reference_policy][num_segments]
                                         if has_explanations(segmented_explanations):
                                             print(f'Segmented explanations ({num_segments} segments)')
-                                            metric, norm_metric, change_ratio, _ = compute_perturbation_metrics(
+                                            metric, norm_metric, change_ratio, segmented_perturbed_points = compute_perturbation_metrics(
                                                 classifier,
                                                 X_test,
                                                 references_dict[reference_policy],
@@ -346,8 +433,13 @@ if __name__ == '__main__':
                                                 args,
                                                 perturbation_budget
                                             )
+                                            print(
+                                                f'Segmented perturbed observations ({num_segments} segments): '
+                                                f'{segmented_perturbed_points}'
+                                            )
                                             append_metrics(df_results, prefix, metric, norm_metric, change_ratio)
                                         else:
+                                            print(f'Segmented explanations missing ({num_segments} segments)')
                                             append_missing_metrics(df_results, prefix)
 
                                     for window_size_percent, stride in TSHAP_CONFIGS:
@@ -356,7 +448,7 @@ if __name__ == '__main__':
                                         tshap_explanations = tshap_explanations_dict[reference_policy][key]
                                         if has_explanations(tshap_explanations):
                                             print(f'TSHAP explanations ({key})')
-                                            metric, norm_metric, change_ratio, _ = compute_perturbation_metrics(
+                                            metric, norm_metric, change_ratio, tshap_perturbed_points = compute_perturbation_metrics(
                                                 classifier,
                                                 X_test,
                                                 references_dict[reference_policy],
@@ -366,8 +458,10 @@ if __name__ == '__main__':
                                                 args,
                                                 perturbation_budget
                                             )
+                                            print(f'TSHAP perturbed observations ({key}): {tshap_perturbed_points}')
                                             append_metrics(df_results, prefix, metric, norm_metric, change_ratio)
                                         else:
+                                            print(f'TSHAP explanations missing ({key})')
                                             append_missing_metrics(df_results, prefix)
 
                                     del args['y']
