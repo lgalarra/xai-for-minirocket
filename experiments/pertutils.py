@@ -67,12 +67,10 @@ def _random_mask(explanation: np.ndarray, percentile_cut: float, rng=None) -> np
     return mask.reshape(explanation.shape)
 
 
-def _random_unconstrained_mask(explanation: np.ndarray, percentile_cut: float, rng=None) -> np.ndarray:
+def _random_unconstrained_mask(explanation: np.ndarray, top_count: int, rng=None) -> np.ndarray:
     rng = np.random.default_rng(rng)
     mask = np.zeros(explanation.shape, dtype=bool)
     for idx, explanation_i in enumerate(explanation):
-        threshold = np.percentile(explanation_i, percentile_cut)
-        top_count = np.count_nonzero(explanation_i > threshold)
         if top_count == 0:
             continue
 
@@ -89,29 +87,51 @@ def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, r
     if n_perturbed_points is None:
         return mask
 
-    selected_indices = np.flatnonzero(mask)
-    effective_n_perturbed_points = min(int(n_perturbed_points), selected_indices.size)
-    #print(
-    #    f'Effective perturbed points: {effective_n_perturbed_points} in total)'
-    #    f'(requested: {int(n_perturbed_points)}, available after percentile cut: {selected_indices.size})'
-    #)
-    if effective_n_perturbed_points == selected_indices.size:
-        return mask
-    if effective_n_perturbed_points <= 0:
+    n_perturbed_points = int(n_perturbed_points)
+    if n_perturbed_points <= 0:
         return np.zeros(mask.shape, dtype=bool)
+
+    if mask.ndim <= 1:
+        masks = [np.asarray(mask)]
+        scores_per_instance = [np.asarray(scores)]
+        output_shape = mask.shape
+    else:
+        masks = mask
+        scores_per_instance = scores
+        output_shape = mask.shape
 
     if random_select:
         rng = np.random.default_rng(rng)
-        kept_indices = rng.choice(selected_indices, size=effective_n_perturbed_points, replace=False)
-    else:
-        flat_scores = np.asarray(scores).ravel()[selected_indices]
-        kept_indices = selected_indices[
-            np.argpartition(flat_scores, -effective_n_perturbed_points)[-effective_n_perturbed_points:]
-        ]
 
-    limited_mask = np.zeros(mask.size, dtype=bool)
-    limited_mask[kept_indices] = True
-    return limited_mask.reshape(mask.shape)
+    limited_mask = np.zeros(output_shape, dtype=bool)
+    for idx, mask_i in enumerate(masks):
+        flat_mask = np.asarray(mask_i).ravel()
+        selected_indices = np.flatnonzero(flat_mask)
+        effective_n_perturbed_points = min(n_perturbed_points, selected_indices.size)
+        #print(
+        #    f'Effective perturbed points: {effective_n_perturbed_points} per instance)'
+        #    f'(requested: {n_perturbed_points}, available after percentile cut: {selected_indices.size})'
+        #)
+        if effective_n_perturbed_points == selected_indices.size:
+            limited_mask_i = flat_mask
+        elif random_select:
+            kept_indices = rng.choice(selected_indices, size=effective_n_perturbed_points, replace=False)
+            kept_indices.sort()
+            limited_mask_i = np.zeros(flat_mask.size, dtype=bool)
+            limited_mask_i[kept_indices] = True
+        else:
+            flat_scores = np.asarray(scores_per_instance[idx]).ravel()[selected_indices]
+            score_order = np.argpartition(flat_scores, -effective_n_perturbed_points)[-effective_n_perturbed_points:]
+            score_order.sort()
+            kept_indices = selected_indices[score_order]
+            limited_mask_i = np.zeros(flat_mask.size, dtype=bool)
+            limited_mask_i[kept_indices] = True
+
+        if mask.ndim <= 1:
+            return limited_mask_i.reshape(output_shape)
+        limited_mask[idx] = limited_mask_i.reshape(mask_i.shape)
+
+    return limited_mask
 
 
 def zero_out_random_ones(arr, x, rng=None):
@@ -148,7 +168,8 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
     explanation_mask = _limit_mask(
         explanation_mask.astype(bool),
         padded_explanation,
-        n_perturbed_points=kwargs.get('n_perturbed_points')
+        n_perturbed_points=kwargs.get('n_perturbed_points'),
+        random_select=False
     ).astype(float)
     explanation_size = np.count_nonzero(explanation_mask)
 
@@ -222,10 +243,11 @@ def get_reference_perturbation_on_mask(xfrom, xto, explanation_mask, **kwargs):
 
 def get_random_reference_perturbation(xfrom, xto, explanation, unconstrained=False, **kwargs):
     mask_fn = _random_unconstrained_mask if unconstrained else _random_positive_mask
+    args = {'n_perturbed_points': kwargs['n_perturbed_points']} if unconstrained else {'percentile_cut': kwargs['percentile_cut']}
     masks = [
         np.where(
             _limit_mask(
-                mask_fn(explanation, kwargs['percentile_cut']),
+                mask_fn(explanation, **args),
                 np.abs(explanation),
                 n_perturbed_points=kwargs.get('n_perturbed_points'),
                 random_select=True
@@ -298,7 +320,8 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             explanation_mask = _limit_mask(
                 explanation_mask,
                 -X_e,
-                n_perturbed_points=args.get('n_perturbed_points')
+                n_perturbed_points=args.get('n_perturbed_points'),
+                random_select=False
             )
             return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
                                                      explanation_mask=explanation_mask, **args)
@@ -306,7 +329,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             masks = [
                 _limit_mask(
                     _random_mask(X_e, args['percentile_cut']),
-                    np.abs(X_e),
+                    X_e,
                     n_perturbed_points=args.get('n_perturbed_points'),
                     random_select=True
                 )
@@ -318,9 +341,10 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
                                                      explanation_mask=explanation_mask, **args)
         else:
+            ## gaussian_random_no_positive
             masks = [
                 _limit_mask(
-                    _random_unconstrained_mask(X_e, args['percentile_cut']),
+                    _random_unconstrained_mask(X_e, int(args.get('n_perturbed_points'))),
                     np.abs(X_e),
                     n_perturbed_points=args.get('n_perturbed_points'),
                     random_select=True
