@@ -67,14 +67,14 @@ def _random_mask(explanation: np.ndarray, percentile_cut: float, rng=None) -> np
     return mask.reshape(explanation.shape)
 
 
-def _random_unconstrained_mask(explanation: np.ndarray, top_count: int, rng=None) -> np.ndarray:
+def _random_unconstrained_mask(explanation: np.ndarray, N: int, rng=None) -> np.ndarray:
     rng = np.random.default_rng(rng)
     mask = np.zeros(explanation.shape, dtype=bool)
     for idx, explanation_i in enumerate(explanation):
-        if top_count == 0:
+        if N == 0:
             continue
 
-        n_selected = min(top_count, explanation_i.size)
+        n_selected = min(N, explanation_i.size)
         selected = rng.choice(explanation_i.size, size=n_selected, replace=False)
         mask_i = np.zeros(explanation_i.size, dtype=bool)
         mask_i[selected] = True
@@ -243,7 +243,7 @@ def get_reference_perturbation_on_mask(xfrom, xto, explanation_mask, **kwargs):
 
 def get_random_reference_perturbation(xfrom, xto, explanation, unconstrained=False, **kwargs):
     mask_fn = _random_unconstrained_mask if unconstrained else _random_positive_mask
-    args = {'n_perturbed_points': kwargs['n_perturbed_points']} if unconstrained else {'percentile_cut': kwargs['percentile_cut']}
+    args = {'N': kwargs['n_perturbed_points']} if unconstrained else {'percentile_cut': kwargs['percentile_cut']}
     masks = [
         np.where(
             _limit_mask(
