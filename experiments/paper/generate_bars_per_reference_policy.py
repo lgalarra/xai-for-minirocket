@@ -7,21 +7,28 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-
 # =========================
 # Configuration
 # =========================
-DATA_DIR = Path("perturbation-results")
-OUT_DIR = Path("./bar_charts_reference_policy")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DATA_DIR = SCRIPT_DIR.parent / "official-results"
+OUT_DIR = SCRIPT_DIR / "bar_charts_reference_policy"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPLAINER = "stratoshap-k1"
-#BASE_METRIC = "p2p_f_minus_f0"
 BASE_METRIC = "f_minus_f0"
 METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
-PERTURBATION_POLICY = "instance_to_reference"
+PERTURBATION_POLICIES = ("gaussian", "instance_to_reference")
 #MODEL_NAME = "RandomForestClassifier"
+
+
+def as_float(value, default=np.nan):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # =========================
@@ -29,47 +36,24 @@ PERTURBATION_POLICY = "instance_to_reference"
 # =========================
 dfs = []
 
-
-
-for csv_file in DATA_DIR.glob("*.csv"):
-    df = pd.read_csv(csv_file)
+for csv_file in DATA_DIR.glob("perturbation-results-*"):
+    df = pd.read_csv(csv_file, low_memory=False)
 
     # Parse args dictionary
     args = df["args"].apply(ast.literal_eval)
-    df["percentile_cut"] = args.apply(lambda d: d.get("percentile_cut"))
-    df["budget"] = args.apply(lambda d: d.get("budget"))
-    
-    if PERTURBATION_POLICY != "gaussian":    
-        df["interpolation"] = args.apply(lambda d: d.get("interpolation"))
-    else:
-        df["sigma"] = args.apply(lambda d: d.get("sigma"))
+    df["percentile_cut"] = args.apply(lambda d: as_float(d.get("percentile_cut")))
+    df["budget"] = args.apply(lambda d: as_float(d.get("budget")))
+    df["interpolation"] = args.apply(lambda d: as_float(d.get("interpolation"), default=0.0))
+    df["sigma"] = args.apply(lambda d: as_float(d.get("sigma")))
 
     dfs.append(df)
+
+if not dfs:
+    raise FileNotFoundError(f"No perturbation-results-* files found in {DATA_DIR}")
 
 data = pd.concat(dfs, ignore_index=True)
 data = data.drop(data[(data["mr_classifier"] != "LogisticRegression")
 & (data["base_explainer"] == "gradients")].index)
-
-# -------------------------
-# Filters
-# -------------------------
-if PERTURBATION_POLICY != "gaussian":
-    data = data[
-        (data["budget"] == 1)
-        & (data["percentile_cut"] == 90)
-        & (data["interpolation"] == 1.0)
-        & (data["base_explainer"] == EXPLAINER) 
-	    & (data["label"] == LABEL) 
-        & (data["perturbation_policy"] == PERTURBATION_POLICY)
-    ]
-else:
-    data = data[
-        (data["percentile_cut"] == 90)
-        & (data["sigma"] == 3.0)
-        & (data["base_explainer"] == EXPLAINER) 
-	    & (data["label"] == LABEL) 
-        & (data["perturbation_policy"] == PERTURBATION_POLICY)
-    ]
 
 # Normalize dataset names
 data["dataset"] = data["dataset"].str.replace(
@@ -77,7 +61,6 @@ data["dataset"] = data["dataset"].str.replace(
     "starlight",
     regex=True,
 )
-REFERENCE_POLICIES = {'global_centroid': 'centroid', 'global_medoid': 'medoid'}
 
 data["mr_classifier"] = data["mr_classifier"].replace({'LogisticRegression': 'LR', 'RandomForestClassifier': 'RF', 'MLPClassifier': 'MLP'})
 data["reference_policy"] = data["reference_policy"].replace(
@@ -100,13 +83,14 @@ def parse_semicolon_list(x):
         return []
     return [float(v) for v in str(x).split(";") if v != ""]
 
-data[f"{BASE_METRIC}_list"] = data[F"{BASE_METRIC}"].apply(parse_semicolon_list)
 
-# Explode into long format
-data = data.explode(f"{BASE_METRIC}_list")
-
-# Rename for clarity
-data = data.rename(columns={f"{BASE_METRIC}_list": f"{BASE_METRIC}_value"})
+def expand_metric_values(data):
+    data = data.copy()
+    data[f"{BASE_METRIC}_list"] = data[f"{BASE_METRIC}"].apply(parse_semicolon_list)
+    data = data.explode(f"{BASE_METRIC}_list")
+    data = data.rename(columns={f"{BASE_METRIC}_list": f"{BASE_METRIC}_value"})
+    data[f"{BASE_METRIC}_value"] = pd.to_numeric(data[f"{BASE_METRIC}_value"], errors="coerce")
+    return data.dropna(subset=[f"{BASE_METRIC}_value"])
 
 
 # -------------------------
@@ -118,67 +102,90 @@ data = data.rename(columns={f"{BASE_METRIC}_list": f"{BASE_METRIC}_value"})
 #    .agg(["mean", "std"])
 #    .reset_index()
 #)
-METRICS_LABELS = {"f_minus_f0-mean": "avg. ∆f - Probability drop", "p2p_f_minus_f0-mean": "avg. Δf - Probability drop",
-                  "segmented_f_minus_f0-mean": "avg. Δf - Probability drop", "f_minus_f0-change_ratio": "avg. Δf - Probability drop",
-                  "p2p_f_minus_f0-change_ratio": "avg. Δf - Probability drop", "segmented_f_minus_f0-change_ratio": "avg. Δf - Probability drop"
-                  }
+METRICS_LABELS = {"f_minus_f0-mean": "avg. ∆f - Probability drop"}
 
 EXPLAINER_LABELS = {'shap': 'SHAP', 'stratoshap-k1': 'ST-SHAP',
                     'extreme_feature_coalitions': 'EFC', 'gradients': 'Gradients'}
 
 
-# Use a clean style suitable for papers
 sns.set(style="whitegrid", context="paper")
 
-# =========================
-# Plot: one violin chart per dataset
-# =========================
-import seaborn as sns
 
-sns.set(style="whitegrid", context="paper")
+def safe_filename_part(value):
+    return str(value).replace("/", "-")
 
-# =========================
-# Plot: one boxplot per dataset
-# =========================
-# =========================
-# Plot: one boxplot per dataset
-# Each reference policy contains one box per MODEL
-# =========================
 
-for dataset, g_ds in data.groupby("dataset"):
+def filter_for_plot(data, explainer, perturbation_policy):
+    filtered = data[
+        (data["base_explainer"] == explainer)
+        & (data["label"] == LABEL)
+        & (data["perturbation_policy"] == perturbation_policy)
+        & (np.isclose(data["percentile_cut"], 90.0))
+    ]
 
-    plt.figure(figsize=(8, 5))
+    if perturbation_policy == "gaussian":
+        return filtered[np.isclose(filtered["sigma"], 3.0)]
 
-    order = sorted(g_ds["reference_policy"].unique())
-    model_order = sorted(g_ds["mr_classifier"].unique())
+    return filtered[
+        (np.isclose(filtered["budget"], 1.0))
+        & (np.isclose(filtered["interpolation"], 1.0))
+    ]
 
-    ax = sns.boxplot(
-        data=g_ds,
-        x="reference_policy",
-        y=f"{BASE_METRIC}_value",
-        hue="mr_classifier",
-        order=order,
-        hue_order=model_order,
-        width=0.7,
-        fliersize=2,
-        linewidth=1.1,
-    )
-    ax.set_xlabel("")
-    ax.set_ylabel(METRICS_LABELS[METRIC], fontsize=18)
-    #ax.set_xlabel("Reference policy")
-    #ax.set_title(f"{dataset} — {EXPLAINER_LABELS[EXPLAINER]}")
 
-    plt.xticks(rotation=20, fontsize=14)
-    plt.yticks(fontsize=14)
-    #plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
-    ax.legend(
-        title="Model",
-        loc="best",
-        frameon=True,
-    )
-    plt.tight_layout()
+written_files = []
+explainers = sorted(data["base_explainer"].dropna().unique())
+for perturbation_policy in PERTURBATION_POLICIES:
+    for explainer in explainers:
+        plot_data = filter_for_plot(data, explainer, perturbation_policy)
+        if plot_data.empty:
+            continue
+        plot_data = expand_metric_values(plot_data)
+        if plot_data.empty:
+            continue
 
-    out_file = OUT_DIR / f"{dataset}_{EXPLAINER}_{BASE_METRIC}_{PERTURBATION_POLICY}_reference_policy_boxplot.png"
-    plt.savefig(out_file, dpi=300, bbox_inches="tight")
-    plt.close()
+        for dataset, g_ds in plot_data.groupby("dataset"):
+            fig, ax = plt.subplots(figsize=(8, 5))
 
+            order = sorted(g_ds["reference_policy"].unique())
+            model_order = sorted(g_ds["mr_classifier"].unique())
+
+            sns.boxplot(
+                data=g_ds,
+                x="reference_policy",
+                y=f"{BASE_METRIC}_value",
+                hue="mr_classifier",
+                order=order,
+                hue_order=model_order,
+                width=0.7,
+                fliersize=2,
+                linewidth=1.1,
+                ax=ax,
+            )
+
+            ax.set_xlabel("")
+            ax.set_ylabel(METRICS_LABELS[METRIC], fontsize=18)
+            #ax.set_xlabel("Reference policy")
+            #ax.set_title(f"{dataset} — {EXPLAINER_LABELS.get(explainer, explainer)}")
+
+            ax.tick_params(axis="x", labelrotation=20, labelsize=14)
+            ax.tick_params(axis="y", labelsize=14)
+            ax.legend(
+                title="Model",
+                loc="best",
+                frameon=True,
+            )
+            fig.tight_layout()
+
+            out_file = OUT_DIR / (
+                f"{safe_filename_part(dataset)}_{safe_filename_part(explainer)}_"
+                f"{safe_filename_part(BASE_METRIC)}_{safe_filename_part(perturbation_policy)}_"
+                "reference_policy_boxplot.png"
+            )
+            fig.savefig(out_file, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            written_files.append(out_file)
+
+if not written_files:
+    raise ValueError("No charts were generated. Adjust the script configuration.")
+
+print(f"Wrote {len(written_files)} figures under {OUT_DIR}")

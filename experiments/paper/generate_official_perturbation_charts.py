@@ -28,6 +28,10 @@ DATASET_RENAMES = {
 CORE_STEMS = ("f_minus_f0", "p2p_f_minus_f0")
 SEGMENTED_RE = re.compile(r"^segmented(?:_n(?P<n>\d+))?_f_minus_f0$")
 TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
+AVERAGE_POLICY_SUFFIXES = {
+    "random_no_positive": "random no positive avg",
+    "bottom": "bottom avg",
+}
 
 
 def parse_args():
@@ -264,6 +268,48 @@ def filter_data(data, args):
     return normalize_dataset_names(data)
 
 
+def filter_average_policy_data(data, args):
+    data = data.copy()
+
+    policies = data["perturbation_policy"].astype(str)
+    suffix_mask = pd.Series(False, index=data.index)
+    for suffix in AVERAGE_POLICY_SUFFIXES:
+        suffix_mask |= policies.str.endswith(f"_{suffix}")
+
+    if args.evolution_factor != "perturbation_policy" and args.perturbation_policy != "all":
+        target_policies = {
+            f"{args.perturbation_policy}_{suffix}"
+            for suffix in AVERAGE_POLICY_SUFFIXES
+        }
+        data = data[data["perturbation_policy"].isin(target_policies)]
+    else:
+        data = data[suffix_mask]
+
+    if args.evolution_factor != "percentile_cut":
+        data = data[np.isclose(data["percentile_cut"], args.percentile_cut, equal_nan=False)]
+
+    if should_filter_sigma(args):
+        data = data[np.isclose(data["sigma"], args.sigma, equal_nan=False)]
+
+    if args.base_explainer != "all":
+        data = data[data["base_explainer"] == args.base_explainer]
+
+    if args.model != "all":
+        data = data[data["mr_classifier"] == args.model]
+
+    if args.reference_policy != "all":
+        data = data[data["reference_policy"] == args.reference_policy]
+
+    data = data[
+        ~(
+            (data["mr_classifier"] != "LogisticRegression")
+            & (data["base_explainer"] == "gradients")
+        )
+    ]
+
+    return normalize_dataset_names(data)
+
+
 def discover_metrics(data, args):
     metrics = []
     for col in data.columns:
@@ -286,6 +332,41 @@ def aggregate(data, evolution_factor):
         .mean(numeric_only=True)
         .sort_values(grouping)
     )
+
+
+def average_policy_suffix(policy):
+    policy = str(policy)
+    for suffix in AVERAGE_POLICY_SUFFIXES:
+        if policy.endswith(f"_{suffix}"):
+            return suffix
+    return None
+
+
+def aggregate_average_policies(data, evolution_factor, metrics):
+    metrics = [metric for metric in metrics if metric in data]
+    if data.empty or not metrics:
+        return pd.DataFrame(
+            columns=["dataset", "average_policy_suffix", evolution_factor, "average_value"]
+        )
+
+    data = data.copy()
+    data["average_policy_suffix"] = data["perturbation_policy"].apply(average_policy_suffix)
+    data = data[pd.notna(data["average_policy_suffix"])]
+    if evolution_factor != "perturbation_policy":
+        data = data[pd.notna(data[evolution_factor])]
+
+    if data.empty:
+        return pd.DataFrame(
+            columns=["dataset", "average_policy_suffix", evolution_factor, "average_value"]
+        )
+
+    grouped = (
+        data.groupby(["dataset", "average_policy_suffix", evolution_factor], as_index=False)[metrics]
+        .mean(numeric_only=True)
+        .sort_values(["dataset", "average_policy_suffix", evolution_factor])
+    )
+    grouped["average_value"] = grouped[metrics].mean(axis=1, skipna=True)
+    return grouped.dropna(subset=["average_value"])
 
 
 def best_metric_for_family(g_ds, metrics, family):
@@ -321,10 +402,13 @@ def style_maps(metrics, explainers):
     return color_map, linestyle_map
 
 
-def plot_dataset(g_ds, dataset, metrics, args, out_file):
+def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
     if args.evolution_factor == "percentile_cut" and args.invert_percentile_cut:
         g_ds = g_ds.copy()
         g_ds[args.evolution_factor] = 100 - g_ds[args.evolution_factor]
+        if average_data is not None and not average_data.empty:
+            average_data = average_data.copy()
+            average_data[args.evolution_factor] = 100 - average_data[args.evolution_factor]
 
     g_ds = g_ds.sort_values(args.evolution_factor)
     explainers = sorted(g_ds["base_explainer"].unique())
@@ -352,6 +436,25 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file):
                 marker=".",
                 color=color_map[metric],
                 label=label,
+            )
+
+    if average_data is not None and not average_data.empty:
+        average_styles = {
+            "random_no_positive": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
+            "bottom": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
+        }
+        average_data = average_data.sort_values(args.evolution_factor)
+        for suffix, g_avg in average_data.groupby("average_policy_suffix"):
+            style = average_styles.get(
+                suffix,
+                {"color": "0.2", "linestyle": "--", "marker": "x"},
+            )
+            plt.plot(
+                g_avg[args.evolution_factor],
+                g_avg["average_value"],
+                linewidth=2.5,
+                label=AVERAGE_POLICY_SUFFIXES.get(suffix, f"{suffix} avg"),
+                **style,
             )
 
     plt.xticks(fontsize=18)
@@ -394,21 +497,27 @@ def y_axis_label(metric_kind):
     return "mean value"
 
 
+def safe_filename_part(value):
+    return str(value).replace("/", "-")
+
+
 def output_name(dataset, args):
     parts = [
         dataset,
         args.evolution_factor,
         args.metric_kind,
         args.perturbation_policy if args.evolution_factor != "perturbation_policy" else "all-policies",
-        args.model,
+        f"base-{args.base_explainer}",
+        f"reference-{args.reference_policy}",
+        f"model-{args.model}",
     ]
-    return "_".join(str(part).replace("/", "-") for part in parts) + ".png"
+    return "_".join(safe_filename_part(part) for part in parts) + ".png"
 
 
 def main():
     args = parse_args()
-    data, files = load_data(args.data_dir)
-    data = filter_data(data, args)
+    raw_data, files = load_data(args.data_dir)
+    data = filter_data(raw_data, args)
     if data.empty:
         raise ValueError("No rows left after filtering. Adjust the CLI filters.")
 
@@ -417,6 +526,7 @@ def main():
         raise ValueError(f"No metrics discovered for metric kind {args.metric_kind}.")
 
     agg = aggregate(data, args.evolution_factor)
+    average_policy_data = filter_average_policy_data(raw_data, args)
     print(f"Read {len(files)} files from {args.data_dir}")
     print(f"Plotting {len(metrics)} metrics: {', '.join(metric_label(m) for m in metrics)}")
 
@@ -427,7 +537,19 @@ def main():
 
         best_metrics = best_metric_subset(g_ds, metrics)
         selected[dataset] = [metric_label(m) for m in best_metrics]
-        plot_dataset(g_ds, dataset, best_metrics, args, args.out_dir / "best_methods" / filename)
+        average_ds = aggregate_average_policies(
+            average_policy_data[average_policy_data["dataset"] == dataset],
+            args.evolution_factor,
+            best_metrics,
+        )
+        plot_dataset(
+            g_ds,
+            dataset,
+            best_metrics,
+            args,
+            args.out_dir / "best_methods" / filename,
+            average_data=average_ds,
+        )
 
     print(f"Wrote figures under {args.out_dir}")
     print("Best-method plots used:")
