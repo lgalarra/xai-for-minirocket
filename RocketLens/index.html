@@ -19,6 +19,7 @@
             <option value="abnormal-heartbeat-c1" selected>abnormal-heartbeat-c1</option>
             <option value="ford-a" selected>ford-a</option>
             <option value="cognitive-circles" selected>cognitive-circles</option>
+            <option value="double-freq-test" selected>double-freq-test</option>
           </select>
         </label>
         <label class="inline">Label
@@ -37,7 +38,7 @@
         <label class="inline">Explainer
           <select class="select small" id="peExplainer">
             <option value="shap" selected>shap</option>
-            <option value="StratoShap">StratoShap</option>
+            <option value="stratoshap-k1">StratoShap</option>
           </select>
         </label>
         <label class="inline">Reference
@@ -48,6 +49,7 @@
             <option value="opposite_class_centroid">Opposite centroid</option>
             <option value="global_medoid">Global medoid</option>
             <option value="global_centroid">Global centroid</option>
+            <option value="counterfactual">Counterfactual</option>
           </select>
         </label>
         <label class="inline">Instance
@@ -63,7 +65,8 @@
       <div class="instanceTabs" id="instanceTabs" aria-label="Open instances"></div>
     </div>
     <div class="headerActions">
-      <button class="btn" id="peSummaryBtn" disabled title="Summarize top embeddings by attribution">Attribution Summary</button>
+      <button class="btn" id="peSummaryBtn" disabled title="Summarize top embeddings by attribution">Attribution
+        Summary</button>
     </div>
   </header>
 
@@ -211,12 +214,41 @@
         <pre class="log" id="retroProgressLog" style="max-height:120px;"></pre>
       </div>
       <button class="btn" id="resetZoom" style="width:100%; margin-top:10px;">Reset zoom</button>
+
+
+      <div class="card" style="margin-top: 12px;">
+        <p style="text-align:center; display:flex; justify-content:center; align-items:center; gap:10px; margin:4px 0;">
+          <a href="https://youtu.be/rl4yZ3o_fI8" target="_blank"
+            style="text-decoration:none; font-weight:600; color:#1d4ed8; border:1px solid rgba(29,78,216,.35); background:rgba(29,78,216,.08); padding:6px 12px; border-radius:999px; transition:all .2s ease;">Video
+            Demo</a>
+          <span style="color:#94a3b8; font-weight:600;">•</span>
+          <a href="https://github.com/lgalarra/xai-for-minirocket/tree/rocketlens/RocketLens" target="_blank"
+            style="text-decoration:none; font-weight:600; color:#1d4ed8; border:1px solid rgba(29,78,216,.35); background:rgba(29,78,216,.08); padding:6px 12px; border-radius:999px; transition:all .2s ease;">GitHub
+            Repository</a>
+        </p>
+      </div>
+
     </aside>
 
     <main class="split tight">
       <div class="card" id="featureCard" style="position:relative;">
         <div class="row" style="margin-bottom:6px">
-          <h2>Embeddings</h2>
+          <div class="embTitleGroup">
+            <h2>Embeddings</h2>
+            <div class="embTabs" role="tablist" aria-label="Embedding views">
+              <button class="embTab active" id="embValuesTab" type="button" role="tab" aria-selected="true"
+                aria-controls="embValuesPanel" data-emb-tab="values">Values</button>
+              <button class="embTab" id="embDiffTab" type="button" role="tab" aria-selected="false"
+                aria-controls="embDiffPanel" data-emb-tab="diff">Differences</button>
+            </div>
+          </div>
+          <div class="legend">
+            <span><span class="dot" style="background: rgba(20,184,166,.58)"></span>instance</span>
+            <span><span class="dot" style="background: rgba(168,85,247,.50)"></span>reference</span>
+            <span><span class="dot" style="background: rgba(17,24,39,.10)"></span>attribution strip</span>
+          </div>
+        </div>
+        <div class="embToolbar">
           <div class="sortControls" id="embSortControls" aria-label="Embedding sort controls">
             <label class="inline">Sort
               <select class="select small" id="embSortKey">
@@ -230,18 +262,25 @@
               <label class="radio"><input type="radio" name="embSortDir" value="desc" /> desc</label>
             </div>
           </div>
-          <div class="legend">
-            <span><span class="dot" style="background: rgba(37,99,235,.70)"></span>higher attribution</span>
-            <span><span class="dot" style="background: rgba(17,24,39,.10)"></span>near zero</span>
-          </div>
+          <label class="check embOverlayCheck"><input id="showReferenceEmbeddings" type="checkbox" /> overlay reference</label>
         </div>
-        <svg id="featureOverview" aria-label="MiniROCKET embedding and attributions overview"></svg>
+        <div class="embTabPanel" id="embValuesPanel" role="tabpanel" aria-labelledby="embValuesTab">
+          <svg id="featureOverview" aria-label="MiniROCKET target and reference embeddings overview"></svg>
+        </div>
+        <div class="embTabPanel" id="embDiffPanel" role="tabpanel" aria-labelledby="embDiffTab" hidden>
+          <div class="embeddingDiffLegend" id="embeddingDiffLegend" aria-label="Embedding difference color scale">
+            <span class="diffLegendLabel" id="embeddingDiffMin">negative</span>
+            <span class="diffLegendRamp"></span>
+            <span class="diffLegendLabel" id="embeddingDiffMax">positive</span>
+          </div>
+          <svg id="embeddingDiffOverview" aria-label="MiniROCKET embedding differences overview"></svg>
+        </div>
         <div class="tooltip" id="featureTooltip"></div>
       </div>
       <div class="card">
         <div class="row">
           <h2>Time series</h2>
-          
+
           <label class="inline" style="gap:8px;">
             <span>Reference</span>
             <select class="select small" id="referencePolicySelect" disabled style="min-width:200px;">
@@ -254,7 +293,7 @@
           </label>
           <input id="align" type="range" min="0" max="0" step="1" value="0" style="display:none" aria-hidden="true"
             tabindex="-1" />
-            <label class="inline" style="gap:8px;">
+          <label class="inline" style="gap:8px;">
             <span>Betas</span>
             <select class="select small" id="betaFileSelect" disabled style="min-width:200px;">
               <option value="">Original β</option>
@@ -285,6 +324,7 @@
       </div>
     </main>
   </div>
+
 
 
   <!-- Top embeddings summary modal -->
@@ -386,9 +426,9 @@
   </div>
 
   <script src="./app.js"></script>
-  
-  
-  
+
+
+
 
 
 

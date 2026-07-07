@@ -35,7 +35,8 @@ from sklearn.linear_model import LogisticRegression
 from utils import (get_cognitive_circles_data, get_cognitive_circles_data_for_classification,
                    prepare_cognitive_circles_data_for_minirocket, get_forda_for_classification,
                    get_starlightcurves_for_classification,
-                   get_abnormal_hearbeat_for_classification, COGNITIVE_CIRCLES_CHANNELS,
+                   get_abnormal_hearbeat_for_classification, get_double_freq_test_for_classification,
+                   COGNITIVE_CIRCLES_CHANNELS,
                    COGNITIVE_CIRCLES_BASIC_CHANNELS,
                    cognitive_circles_get_sorted_channels_from_df)
 from classifier import MinirocketClassifier, MinirocketSegmentedClassifier
@@ -211,6 +212,7 @@ MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression, 'RandomForestClassif
 
 DATASET_FETCH_FUNCTIONS = {
     "ford-a": ("get_forda_for_classification()", [('C', 'Noise intensity')]),
+    "double-freq-test": ("get_double_freq_test_for_classification(n_samples=250)", [('X', 'Frequency')]),
     "abnormal-heartbeat-c1": ("get_abnormal_hearbeat_for_classification('1')", [('A', 'Amplitude Change')]),
     "starlight-c1": ("get_starlightcurves_for_classification('1')", [('B', 'Brightness')]),
     "starlight-c2": ("get_starlightcurves_for_classification('2')", [('B', 'Brightness')]),
@@ -219,6 +221,10 @@ DATASET_FETCH_FUNCTIONS = {
         "get_cognitive_circles_data_for_classification('data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
         list(COGNITIVE_CIRCLES_CHANNELS.items())
     )
+}
+
+DATASET_ALIASES = {
+    "double-test-freq": "double-freq-test",
 }
 
 
@@ -231,13 +237,14 @@ def build_map_of_already_trained_classifiers(datasets: list, classifiers):
 
 MR_ALREADY_TRAINED_CLASSIFIERS_FETCH_DICT = build_map_of_already_trained_classifiers(
     ['starlight-c1', 'starlight-c2', 'starlight-c3',
-     'abnormal-heartbeat-c1', 'ford-a', 'cognitive-circles'],
+     'abnormal-heartbeat-c1', 'ford-a', 'cognitive-circles', 'double-freq-test'],
     ['LogisticRegression', 'RandomForestClassifier'])
 
 MINIROCKET_PARAMS_DICT = {'ford-a': {'num_features': 500}, 'starlight-c1': {'num_features': 500},
                           'starlight-c2': {'num_features': 500}, 'starlight-c3': {'num_features': 500},
                           'cognitive-circles': {'num_features': 1000},
-                          'abnormal-heartbeat-c1': {'num_features': 1000}
+                          'abnormal-heartbeat-c1': {'num_features': 1000},
+                          'double-freq-test': {'num_features': 5000}
                           }
 
 
@@ -400,6 +407,7 @@ if __name__ == '__main__':
     EXPLAINERS = ['extreme_feature_coalitions', 'shap', 'gradients', 'stratoshap-k1']
 
     if datasets is not None:
+        datasets = [DATASET_ALIASES.get(dt, dt) for dt in datasets]
         DATASET_FETCH_FUNCTIONS = {dt: DATASET_FETCH_FUNCTIONS[dt] for dt in datasets}
     if labels is not None:
         LABELS = labels

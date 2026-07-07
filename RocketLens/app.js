@@ -414,6 +414,22 @@
     return m ? m[1] : null;
   }
 
+  function extractReferencePolicyFromGeneratedFile(filename, instanceId) {
+    const safeId = String(instanceId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const s = String(filename || '');
+    const patterns = [
+      new RegExp(`^metadata_ref_policy_(.+)_instance_${safeId}\\.json$`, 'i'),
+      new RegExp(`^reference_ref_policy_(.+)_for_instance_${safeId}\\.csv$`, 'i'),
+      new RegExp(`^mr_reference_ref_policy_(.+)_for_instance_${safeId}\\.csv$`, 'i'),
+      new RegExp(`^alphas_mr_explanations_ref_policy_(.+)_instance_${safeId}\\.csv$`, 'i')
+    ];
+    for (const rx of patterns) {
+      const m = s.match(rx);
+      if (m && m[1]) return m[1];
+    }
+    return null;
+  }
+
   function clearReferencePolicySelect(placeholder) {
     if (!el.referencePolicySelect) return;
     el.referencePolicySelect.innerHTML = '';
@@ -429,7 +445,7 @@
     const discovered = [];
     const seen = new Set();
     (files || []).forEach(file => {
-      const policy = extractReferencePolicyFromMetadataFile(file, instanceId);
+      const policy = extractReferencePolicyFromGeneratedFile(file, instanceId);
       if (!policy || seen.has(policy)) return;
       seen.add(policy);
       discovered.push(policy);
@@ -524,6 +540,10 @@
     featureZoomTransform: d3.zoomIdentity,
     isFeatureZooming: false,
     features: [],
+    activeEmbeddingTab: 'values',
+    showReferenceEmbeddings: false,
+    referenceEmbeddingMap: new Map(),
+    referenceEmbeddingFile: null,
     selectedFeatureIdx: null,
     hoveredFeatureIdx: null,
     // Embedding panel ordering (visual only; does not change feature indices)
@@ -617,6 +637,14 @@
     goFeature: document.querySelector('#goFeature'),
     featureInfo: document.querySelector('#featureInfo'),
     featureTooltip: document.querySelector('#featureTooltip'),
+    embeddingDiffOverview: document.querySelector('#embeddingDiffOverview'),
+    showReferenceEmbeddings: document.querySelector('#showReferenceEmbeddings'),
+    embeddingDiffLegend: document.querySelector('#embeddingDiffLegend'),
+    embeddingDiffMin: document.querySelector('#embeddingDiffMin'),
+    embeddingDiffMax: document.querySelector('#embeddingDiffMax'),
+    embTabs: document.querySelectorAll('[data-emb-tab]'),
+    embValuesPanel: document.querySelector('#embValuesPanel'),
+    embDiffPanel: document.querySelector('#embDiffPanel'),
     embSortKey: document.querySelector('#embSortKey'),
     embSortDir: document.querySelectorAll('input[name=\"embSortDir\"]'),
     peDataset: document.querySelector('#peDataset'),
@@ -736,8 +764,10 @@
     };
 
     function resize() {
-      const w = svg.node().clientWidth;
-      const h = svg.node().clientHeight;
+      const node = svg.node();
+      const box = node ? node.getBoundingClientRect() : { width: 0, height: 0 };
+      const w = Math.max(1, node ? (node.clientWidth || box.width || 1) : 1);
+      const h = Math.max(1, node ? (node.clientHeight || box.height || 1) : 1);
       g.attr('transform', `translate(${m.left},${m.top})`);
       return {
         w,
@@ -772,6 +802,12 @@
     bottom: 26,
     left: 44
   });
+  const embeddingDiffChart = chart('#embeddingDiffOverview', {
+    top: 16,
+    right: 18,
+    bottom: 26,
+    left: 44
+  });
 
   const fG = featureChart.g;
   const fTopG = fG.append('g');
@@ -787,6 +823,25 @@
   const fSel = fG.append('line').attr('stroke', 'rgba(17,24,39,.55)').attr('stroke-width', 1.5);
   const fHover = fG.append('line').attr('stroke', 'rgba(17,24,39,.20)').attr('stroke-width', 1.25).attr('stroke-dasharray', '4 4');
   const fOverlay = fG.append('rect').attr('fill', 'transparent').style('cursor', 'crosshair');
+
+  const fdG = embeddingDiffChart.g;
+  const fdGrid = fdG.append('g').attr('class', 'diffGrid');
+  const fdBarsG = fdG.append('g');
+  const fdStatus = fdG.append('text')
+    .attr('class', 'diffStatus')
+    .attr('text-anchor', 'middle')
+    .attr('fill', 'rgba(17,24,39,.55)')
+    .attr('font-size', 12)
+    .attr('font-weight', 700)
+    .attr('opacity', 0);
+  const fdZero = fdG.append('line').attr('stroke', 'rgba(17,24,39,.38)').attr('stroke-width', 1);
+  const fdAxes = {
+    x: fdG.append('g'),
+    y: fdG.append('g')
+  };
+  const fdSel = fdG.append('line').attr('stroke', 'rgba(17,24,39,.55)').attr('stroke-width', 1.5);
+  const fdHover = fdG.append('line').attr('stroke', 'rgba(17,24,39,.20)').attr('stroke-width', 1.25).attr('stroke-dasharray', '4 4');
+  const fdOverlay = fdG.append('rect').attr('fill', 'transparent').style('cursor', 'crosshair');
 
 
   const sG = seriesChart.g;
@@ -885,7 +940,7 @@
   }
 
 
-  function buildFeatureMetaFromSignals(alphaMap, embMap) {
+  function buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap) {
     const ids = new Set();
 
     try {
@@ -900,6 +955,15 @@
     try {
       if (embMap && typeof embMap.forEach === 'function') {
         embMap.forEach((_, k) => {
+          const f = +k;
+          if (Number.isFinite(f)) ids.add(f);
+        });
+      }
+    } catch (_) { }
+
+    try {
+      if (refEmbMap && typeof refEmbMap.forEach === 'function') {
+        refEmbMap.forEach((_, k) => {
           const f = +k;
           if (Number.isFinite(f)) ids.add(f);
         });
@@ -945,17 +1009,21 @@
         kernel_id: kId,
         dilation: Number.isFinite(+dil) ? +dil : 1,
         threshold: Number.isFinite(+thr) ? +thr : 0,
+        referenceEmbedding: (refEmbMap && refEmbMap.has && refEmbMap.has(fidx)) ? +refEmbMap.get(fidx) : null,
         triplet: '',
         kernel_str: ''
       };
     });
   }
 
-  function mergeFeatureSignals(features, alphaMap, embMap) {
+  function mergeFeatureSignals(features, alphaMap, embMap, refEmbMap) {
     return (features || []).map(d => ({
       ...d,
       alpha: (alphaMap && alphaMap.has(d.fidx)) ? alphaMap.get(d.fidx) : (Number.isFinite(d.alpha) ? d.alpha : 0),
-      embedding: (embMap && embMap.has(d.fidx)) ? embMap.get(d.fidx) : (Number.isFinite(d.embedding) ? d.embedding : 0)
+      embedding: (embMap && embMap.has(d.fidx)) ? embMap.get(d.fidx) : (Number.isFinite(d.embedding) ? d.embedding : 0),
+      referenceEmbedding: (refEmbMap && refEmbMap.has && refEmbMap.has(d.fidx))
+        ? +refEmbMap.get(d.fidx)
+        : (Number.isFinite(+d.referenceEmbedding) ? +d.referenceEmbedding : null)
     }));
   }
   // ---- Embedding panel sorting (visual only) ----
@@ -1123,7 +1191,7 @@
     if (preserveSelection && Number.isFinite(prevSelected) && featureByIdx(prevSelected)) {
       state.selectedFeatureIdx = prevSelected;
       if (el.featureIdx) el.featureIdx.value = String(prevSelected);
-      updateFeatureHeader(featureByIdx(prevSelected));
+      updateFeatureHeaderWithReference(featureByIdx(prevSelected));
     } else if (!preserveSelection) {
       state.selectedFeatureIdx = null;
     }
@@ -1150,6 +1218,13 @@
   function updateFeatureHeader(d) {
     if (!d) return;
     if (el.featureInfo) el.featureInfo.textContent = `α = ${fmt(d.alpha)} · emb = ${fmt(d.embedding)}`;
+  }
+
+  function updateFeatureHeaderWithReference(d) {
+    if (!d) return;
+    updateFeatureHeader(d);
+    if (!el.featureInfo || !Number.isFinite(+d.referenceEmbedding)) return;
+    el.featureInfo.textContent += ` · ref = ${fmt(d.referenceEmbedding)} · Δ = ${fmt(+d.embedding - +d.referenceEmbedding)}`;
   }
 
   function applyFeatureToKernelExplorer(d) {
@@ -1231,7 +1306,7 @@
     stopSweep();
     state.selectedFeatureIdx = d.fidx;
     if (el.featureIdx) el.featureIdx.value = d.fidx;
-    updateFeatureHeader(d);
+    updateFeatureHeaderWithReference(d);
     if (opts && opts.focusEmbedding) {
       focusFeatureInEmbeddingPanel(d.fidx, {
         zoomK: (opts && Number.isFinite(+opts.embeddingZoomK)) ? +opts.embeddingZoomK : 8
@@ -1253,6 +1328,9 @@
     const x = clientX - r.left;
     const y = clientY - r.top;
     tip.innerHTML = `#${d.fidx}<br>α=${fmt(d.alpha)}<br>emb=${fmt(d.embedding)}`;
+    if (Number.isFinite(+d.referenceEmbedding)) {
+      tip.innerHTML += `<br>ref=${fmt(d.referenceEmbedding)}<br>Δ=${fmt(+d.embedding - +d.referenceEmbedding)}`;
+    }
     tip.style.left = `${x + 12}px`;
     tip.style.top = `${y + 12}px`;
     tip.style.opacity = 1;
@@ -1268,11 +1346,16 @@
 
   function renderFeatureCharts() {
     if (!state.features || state.features.length === 0) return;
-    renderFeatureOverview();
+    if ((state.activeEmbeddingTab || 'values') === 'diff') renderEmbeddingDiffOverview();
+    else renderFeatureOverview();
   }
 
 
   function renderFeatureOverview() {
+    const featureSvgNode = featureChart.svg.node();
+    if (featureSvgNode && fG.node() && fG.node().parentNode !== featureSvgNode) {
+      featureSvgNode.appendChild(fG.node());
+    }
     const {
       innerW,
       innerH
@@ -1303,45 +1386,68 @@
     fTopG.attr('transform', 'translate(0,0)');
     fBotG.attr('transform', `translate(0,${topH + gap})`);
     fSep.attr('x1', 0).attr('x2', innerW).attr('y1', topH + gap / 2).attr('y2', topH + gap / 2).attr('opacity', 1);
-    const y = d3.scaleLinear().domain(d3.extent(state.features, d => d.embedding)).nice().range([topH, 0]);
+    const embVals = [];
+    (state.features || []).forEach(d => {
+      if (Number.isFinite(+d.embedding)) embVals.push(+d.embedding);
+      if (state.showReferenceEmbeddings === true && Number.isFinite(+d.referenceEmbedding)) embVals.push(+d.referenceEmbedding);
+    });
+    if (!embVals.length) embVals.push(0);
+    if (!embVals.some(v => v < 0)) embVals.push(0);
+    if (!embVals.some(v => v > 0)) embVals.push(0);
+    const y = d3.scaleLinear().domain(d3.extent(embVals)).nice().range([topH, 0]);
 
-    // Render embeddings as a bar chart (instead of a line chart).
+    // Render target and reference embeddings as overlapped bars.
     fEmbedPath.attr('d', '').attr('opacity', 0);
 
     const yZero = y(0);
-    const nBars = state.features.length;
-    const barW0 = Math.max(0.8, bandW * 0.9);
+    const barW0 = Math.max(0.8, bandW * 0.82);
 
-    const bars = fEmbedBarsG.selectAll('rect.embedBar').data(state.features, d => d.fidx);
-    const barsEnter = bars.enter().append('rect')
-      .attr('class', 'embedBar')
-      .attr('fill', 'rgba(125,169,165,.35)')
-      .attr('stroke', 'rgba(125,169,165,.75)')
-      .attr('stroke-width', 0.8);
+    fEmbedBarsG.selectAll('rect.embedBar').remove();
 
-    const barsMerged = barsEnter.merge(bars);
+    function renderEmbeddingSeries(cls, valueGetter, fill, stroke) {
+      const data = (state.features || []).filter(d => {
+        const v = valueGetter(d);
+        return v != null && Number.isFinite(+v);
+      });
+      const bars = fEmbedBarsG.selectAll(`rect.${cls}`).data(data, d => d.fidx);
+      const barsEnter = bars.enter().append('rect')
+        .attr('class', cls)
+        .attr('fill', fill)
+        .attr('stroke', stroke)
+        .attr('stroke-width', 0.8)
+        .attr('shape-rendering', bandW < 3 ? 'crispEdges' : null);
 
-    barsMerged.each(function (d) {
-      const node = this;
-      const xNew = xZ(featureDisplayPos(d.fidx)) - barW0 / 2;
-      const yNew = Math.min(y(d.embedding), yZero);
-      const hNew = Math.max(0, Math.abs(y(d.embedding) - yZero));
+      const barsMerged = barsEnter.merge(bars);
 
-      // y/height/width are stable across sorts; animate only x (and keep widths correct under zoom).
-      d3.select(node)
-        .attr('width', barW0)
-        .attr('y', yNew)
-        .attr('height', hNew);
+      barsMerged.each(function (d) {
+        const node = this;
+        const v = +valueGetter(d);
+        const xNew = xZ(featureDisplayPos(d.fidx)) - barW0 / 2;
+        const yNew = Math.min(y(v), yZero);
+        const hNew = Math.max(0, Math.abs(y(v) - yZero));
 
-      if (doAnimSort) {
-        gsap.killTweensOf(node);
-        gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
-      } else {
-        d3.select(node).attr('x', xNew);
-      }
-    });
+        d3.select(node)
+          .attr('width', barW0)
+          .attr('y', yNew)
+          .attr('height', hNew);
 
-    bars.exit().remove();
+        if (doAnimSort) {
+          gsap.killTweensOf(node);
+          gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
+        } else {
+          d3.select(node).attr('x', xNew);
+        }
+      });
+
+      bars.exit().remove();
+    }
+
+    renderEmbeddingSeries('referenceEmbedBar', d => state.showReferenceEmbeddings === true ? d.referenceEmbedding : null, 'rgba(168,85,247,.34)', 'rgba(126,34,206,.72)');
+    renderEmbeddingSeries('instanceEmbedBar', d => d.embedding, 'rgba(20,184,166,.38)', 'rgba(15,118,110,.78)');
+
+    fEmbedBarsG.selectAll('rect.referenceEmbedBar').lower();
+    fEmbedBarsG.selectAll('rect.instanceEmbedBar').raise();
+
     fAxes.x.attr('transform', `translate(0,${innerH})`);
     fAxes.y.attr('transform', 'translate(0,0)');
     const xTick = (v) => {
@@ -1459,7 +1565,7 @@
           if (featureZoomRAF) cancelAnimationFrame(featureZoomRAF);
           featureZoomRAF = requestAnimationFrame(() => {
             featureZoomRAF = null;
-            renderFeatureOverview();
+            renderFeatureCharts();
           });
         })
         .on('end', () => {
@@ -1511,6 +1617,213 @@
     // Only animate one render pass after a sort change (avoid animating on hover/zoom).
     if (state.animateFeatureSortNext) state.animateFeatureSortNext = false;
 
+  }
+
+  function renderEmbeddingDiffOverview() {
+    const diffSvgNode = embeddingDiffChart.svg.node();
+    if (diffSvgNode && fdG.node() && fdG.node().parentNode !== diffSvgNode) {
+      diffSvgNode.appendChild(fdG.node());
+    }
+    const {
+      innerW,
+      innerH
+    } = embeddingDiffChart.resize();
+    const n = state.features.length;
+    const ord = getFeatureDisplayOrder();
+    const xBaseFeat = d3.scaleLinear().domain([0, n - 1]).range([0, innerW]);
+    if (!state.featureZoomTransform) state.featureZoomTransform = d3.zoomIdentity;
+    const xZ = state.featureZoomTransform.rescaleX(xBaseFeat);
+    const step = (n > 1) ? (xZ(1) - xZ(0)) : innerW;
+    const bandW = Math.max(1, Math.abs(step));
+    const barW = Math.max(0.8, bandW * 0.86);
+
+    const data = (state.features || []).map(d => {
+      const instance = Number.isFinite(+d.embedding) ? +d.embedding : null;
+      const reference = Number.isFinite(+d.referenceEmbedding) ? +d.referenceEmbedding : null;
+      return {
+        ...d,
+        instanceEmbedding: instance,
+        referenceEmbeddingValue: reference,
+        embeddingDiff: (instance != null && reference != null) ? (instance - reference) : null
+      };
+    }).filter(d => Number.isFinite(+d.embeddingDiff));
+
+    const diffs = data.map(d => +d.embeddingDiff);
+    const maxAbs = Math.max(d3.max(diffs.map(v => Math.abs(v))) || 0, 1e-12);
+    const y = d3.scaleLinear().domain([-maxAbs, maxAbs]).nice().range([innerH, 0]);
+    const color = d3.scaleDiverging().domain([-maxAbs, 0, maxAbs]).interpolator(d3.interpolateRdBu);
+    const yZero = y(0);
+
+    if (el.embeddingDiffMin) el.embeddingDiffMin.textContent = fmt(-maxAbs);
+    if (el.embeddingDiffMax) el.embeddingDiffMax.textContent = fmt(maxAbs);
+
+    function fidxFromPx(px) {
+      const v = xZ.invert(px);
+      const r = clamp(Math.round(v), 0, n - 1);
+      const fidx = ord && ord.length ? ord[r] : r;
+      return (fidx == null) ? r : fidx;
+    }
+
+    const doAnimSort = !!window.ANIMATE_TRANSITIONS && !!state.animateFeatureSortNext && (typeof gsap !== 'undefined');
+    const sortDur = 0.55;
+    const sortEase = 'power2.out';
+
+    fdGrid.attr('transform', 'translate(0,0)')
+      .call(d3.axisLeft(y).ticks(5).tickSize(-innerW).tickFormat(''));
+    fdGrid.selectAll('line')
+      .attr('stroke', 'rgba(17,24,39,.12)')
+      .attr('stroke-width', 1);
+    fdGrid.selectAll('path').remove();
+
+    fdZero.attr('x1', 0).attr('x2', innerW).attr('y1', yZero).attr('y2', yZero).attr('opacity', 1);
+
+    fdStatus
+      .attr('x', innerW / 2)
+      .attr('y', Math.max(18, innerH / 2))
+      .attr('opacity', data.length ? 0 : 1)
+      .text('No reference embedding values available for this reference.');
+
+    const bars = fdBarsG.selectAll('rect.diffBar').data(data, d => d.fidx);
+    const barsEnter = bars.enter().append('rect')
+      .attr('class', 'diffBar')
+      .attr('stroke', 'rgba(17,24,39,.20)')
+      .attr('stroke-width', 0.4);
+    const barsMerged = barsEnter.merge(bars);
+
+    barsMerged.each(function (d) {
+      const node = this;
+      const v = +d.embeddingDiff;
+      const xNew = xZ(featureDisplayPos(d.fidx)) - barW / 2;
+      const yNew = Math.min(y(v), yZero);
+      const hNew = Math.max(0, Math.abs(y(v) - yZero));
+      d3.select(node)
+        .attr('width', barW)
+        .attr('y', yNew)
+        .attr('height', hNew)
+        .attr('fill', color(v))
+        .attr('opacity', 0.9);
+
+      if (doAnimSort) {
+        gsap.killTweensOf(node);
+        gsap.to(node, { duration: sortDur, ease: sortEase, attr: { x: xNew } });
+      } else {
+        d3.select(node).attr('x', xNew);
+      }
+    });
+
+    bars.exit().remove();
+
+    fdAxes.x.attr('transform', `translate(0,${innerH})`);
+    const xTick = (v) => {
+      const i = clamp(Math.round(v), 0, n - 1);
+      const f = (ord && ord.length) ? ord[i] : i;
+      return (f == null) ? '' : String(f);
+    };
+    fdAxes.x.call(d3.axisBottom(xZ).ticks(6).tickFormat(xTick).tickSizeOuter(0));
+    fdAxes.y.call(d3.axisLeft(y).ticks(4).tickSizeOuter(0));
+    styleAxes(fdG);
+
+    const y0 = 0;
+    const y1 = innerH;
+    if (state.selectedFeatureIdx != null) {
+      const sx = xZ(featureDisplayPos(state.selectedFeatureIdx));
+      fdSel.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      if (doAnimSort && fdSel.node()) {
+        gsap.killTweensOf(fdSel.node());
+        gsap.to(fdSel.node(), { duration: sortDur, ease: sortEase, attr: { x1: sx, x2: sx } });
+      } else {
+        fdSel.attr('x1', sx).attr('x2', sx);
+      }
+    } else {
+      fdSel.attr('opacity', 0);
+    }
+
+    if (state.hoveredFeatureIdx != null) {
+      const hx = xZ(featureDisplayPos(state.hoveredFeatureIdx));
+      fdHover.attr('y1', y0).attr('y2', y1).attr('opacity', 1);
+      if (doAnimSort && fdHover.node()) {
+        gsap.killTweensOf(fdHover.node());
+        gsap.to(fdHover.node(), { duration: sortDur, ease: sortEase, attr: { x1: hx, x2: hx } });
+      } else {
+        fdHover.attr('x1', hx).attr('x2', hx);
+      }
+    } else {
+      fdHover.attr('opacity', 0);
+    }
+
+    function scheduleFeatureDiffRender() {
+      if (state.__featureOverviewRAF) return;
+      state.__featureOverviewRAF = requestAnimationFrame(() => {
+        state.__featureOverviewRAF = null;
+        renderEmbeddingDiffOverview();
+      });
+    }
+
+    fdOverlay.attr('x', 0).attr('y', 0).attr('width', innerW).attr('height', innerH)
+      .style('cursor', 'grab');
+
+    if (!featureZoom) {
+      featureZoom = d3.zoom().scaleExtent([1, 200])
+        .on('start', () => {
+          state.isFeatureZooming = true;
+          fdOverlay.style('cursor', 'grabbing');
+        })
+        .on('zoom', (ev) => {
+          if (syncingFeatureZoom) return;
+          const t = d3.zoomIdentity.translate(ev.transform.x, 0).scale(ev.transform.k);
+          state.featureZoomTransform = t;
+          if (featureZoomRAF) cancelAnimationFrame(featureZoomRAF);
+          featureZoomRAF = requestAnimationFrame(() => {
+            featureZoomRAF = null;
+            renderFeatureCharts();
+          });
+        })
+        .on('end', () => {
+          state.isFeatureZooming = false;
+          fdOverlay.style('cursor', 'grab');
+        });
+    }
+    featureZoom.extent([
+      [0, 0],
+      [innerW, innerH]
+    ]).translateExtent([
+      [0, 0],
+      [innerW, innerH]
+    ]);
+    syncingFeatureZoom = true;
+    fdOverlay.call(featureZoom).call(featureZoom.transform, state.featureZoomTransform);
+    syncingFeatureZoom = false;
+    fdOverlay.selectAll('title').data([0]).join('title').text('Scroll to zoom. Drag to pan.');
+
+    fdOverlay
+      .on('mousemove', (ev) => {
+        if (state.isFeatureZooming) return;
+        const [px] = d3.pointer(ev, fdOverlay.node());
+        const fidx = fidxFromPx(px);
+        const prev = state.__featureHoverIdx;
+        state.hoveredFeatureIdx = fidx;
+        state.hoveredFeaturePx = px;
+        if (prev !== fidx) {
+          state.__featureHoverIdx = fidx;
+          scheduleFeatureDiffRender();
+        }
+        showFeatureTooltip(ev.clientX, ev.clientY, featureByFidx(fidx));
+      })
+      .on('mouseleave', () => {
+        state.hoveredFeatureIdx = null;
+        state.hoveredFeaturePx = null;
+        state.__featureHoverIdx = null;
+        scheduleFeatureDiffRender();
+        hideFeatureTooltip();
+      })
+      .on('click', (ev) => {
+        if (state.isFeatureZooming) return;
+        const [px] = d3.pointer(ev, fdOverlay.node());
+        const fidx = fidxFromPx(px);
+        selectFeature(fidx);
+      });
+
+    if (state.animateFeatureSortNext) state.animateFeatureSortNext = false;
   }
 
   function getKernel() {
@@ -3236,6 +3549,37 @@
     } catch (e) { }
   }
 
+  function initEmbeddingTabs() {
+    if (!el.embTabs || !el.embTabs.length) return;
+    const activate = (tab) => {
+      const key = tab || 'values';
+      state.activeEmbeddingTab = key;
+      el.embTabs.forEach(btn => {
+        const active = btn.getAttribute('data-emb-tab') === key;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (el.embValuesPanel) el.embValuesPanel.hidden = key !== 'values';
+      if (el.embDiffPanel) el.embDiffPanel.hidden = key !== 'diff';
+      requestAnimationFrame(() => renderFeatureCharts());
+    };
+    el.embTabs.forEach(btn => {
+      btn.addEventListener('click', () => activate(btn.getAttribute('data-emb-tab') || 'values'));
+    });
+    activate(state.activeEmbeddingTab || 'values');
+  }
+
+  function initEmbeddingSeriesControls() {
+    if (el.showReferenceEmbeddings) {
+      el.showReferenceEmbeddings.checked = state.showReferenceEmbeddings === true;
+      el.showReferenceEmbeddings.addEventListener('change', () => {
+        state.showReferenceEmbeddings = !!el.showReferenceEmbeddings.checked;
+        if ((state.activeEmbeddingTab || 'values') === 'values') renderFeatureCharts();
+      });
+    }
+  }
+
+
 
 
 
@@ -3246,7 +3590,24 @@
 
   function clearVisuals() {
     try {
-      d3.select(el.featureOverview).selectAll('*').remove();
+      fEmbedPath.attr('d', '').attr('opacity', 0);
+      fEmbedBarsG.selectAll('*').remove();
+      fHeatG.selectAll('*').remove();
+      fAxes.x.selectAll('*').remove();
+      fAxes.y.selectAll('*').remove();
+      fSep.attr('opacity', 0);
+      fSel.attr('opacity', 0);
+      fHover.attr('opacity', 0);
+    } catch (e) { }
+    try {
+      fdBarsG.selectAll('*').remove();
+      fdGrid.selectAll('*').remove();
+      fdAxes.x.selectAll('*').remove();
+      fdAxes.y.selectAll('*').remove();
+      fdZero.attr('opacity', 0);
+      fdSel.attr('opacity', 0);
+      fdHover.attr('opacity', 0);
+      fdStatus.attr('opacity', 0);
     } catch (e) { }
     try {
       d3.select(el.seriesChart).selectAll('*').remove();
@@ -4045,6 +4406,7 @@
     const refFile = `reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
     const alphasFile = `alphas_mr_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}.csv`;
     const mrExact = `mr_instance_${instanceId}.csv`;
+    const mrRefExact = `mr_reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
     const mrCandidates = (files || []).filter(f => {
       const fl = String(f || '').toLowerCase();
       if (fl === mrExact.toLowerCase()) return true;
@@ -4054,11 +4416,20 @@
       return false;
     }).sort((a, b) => (a.length - b.length) || String(a).localeCompare(String(b)));
     const mrFile = mrCandidates.length ? mrCandidates[0] : null;
+    const mrRefCandidates = (files || []).filter(f => {
+      const fl = String(f || '').toLowerCase();
+      if (fl === mrRefExact.toLowerCase()) return true;
+      if (fl.startsWith(`mr_reference_ref_policy_${String(cfg.refPolicy).toLowerCase()}_`) && fl.endsWith(`for_instance_${instanceId}.csv`)) return true;
+      if (fl.startsWith('mr_reference_') && fl.includes(`for_instance_${instanceId}.csv`)) return true;
+      return false;
+    }).sort((a, b) => (a.length - b.length) || String(a).localeCompare(String(b)));
+    const mrRefFile = mrRefCandidates.length ? mrRefCandidates[0] : null;
     const seriesUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${instanceFile}`;
     const refUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${refFile}`;
     const alphaUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${alphasFile}`;
     const betaUrl = betasFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${betasFile}` : null;
     const mrUrl = mrFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrFile}` : null;
+    const mrRefUrl = mrRefFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrRefFile}` : null;
 
     // Optional per-instance metadata file: metadata_ref_policy_<policy>_instance_<id>.json
     const metaJsonExact = `metadata_ref_policy_${cfg.refPolicy}_instance_${instanceId}.json`;
@@ -4083,6 +4454,7 @@
       console.log('series:', toLink(seriesUrl));
       console.log('alphas:', toLink(alphaUrl));
       console.log('embeddings:', mrUrl ? toLink(mrUrl) : '(missing)');
+      console.log('reference embeddings:', mrRefUrl ? toLink(mrRefUrl) : '(missing)');
       console.log('reference:', toLink(refUrl));
       console.log('betas:', betaUrl ? toLink(betaUrl) : '(missing)');
       console.groupEnd();
@@ -4098,10 +4470,14 @@
       peFade(convSvg, 0, 0.12)
     ]);
     const metaJsonPromise = metaJsonUrl ? peFetchJSON(metaJsonUrl).catch(() => null) : Promise.resolve(null);
-    const [seriesText, alphaText, mrText, instMetaJson] = await Promise.all([
+    const [seriesText, alphaText, mrText, mrRefText, instMetaJson] = await Promise.all([
       peFetchText(seriesUrl),
       peFetchText(alphaUrl),
       mrUrl ? peFetchText(mrUrl) : Promise.resolve(''),
+      mrRefUrl ? peFetchText(mrRefUrl).catch(err => {
+        console.warn('Could not load reference embeddings:', err);
+        return '';
+      }) : Promise.resolve(''),
       metaJsonPromise
     ]);
     let refText = null;
@@ -4125,11 +4501,17 @@
 
     const alphaMap = parseAlphaCSV(alphaText);
     const embMap = parseEmbeddingCSV(mrText);
+    const refEmbMap = parseEmbeddingCSV(mrRefText);
+    state.referenceEmbeddingMap = refEmbMap;
+    state.referenceEmbeddingFile = mrRefFile || null;
     if (mrUrl && embMap.size === 0) {
       console.warn('mr_instance file loaded but produced 0 values. Check CSV format:', mrUrl);
     }
+    if (mrRefUrl && refEmbMap.size === 0) {
+      console.warn('reference embedding file loaded but produced 0 values. Check CSV format:', mrRefUrl);
+    }
 
-    const meta = buildFeatureMetaFromSignals(alphaMap, embMap);
+    const meta = buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap);
 
     // Store & render per-instance metadata (if present)
     if (instMetaJson && typeof instMetaJson === 'object') {
@@ -4140,7 +4522,7 @@
       peState.instanceMetaFile = metaJsonFile || null;
     }
 
-    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap));
+    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap, refEmbMap));
     if (opts && opts.resetFeatureSelection) resetFeatureSelectionUI();
 
     renderInstanceDetails();
@@ -4217,15 +4599,30 @@
     const base = `/output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
     const refFile = `reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
     const alphasFile = `alphas_mr_explanations_ref_policy_${nextCfg.refPolicy}_instance_${instanceId}.csv`;
+    const mrRefExact = `mr_reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
+    const mrRefFile = (files || []).find(f => String(f).toLowerCase() === mrRefExact.toLowerCase())
+      || (files || []).find(f => {
+        const fl = String(f || '').toLowerCase();
+        return fl.startsWith(`mr_reference_ref_policy_${String(nextCfg.refPolicy).toLowerCase()}_`) && fl.endsWith(`for_instance_${instanceId}.csv`);
+      })
+      || (files || []).find(f => {
+        const fl = String(f || '').toLowerCase();
+        return fl.startsWith('mr_reference_') && fl.includes(`for_instance_${instanceId}.csv`);
+      })
+      || null;
     const metaJsonFile = findMetadataFileForPolicy(files, nextCfg, instanceId);
     const betasFile = findBaseBetaFile(files, nextCfg, instanceId);
 
-    const [alphaText, refText, instMetaJson, betaText] = await Promise.all([
+    const [alphaText, refText, mrRefText, instMetaJson, betaText] = await Promise.all([
       peFetchText(`${base}/${alphasFile}`),
       peFetchText(`${base}/${refFile}`).catch(err => {
         console.warn('No reference file:', err);
         return null;
       }),
+      mrRefFile ? peFetchText(`${base}/${mrRefFile}`).catch(err => {
+        console.warn('Could not load reference embeddings:', err);
+        return '';
+      }) : Promise.resolve(''),
       metaJsonFile ? peFetchJSON(`${base}/${metaJsonFile}`).catch(() => null) : Promise.resolve(null),
       betasFile ? peFetchText(`${base}/${betasFile}`).catch(err => {
         console.warn('Could not load betas:', err);
@@ -4242,8 +4639,11 @@
 
     const alphaMap = parseAlphaCSV(alphaText);
     const embMap = currentEmbeddingMap();
-    const meta = buildFeatureMetaFromSignals(alphaMap, embMap);
-    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap), {
+    const refEmbMap = parseEmbeddingCSV(mrRefText);
+    state.referenceEmbeddingMap = refEmbMap;
+    state.referenceEmbeddingFile = mrRefFile || null;
+    const meta = buildFeatureMetaFromSignals(alphaMap, embMap, refEmbMap);
+    setFeatures(mergeFeatureSignals(meta, alphaMap, embMap, refEmbMap), {
       preserveSelection: true
     });
 
@@ -4280,7 +4680,7 @@
     if (Number.isFinite(+prevSelected) && featureByIdx(+prevSelected)) {
       state.selectedFeatureIdx = Math.round(+prevSelected);
       if (el.featureIdx) el.featureIdx.value = String(state.selectedFeatureIdx);
-      updateFeatureHeader(featureByIdx(state.selectedFeatureIdx));
+      updateFeatureHeaderWithReference(featureByIdx(state.selectedFeatureIdx));
     }
     renderInstanceDetails();
     renderFeatureCharts();
@@ -6412,6 +6812,8 @@ ${d.kernelId}`
 
   initReferenceToggle();
   initEmbeddingSortControls();
+  initEmbeddingSeriesControls();
+  initEmbeddingTabs();
   initSummaryModal();
   initAdvancedPopover();
   renderKernelPreview();
