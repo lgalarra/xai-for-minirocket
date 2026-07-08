@@ -29,8 +29,8 @@ CORE_STEMS = ("f_minus_f0", "p2p_f_minus_f0")
 SEGMENTED_RE = re.compile(r"^segmented(?:_n(?P<n>\d+))?_f_minus_f0$")
 TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
 AVERAGE_POLICY_SUFFIXES = {
-    "random_no_positive": "random no positive avg",
-    "bottom": "bottom avg",
+    "random_no_positive": "random",
+    "bottom": "bottom",
 }
 
 
@@ -131,6 +131,22 @@ def metric_family(metric):
     return "other"
 
 
+def is_p2p_metric(metric):
+    return metric_stem(metric).startswith("p2p_")
+
+
+def is_metric_available(data, metric):
+    if metric not in data:
+        return False
+    if not is_p2p_metric(metric):
+        return True
+
+    values = pd.to_numeric(data[metric], errors="coerce").dropna()
+    if values.empty:
+        return False
+    return not np.isclose(values, -1.0).all()
+
+
 def metric_sort_key(metric):
     stem = metric_stem(metric)
     if stem == "f_minus_f0":
@@ -160,7 +176,7 @@ def metric_label(metric):
     segmented_match = SEGMENTED_RE.match(stem)
     if segmented_match:
         n = segmented_match.group("n")
-        return "segmented" if n is None else f"segmented n={n}"
+        return "segmented n=10" if n is None else f"segmented n={n}"
 
     tshap_match = TSHAP_RE.match(stem)
     if tshap_match:
@@ -380,7 +396,10 @@ def best_metric_for_family(g_ds, metrics, family):
 
 
 def best_metric_subset(g_ds, metrics):
-    selected = [m for m in metrics if metric_family(m) == "core"]
+    selected = [
+        m for m in metrics
+        if metric_family(m) == "core" and is_metric_available(g_ds, m)
+    ]
     for family in ("segmented", "tshap"):
         best_metric = best_metric_for_family(g_ds, metrics, family)
         if best_metric is not None:
@@ -419,7 +438,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
 
     for explainer, g_exp in g_ds.groupby("base_explainer"):
         for metric in metrics:
-            if metric not in g_exp:
+            if not is_metric_available(g_exp, metric):
                 continue
 
             x = g_exp[args.evolution_factor]

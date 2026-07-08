@@ -1,5 +1,6 @@
 import argparse
 import ast
+import re
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +62,13 @@ def parse_list(value):
     )
 
 
+def normalize_dataset_name(dataset):
+    normalized = dataset
+    for pattern, replacement in DATASET_RENAMES.items():
+        normalized = re.sub(pattern, replacement, normalized)
+    return normalized
+
+
 def load_minirocket_features():
     tree = ast.parse(COMPUTE_EXPLANATIONS.read_text())
     for node in tree.body:
@@ -68,10 +76,14 @@ def load_minirocket_features():
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "MINIROCKET_PARAMS_DICT":
                     params = ast.literal_eval(node.value)
-                    return {
-                        dataset: int(values["num_features"])
-                        for dataset, values in params.items()
-                    }
+                    features = {}
+                    for dataset, values in params.items():
+                        normalized_dataset = normalize_dataset_name(dataset)
+                        features[normalized_dataset] = max(
+                            int(values["num_features"]),
+                            features.get(normalized_dataset, 0),
+                        )
+                    return features
     raise ValueError(f"MINIROCKET_PARAMS_DICT not found in {COMPUTE_EXPLANATIONS}")
 
 
@@ -84,11 +96,11 @@ def runtime_prefix_for_tshap(window_size_percent, stride):
 
 
 def variant_specs():
-    specs = [("p2p", "P2P", "runtimes-p2p")]
+    specs = [("p2p", "e2e", "runtimes-p2p")]
     specs.extend(
         (
             f"seg{num_segments}",
-            f"Seg. {num_segments}",
+            f"n={num_segments}",
             runtime_prefix_for_segmented(num_segments),
         )
         for num_segments in SEGMENTED_CONFIGS
@@ -96,12 +108,26 @@ def variant_specs():
     specs.extend(
         (
             f"tshap_w{window_size_percent}_s{stride}",
-            rf"t-SHAP {window_size_percent}/{stride}",
+            rf"w={window_size_percent} s={stride}",
             runtime_prefix_for_tshap(window_size_percent, stride),
         )
         for window_size_percent, stride in TSHAP_CONFIGS
     )
     return specs
+
+
+def reduced_variant_specs(specs):
+    excluded_keys = {"seg20", "tshap_w15_s5", "tshap_w15_s20", "tshap_w20_s20"}
+    return [spec for spec in specs if spec[0] not in excluded_keys]
+
+
+def split_variant_specs(specs):
+    e2e_specs = [spec for spec in specs if spec[0] == "p2p"]
+    if len(e2e_specs) != 1:
+        raise ValueError("Expected exactly one e2e runtime spec.")
+    segmented_specs = [spec for spec in specs if spec[0].startswith("seg")]
+    tshap_specs = [spec for spec in specs if spec[0].startswith("tshap")]
+    return e2e_specs[0], segmented_specs, tshap_specs
 
 
 def load_results(data_dir):
@@ -214,12 +240,25 @@ def format_metadata_ratio(observations, features):
     return format_float(float(observations) / float(features))
 
 
+def is_tiny_runtime_ratio(value):
+    return value > 0 and value < 0.001
+
+
 def format_ratio(row, key):
     mean = row[f"{key}_mean"]
     std = row[f"{key}_std"]
     if pd.isna(mean):
         return "-"
-    return rf"{format_float(mean)} $\pm$ {format_float(std)}"
+    formatted_mean = format_runtime_ratio(mean)
+    if is_tiny_runtime_ratio(mean) or is_tiny_runtime_ratio(std):
+        return formatted_mean
+    return rf"{formatted_mean} $\pm$ {format_runtime_ratio(std)}"
+
+
+def format_runtime_ratio(value):
+    if is_tiny_runtime_ratio(value):
+        return r"$<$ 0.001"
+    return format_float(value)
 
 
 def format_float(value):
@@ -234,7 +273,20 @@ def latex_escape(value):
     return str(value).replace("_", r"\_")
 
 
-def build_latex_table(agg, specs, observation_counts, minirocket_features):
+def build_latex_table(
+    agg,
+    specs,
+    observation_counts,
+    minirocket_features,
+    table_label,
+    caption_detail,
+):
+    e2e_spec, segmented_specs, tshap_specs = split_variant_specs(specs)
+    segmented_start = 5
+    segmented_end = segmented_start + len(segmented_specs) - 1
+    tshap_start = segmented_end + 1
+    tshap_end = tshap_start + len(tshap_specs) - 1
+
     latex_lines = []
     latex_lines.append(r"\begin{table}")
     latex_lines.append(r"\centering")
@@ -244,9 +296,23 @@ def build_latex_table(agg, specs, observation_counts, minirocket_features):
     )
     latex_lines.append(r"\toprule")
     latex_lines.append(
-        r"\textbf{Dataset} & \textbf{Method} & "
-        r"\textbf{Obs./MR feat.} & "
-        + " & ".join(rf"\textbf{{{label}}}" for _, label, _ in specs)
+        r"\multirow{2}{*}{\textbf{Dataset}} & "
+        r"\multirow{2}{*}{\textbf{Explainer}} & "
+        r"\multirow{2}{*}{\textbf{$\frac{|T|}{|\phi|}$}} & "
+        rf"\multirow{{2}}{{*}}{{\textbf{{{e2e_spec[1]}}}}} & "
+        rf"\multicolumn{{{len(segmented_specs)}}}{{c}}{{\textbf{{Segmented}}}} & "
+        rf"\multicolumn{{{len(tshap_specs)}}}{{c}}{{\textbf{{t-SHAP}}}} \\"
+    )
+    latex_lines.append(
+        rf"\cmidrule(lr){{{segmented_start}-{segmented_end}}} "
+        rf"\cmidrule(lr){{{tshap_start}-{tshap_end}}}"
+    )
+    latex_lines.append(
+        r" &  &  &  & "
+        + " & ".join(
+            rf"\textbf{{{label}}}"
+            for _, label, _ in segmented_specs + tshap_specs
+        )
         + r" \\"
     )
     latex_lines.append(r"\midrule")
@@ -255,23 +321,24 @@ def build_latex_table(agg, specs, observation_counts, minirocket_features):
         first = True
         group = group.sort_values("base_explainer")
         for _, row in group.iterrows():
-            method = METHOD_LABELS.get(row["base_explainer"], latex_escape(row["base_explainer"]))
+            explainer = METHOD_LABELS.get(row["base_explainer"], latex_escape(row["base_explainer"]))
             dataset_cell = (
                 rf"\multirow{{{len(group)}}}{{*}}{{{latex_escape(dataset)}}}"
                 if first
                 else ""
             )
+            metadata_ratio_value = format_metadata_ratio(
+                observation_counts.get(dataset),
+                minirocket_features.get(dataset),
+            )
             metadata_ratio_cell = (
-                format_metadata_ratio(
-                    observation_counts.get(dataset),
-                    minirocket_features.get(dataset),
-                )
+                rf"\multirow{{{len(group)}}}{{*}}{{{metadata_ratio_value}}}"
                 if first
                 else ""
             )
             ratio_values = " & ".join(format_ratio(row, key) for key, _, _ in specs)
             latex_lines.append(
-                rf"{dataset_cell} & {method} & {metadata_ratio_cell} & {ratio_values} \\"
+                rf"{dataset_cell} & {explainer} & {metadata_ratio_cell} & {ratio_values} \\"
             )
             first = False
         latex_lines.append(r"\midrule")
@@ -284,10 +351,11 @@ def build_latex_table(agg, specs, observation_counts, minirocket_features):
     latex_lines.append(
         r"\caption{Runtime ratio relative to the backpropagated runtime. "
         r"Values are mean $\pm$ standard deviation of each scheme runtime divided by the "
-        r"backpropagated runtime "
-        r"over deduplicated runtime runs.}"
+        r"backpropagated runtime over deduplicated runtime runs, "
+        + caption_detail
+        + r".}"
     )
-    latex_lines.append(r"\label{tab:runtime-ratio}")
+    latex_lines.append(rf"\label{{{table_label}}}")
     latex_lines.append(r"\end{table}")
     return "\n".join(latex_lines)
 
@@ -295,17 +363,37 @@ def build_latex_table(agg, specs, observation_counts, minirocket_features):
 def main():
     args = parse_args()
     specs = variant_specs()
+    reduced_specs = reduced_variant_specs(specs)
     df = load_results(args.data_dir)
     observation_counts = infer_observation_counts(df)
     minirocket_features = load_minirocket_features()
     runtime_df = deduplicate_runtime_profiles(df, specs)
     agg = compute_ratios(runtime_df, specs)
-    latex_table = build_latex_table(agg, specs, observation_counts, minirocket_features)
+    latex_tables = "\n\n".join(
+        [
+            build_latex_table(
+                agg,
+                specs,
+                observation_counts,
+                minirocket_features,
+                table_label="tab:runtime-ratio",
+                caption_detail="for all approximation variants",
+            ),
+            build_latex_table(
+                agg,
+                reduced_specs,
+                observation_counts,
+                minirocket_features,
+                table_label="tab:runtime-ratio-reduced",
+                caption_detail=r"excluding segmented $n=20$ and t-SHAP $w=15, s=5$, $w=15, s=20$, and $w=20, s=20$",
+            ),
+        ]
+    )
 
-    print(latex_table)
+    print(latex_tables)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(latex_table + "\n")
+        args.output.write_text(latex_tables + "\n")
 
 
 if __name__ == "__main__":
