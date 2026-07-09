@@ -145,6 +145,12 @@ def load_results(data_dir):
     return df
 
 
+def exclude_counterfactual_reference_policy(df):
+    if "reference_policy" not in df.columns:
+        return df
+    return df[df["reference_policy"] != "counterfactual"].copy()
+
+
 def infer_observation_counts(df):
     complexity_cols = [
         col
@@ -365,6 +371,7 @@ def main():
     specs = variant_specs()
     reduced_specs = reduced_variant_specs(specs)
     df = load_results(args.data_dir)
+    df = exclude_counterfactual_reference_policy(df)
     observation_counts = infer_observation_counts(df)
     minirocket_features = load_minirocket_features()
     runtime_df = deduplicate_runtime_profiles(df, specs)
