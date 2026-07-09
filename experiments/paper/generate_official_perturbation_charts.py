@@ -32,6 +32,7 @@ AVERAGE_POLICY_SUFFIXES = {
     "random_no_positive": "random",
     "bottom": "bottom",
 }
+GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 
 
 def parse_args():
@@ -93,12 +94,6 @@ def parse_args():
         "--reference-policy",
         default="all",
         help="reference_policy filter. Use 'all' to disable this filter.",
-    )
-    parser.add_argument(
-        "--invert-percentile-cut",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Plot 100 - percentile_cut when percentile_cut is the x axis.",
     )
     return parser.parse_args()
 
@@ -338,10 +333,18 @@ def discover_metrics(data, args):
     return sorted(metrics, key=metric_sort_key)
 
 
+def is_gaussian_bottom_perturbation_policy(policy):
+    return str(policy) == "gaussian_bottom"
+
+
 def aggregate(data, evolution_factor):
+    data = data.copy()
     grouping = ["dataset", "base_explainer", evolution_factor]
     if evolution_factor != "perturbation_policy":
         data = data[pd.notna(data[evolution_factor])]
+        if "perturbation_policy" in data.columns:
+            data[GAUSSIAN_BOTTOM_POLICY_COLUMN] = data["perturbation_policy"].apply(is_gaussian_bottom_perturbation_policy)
+            grouping.append(GAUSSIAN_BOTTOM_POLICY_COLUMN)
 
     return (
         data.groupby(grouping, as_index=False)
@@ -367,6 +370,7 @@ def aggregate_average_policies(data, evolution_factor, metrics):
 
     data = data.copy()
     data["average_policy_suffix"] = data["perturbation_policy"].apply(average_policy_suffix)
+    data[GAUSSIAN_BOTTOM_POLICY_COLUMN] = data["perturbation_policy"].apply(is_gaussian_bottom_perturbation_policy)
     data = data[pd.notna(data["average_policy_suffix"])]
     if evolution_factor != "perturbation_policy":
         data = data[pd.notna(data[evolution_factor])]
@@ -377,9 +381,9 @@ def aggregate_average_policies(data, evolution_factor, metrics):
         )
 
     grouped = (
-        data.groupby(["dataset", "average_policy_suffix", evolution_factor], as_index=False)[metrics]
+        data.groupby(["dataset", "average_policy_suffix", GAUSSIAN_BOTTOM_POLICY_COLUMN, evolution_factor], as_index=False)[metrics]
         .mean(numeric_only=True)
-        .sort_values(["dataset", "average_policy_suffix", evolution_factor])
+        .sort_values(["dataset", "average_policy_suffix", GAUSSIAN_BOTTOM_POLICY_COLUMN, evolution_factor])
     )
     grouped["average_value"] = grouped[metrics].mean(axis=1, skipna=True)
     return grouped.dropna(subset=["average_value"])
@@ -407,6 +411,36 @@ def best_metric_subset(g_ds, metrics):
     return sorted(dict.fromkeys(selected), key=metric_sort_key)
 
 
+def x_values_for_plot(data, args):
+    x = data[args.evolution_factor].copy()
+    if args.evolution_factor != "percentile_cut":
+        return x
+
+    bottom_mask = data.get(
+        GAUSSIAN_BOTTOM_POLICY_COLUMN,
+        pd.Series(False, index=data.index),
+    ).astype(bool)
+
+    x = x.copy()
+    x.loc[bottom_mask] = 100 - x.loc[bottom_mask]
+    return x
+
+
+def average_x_values_for_plot(data, args):
+    x = data[args.evolution_factor].copy()
+    if args.evolution_factor != "percentile_cut":
+        return x
+
+    bottom_mask = data.get(
+        GAUSSIAN_BOTTOM_POLICY_COLUMN,
+        pd.Series(False, index=data.index),
+    ).astype(bool)
+
+    x = x.copy()
+    x.loc[bottom_mask] = 100 - x.loc[bottom_mask]
+    return x
+
+
 def style_maps(metrics, explainers):
     cmap = plt.get_cmap("tab20")
     color_map = {
@@ -422,14 +456,13 @@ def style_maps(metrics, explainers):
 
 
 def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
-    if args.evolution_factor == "percentile_cut" and args.invert_percentile_cut:
-        g_ds = g_ds.copy()
-        g_ds[args.evolution_factor] = 100 - g_ds[args.evolution_factor]
-        if average_data is not None and not average_data.empty:
-            average_data = average_data.copy()
-            average_data[args.evolution_factor] = 100 - average_data[args.evolution_factor]
+    g_ds = g_ds.copy()
+    g_ds["_plot_x"] = x_values_for_plot(g_ds, args)
+    if average_data is not None and not average_data.empty:
+        average_data = average_data.copy()
+        average_data["_plot_x"] = average_x_values_for_plot(average_data, args)
 
-    g_ds = g_ds.sort_values(args.evolution_factor)
+    g_ds = g_ds.sort_values("_plot_x")
     explainers = sorted(g_ds["base_explainer"].unique())
     color_map, linestyle_map = style_maps(metrics, explainers)
 
@@ -441,7 +474,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
             if not is_metric_available(g_exp, metric):
                 continue
 
-            x = g_exp[args.evolution_factor]
+            x = g_exp["_plot_x"]
             y = g_exp[metric]
             label = metric_label(metric)
             if len(explainers) > 1:
@@ -462,14 +495,14 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
             "random_no_positive": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
             "bottom": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
         }
-        average_data = average_data.sort_values(args.evolution_factor)
+        average_data = average_data.sort_values("_plot_x")
         for suffix, g_avg in average_data.groupby("average_policy_suffix"):
             style = average_styles.get(
                 suffix,
                 {"color": "0.2", "linestyle": "--", "marker": "x"},
             )
             plt.plot(
-                g_avg[args.evolution_factor],
+                g_avg["_plot_x"],
                 g_avg["average_value"],
                 linewidth=2.5,
                 label=AVERAGE_POLICY_SUFFIXES.get(suffix, f"{suffix} avg"),
