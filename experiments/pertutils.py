@@ -67,14 +67,33 @@ def _random_mask(explanation: np.ndarray, percentile_cut: float, rng=None) -> np
     return mask.reshape(explanation.shape)
 
 
-def _random_unconstrained_mask(explanation: np.ndarray, N: int, rng=None) -> np.ndarray:
+def _n_perturbed_points_for_index(n_perturbed_points, idx: int) -> int:
+    counts = np.asarray(n_perturbed_points)
+    if counts.ndim == 0:
+        return int(counts)
+
+    counts = counts.ravel()
+    if counts.size == 0:
+        return 0
+    if counts.size == 1:
+        return int(counts[0])
+    if idx >= counts.size:
+        raise ValueError(
+            "n_perturbed_points must be a scalar or have one entry per instance "
+            f"(got {counts.size} entries, needed index {idx})"
+        )
+    return int(counts[idx])
+
+
+def _random_unconstrained_mask(explanation: np.ndarray, N, rng=None) -> np.ndarray:
     rng = np.random.default_rng(rng)
     mask = np.zeros(explanation.shape, dtype=bool)
     for idx, explanation_i in enumerate(explanation):
-        if N == 0:
+        n_points = _n_perturbed_points_for_index(N, idx)
+        if n_points <= 0:
             continue
 
-        n_selected = min(N, explanation_i.size)
+        n_selected = min(n_points, explanation_i.size)
         selected = rng.choice(explanation_i.size, size=n_selected, replace=False)
         mask_i = np.zeros(explanation_i.size, dtype=bool)
         mask_i[selected] = True
@@ -86,10 +105,6 @@ def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, r
                 random_select: bool = False) -> np.ndarray:
     if n_perturbed_points is None:
         return mask
-
-    n_perturbed_points = int(n_perturbed_points)
-    if n_perturbed_points <= 0:
-        return np.zeros(mask.shape, dtype=bool)
 
     if mask.ndim <= 1:
         masks = [np.asarray(mask)]
@@ -105,9 +120,15 @@ def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, r
 
     limited_mask = np.zeros(output_shape, dtype=bool)
     for idx, mask_i in enumerate(masks):
+        instance_n_perturbed_points = _n_perturbed_points_for_index(n_perturbed_points, idx)
+        if instance_n_perturbed_points <= 0:
+            if mask.ndim <= 1:
+                return np.zeros(output_shape, dtype=bool)
+            continue
+
         flat_mask = np.asarray(mask_i).ravel()
         selected_indices = np.flatnonzero(flat_mask)
-        effective_n_perturbed_points = min(n_perturbed_points, selected_indices.size)
+        effective_n_perturbed_points = min(instance_n_perturbed_points, selected_indices.size)
         #print(
         #    f'Effective perturbed points: {effective_n_perturbed_points} per instance)'
         #    f'(requested: {n_perturbed_points}, available after percentile cut: {selected_indices.size})'
@@ -149,20 +170,28 @@ def zero_out_random_ones(arr, x, rng=None):
     return arr
 
 
+def _rho_std_from_args(kwargs):
+    if 'rho_std' in kwargs:
+        return float(kwargs['rho_std'])
+
+    sigma = float(kwargs.get('sigma', 0.25))
+    if sigma > 1.0:
+        # Preserve the legacy sigma grid: 3.0 corresponds to the proposed rho_std=0.25.
+        return sigma / 12.0
+    return sigma
+
+
+def _sample_interpolation_coefficients(shape, kwargs):
+    rho_mean = float(kwargs.get('rho_mean', kwargs.get('interpolation', 0.5)))
+    rho_std = _rho_std_from_args(kwargs)
+    rho = np.random.normal(rho_mean, rho_std, size=shape)
+    return np.clip(rho, 0.0, 1.0)
+
+
 def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanation: np.ndarray,
                               filter_explanation_fn: Callable,
                               **kwargs):
-    budget = kwargs['budget']
     padded_explanation = _pad_last_axis(explanation, X_target.shape[-1])
-    new_shape = list(padded_explanation.shape)
-    new_shape[0] = new_shape[0] * budget
-    if X_target.shape[0] == 1:
-        std = (X_to - X_target).std()
-        avg = (X_to - X_target).mean()
-    else:
-        std = (X_to - X_target).std(axis=0)
-        avg = (X_to - X_target).mean(axis=0)
-    X_perturb = np.random.normal(avg, kwargs['sigma'] * std, size=new_shape)
     percentile_mask = np.vectorize(filter_explanation_fn)
     explanation_mask = percentile_mask(padded_explanation)
     explanation_mask = _limit_mask(
@@ -171,21 +200,18 @@ def get_gaussian_perturbation(X_target: np.ndarray, X_to: np.ndarray, explanatio
         n_perturbed_points=kwargs.get('n_perturbed_points'),
         random_select=False
     ).astype(float)
-    explanation_size = np.count_nonzero(explanation_mask)
-
-    return np.repeat(X_target, budget, axis=0) + np.repeat(explanation_mask, budget, axis=0) * X_perturb, explanation_size
+    return get_gaussian_perturbation_on_mask(
+        X_target=X_target,
+        X_to=X_to,
+        explanation_mask=explanation_mask,
+        **kwargs
+    )
 
 
 def get_gaussian_perturbation_on_mask(X_target: np.ndarray, X_to: np.ndarray, explanation_mask: np.ndarray,
                                       **kwargs):
     budget = kwargs['budget']
     explanation_mask = _pad_last_axis(explanation_mask, X_target.shape[-1]).astype(float)
-    if X_target.shape[0] == 1:
-        std = (X_to - X_target).std()
-        avg = (X_to - X_target).mean()
-    else:
-        std = (X_to - X_target).std(axis=0)
-        avg = (X_to - X_target).mean(axis=0)
 
     if explanation_mask.shape[0] == X_target.shape[0]:
         repeated_mask = np.repeat(explanation_mask, budget, axis=0)
@@ -194,9 +220,12 @@ def get_gaussian_perturbation_on_mask(X_target: np.ndarray, X_to: np.ndarray, ex
     else:
         raise ValueError("explanation_mask must have one row per target instance or per budgeted perturbation")
 
-    X_perturb = np.random.normal(avg, kwargs['sigma'] * std, size=repeated_mask.shape)
+    X_target_repeated = np.repeat(X_target, budget, axis=0)
+    X_to_repeated = np.repeat(X_to, budget, axis=0)
+    delta = X_to_repeated - X_target_repeated
+    rho = _sample_interpolation_coefficients(repeated_mask.shape, kwargs)
     explanation_size = np.count_nonzero(repeated_mask) / budget
-    return np.repeat(X_target, budget, axis=0) + repeated_mask * X_perturb, explanation_size
+    return X_target_repeated + repeated_mask * rho * delta, explanation_size
 
 
 def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,
@@ -262,7 +291,7 @@ def get_random_reference_perturbation(xfrom, xto, explanation, unconstrained=Fal
     )
     return apply_explanation_masks(xto, xfrom, percentile_vectors, kwargs['interpolation'])
 
-def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray):
+def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray, return_kept_indices: bool = False):
     def row_length(row):
         row_array = np.asarray(row, dtype=object)
         if row_array.size == 0 or any(value is None for value in row_array.flat):
@@ -292,9 +321,12 @@ def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray):
         if length is None or length != max_length
     ])
     print(indices_to_remove, lengths)
+    kept_indices = np.array([idx for idx in range(len(X)) if idx not in indices_to_remove], dtype=int)
     X = np.array([x for idx, x in enumerate(X) if idx not in indices_to_remove])
     X1 = np.array([x for idx, x in enumerate(X1) if idx not in indices_to_remove])
     X2 = np.array([x for idx, x in enumerate(X2) if idx not in indices_to_remove])
+    if return_kept_indices:
+        return X, X1, X2, kept_indices
     return X, X1, X2
 
 def get_perturbations(X_target, X_references, X_explanations, explainer_method, policy='gaussian', **args):
@@ -344,7 +376,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             ## gaussian_random_no_positive
             masks = [
                 _limit_mask(
-                    _random_unconstrained_mask(X_e, int(args.get('n_perturbed_points'))),
+                    _random_unconstrained_mask(X_e, args.get('n_perturbed_points')),
                     np.abs(X_e),
                     n_perturbed_points=args.get('n_perturbed_points'),
                     random_select=True

@@ -136,20 +136,30 @@ def count_explanation_series(explanations) -> int:
 
 
 def get_explanation_count_info(name, explanations):
-    nonzero_count = count_nonzero_attributions(explanations)
-    series_count = count_explanation_series(explanations)
+    per_series_counts = count_nonzero_attributions_per_series(explanations)
+    nonzero_count = int(per_series_counts.sum())
+    series_count = len(per_series_counts)
     avg_nonzero_per_series = nonzero_count / series_count if series_count > 0 else 0.0
-    return name, nonzero_count, avg_nonzero_per_series
+    return name, nonzero_count, avg_nonzero_per_series, per_series_counts
+
+
+def count_nonzero_attributions_per_series(explanations) -> np.ndarray:
+    values = np.asarray(explanations, dtype=object)
+    if values.size == 0:
+        return np.array([], dtype=int)
+    if values.ndim == 0:
+        return np.array([count_nonzero_attributions(values.item())], dtype=int)
+    return np.array([count_nonzero_attributions(value) for value in values], dtype=int)
 
 
 def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explanations_dict,
                                  segmented_explanations_dict, tshap_explanations_dict):
-    p2p_name, p2p_count, p2p_avg = get_explanation_count_info(
+    p2p_name, p2p_count, p2p_avg, p2p_per_series_counts = get_explanation_count_info(
         'p2p/end-to-end',
         p2p_explanations_dict[reference_policy]
     )
     if p2p_count > 0:
-        return p2p_name, p2p_count, p2p_avg
+        return p2p_name, p2p_count, p2p_avg, p2p_per_series_counts
 
     counts = [get_explanation_count_info('backpropagated', explanations_dict[reference_policy])]
     for num_segments in SEGMENTED_EXPLANATION_SEGMENTS:
@@ -161,7 +171,11 @@ def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explan
         key = get_tshap_key(window_size_percent, stride)
         counts.append(get_explanation_count_info(f'tshap_{key}', tshap_explanations_dict[reference_policy][key]))
 
-    positive_counts = [(name, count, avg) for name, count, avg in counts if count > 0]
+    positive_counts = [
+        (name, count, avg, per_series_counts)
+        for name, count, avg, per_series_counts in counts
+        if count > 0
+    ]
     if not positive_counts:
         raise ValueError(
             f"No non-zero explanations found for reference policy {reference_policy}. "
@@ -171,12 +185,35 @@ def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explan
 
 
 def get_n_perturbed_points(nonzero_attribution_count: int, percentile_cut: float) -> int:
-    return int(np.ceil(nonzero_attribution_count * (100.0 - percentile_cut) / 100.0))
+    counts = np.asarray(nonzero_attribution_count, dtype=float)
+    n_points = np.ceil(counts * (100.0 - percentile_cut) / 100.0).astype(int)
+    if n_points.ndim == 0:
+        return int(n_points)
+    return n_points
+
+
+def select_perturbation_counts(n_perturbed_points, kept_indices):
+    counts = np.asarray(n_perturbed_points)
+    if counts.ndim == 0:
+        return n_perturbed_points
+    return counts[np.asarray(kept_indices, dtype=int)]
+
+
+def describe_n_perturbed_points(n_perturbed_points) -> str:
+    counts = np.asarray(n_perturbed_points)
+    if counts.ndim == 0:
+        return str(int(counts))
+    if counts.size == 0:
+        return "0 observations"
+    return (
+        f"{int(counts.sum())} observations total "
+        f"(mean {counts.mean():.2f}, min {int(counts.min())}, max {int(counts.max())} per series)"
+    )
 
 
 def get_perturbation_args_for_explainer(all_args: dict, explainer_method: str) -> dict:
     args_for_explainer = copy.deepcopy(all_args)
-    if explainer_method == 'shap' and 'percentile_cut' in args_for_explainer:
+    if 'percentile_cut' in args_for_explainer:
         percentile_cuts = args_for_explainer['percentile_cut']
         if 10 not in percentile_cuts:
             args_for_explainer['percentile_cut'] = [*percentile_cuts, 10]
@@ -188,9 +225,13 @@ def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations
     X_test_for_explanations = X_test.copy()
     X_reference_for_explanations = X_reference.copy()
     X_explanations = X_explanations.copy()
-    X_explanations, X_test_for_explanations, X_reference_for_explanations = ensure_consistency(
-        X_explanations, X_test_for_explanations, X_reference_for_explanations
+    X_explanations, X_test_for_explanations, X_reference_for_explanations, kept_indices = ensure_consistency(
+        X_explanations, X_test_for_explanations, X_reference_for_explanations,
+        return_kept_indices=True
     )
+    args = copy.deepcopy(args)
+    if 'n_perturbed_points' in args:
+        args['n_perturbed_points'] = select_perturbation_counts(args['n_perturbed_points'], kept_indices)
     X_perturbed, n_perturbed_points = get_perturbations(
         X_test_for_explanations,
         X_reference_for_explanations,
@@ -375,7 +416,12 @@ if __name__ == '__main__':
                                     df_results = copy.deepcopy(df_schema)
                                     args['y'] = y_test if label == 'training' else classifier.predict(X_test)
                                     perturbation_budget = args_for_explainer['budget'][0]
-                                    count_source, nonzero_attribution_count, avg_nonzero_per_series = get_perturbation_count_basis(
+                                    (
+                                        count_source,
+                                        nonzero_attribution_count,
+                                        avg_nonzero_per_series,
+                                        nonzero_attribution_counts,
+                                    ) = get_perturbation_count_basis(
                                         reference_policy,
                                         explanations_dict,
                                         p2p_explanations_dict,
@@ -383,7 +429,7 @@ if __name__ == '__main__':
                                         tshap_explanations_dict
                                     )
                                     args['n_perturbed_points'] = get_n_perturbed_points(
-                                        nonzero_attribution_count,
+                                        nonzero_attribution_counts,
                                         args['percentile_cut']
                                     )
                                     print(
@@ -393,7 +439,7 @@ if __name__ == '__main__':
                                     )
                                     print(
                                         f'Percentile cut {args["percentile_cut"]}: '
-                                        f'perturbing at most {args["n_perturbed_points"]} observations'
+                                        f'perturbing at most {describe_n_perturbed_points(args["n_perturbed_points"])}'
                                     )
 
                                     print('Backpropagated explanations')
