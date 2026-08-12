@@ -408,9 +408,18 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                                                 explanation=X_explanations, unconstrained=True, **args)
     elif policy == 'reference_to_instance':
         return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_explanations,
-                                          filter_explanation_fn=lambda x: x if x<0.0 else 0.0, **args)
-    elif policy == 'reference_to_instance_positive':
-        return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_explanations,
                                           filter_explanation_fn=lambda x: x if x>0.0 else 0.0, **args)
+    elif policy == 'reference_to_instance_bottom':
+        explanation_mask = _bottom_mask(X_explanations, args['percentile_cut'])
+        explanation_mask = _limit_mask(
+            explanation_mask,
+            -X_explanations,
+            n_perturbed_points=args.get('n_perturbed_points')
+        )
+        return get_reference_perturbation_on_mask(xfrom=X_references, xto=X_target,
+                                                  explanation_mask=explanation_mask, **args)
+    elif policy == 'reference_to_instance_random':
+        return get_random_reference_perturbation(xfrom=X_references, xto=X_target,
+                                                explanation=X_explanations, **args)
     else:
         raise ValueError(f"Unknown perturbation policy {policy}")

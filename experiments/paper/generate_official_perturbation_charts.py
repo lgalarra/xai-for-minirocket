@@ -14,7 +14,7 @@ DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
 
 EVOLUTION_FACTORS_LABELS = {
-    "percentile_cut": "top-k% observations perturbed",
+    "percentile_cut": "% observations perturbed",
     "interpolation": "perturbation scale (rho)",
     "sigma": "perturbation scale (rho)",
     "perturbation_policy": "perturbation policy",
@@ -416,14 +416,7 @@ def x_values_for_plot(data, args):
     if args.evolution_factor != "percentile_cut":
         return x
 
-    bottom_mask = data.get(
-        GAUSSIAN_BOTTOM_POLICY_COLUMN,
-        pd.Series(False, index=data.index),
-    ).astype(bool)
-
-    x = x.copy()
-    x.loc[bottom_mask] = 100 - x.loc[bottom_mask]
-    return x
+    return 100 - x
 
 
 def average_x_values_for_plot(data, args):
@@ -431,14 +424,7 @@ def average_x_values_for_plot(data, args):
     if args.evolution_factor != "percentile_cut":
         return x
 
-    bottom_mask = data.get(
-        GAUSSIAN_BOTTOM_POLICY_COLUMN,
-        pd.Series(False, index=data.index),
-    ).astype(bool)
-
-    x = x.copy()
-    x.loc[bottom_mask] = 100 - x.loc[bottom_mask]
-    return x
+    return 100 - x
 
 
 def style_maps(metrics, explainers):
