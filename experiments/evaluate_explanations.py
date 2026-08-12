@@ -241,7 +241,7 @@ def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations
         **args
     )
 
-    if perturbation_policy == 'reference_to_instance_positive':
+    if perturbation_policy.startswith('reference_to_instance'):
         metric, norm_metric, change_ratio = compute_difference(
             classifier, X_reference_for_explanations, X_perturbed, X_test_for_explanations, budget
         )
@@ -339,13 +339,21 @@ if __name__ == '__main__':
                                     'sigma' : [3.0, 2.0, 1.0],
                                   'budget': [BUDGET]
                     },
-                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
+                    'reference_to_instance': {'percentile_cut': [90, 75, 50],
                                                'interpolation': [0.25, 0.5, 0.75, 1.0],
                                                'budget': [1]
                     },
-                    'reference_to_instance_positive': {'percentile_cut': [90, 75, 50],
+                    'reference_to_instance_bottom': {'percentile_cut': [90, 75, 50],
                                   'interpolation': [0.25, 0.5, 0.75, 1.0],
                                   'budget': [1]
+                    },
+                    'reference_to_instance_random': {'percentile_cut': [90, 75, 50],
+                                         'interpolation': [0.25, 0.5, 0.75, 1.0],
+                                         'budget': [BUDGET]
+                    },
+                    'reference_to_instance_random_no_positive': {'percentile_cut': [90, 75, 50],
+                                         'interpolation': [0.25, 0.5, 0.75, 1.0],
+                                         'budget': [BUDGET]
                     }
     }
 
