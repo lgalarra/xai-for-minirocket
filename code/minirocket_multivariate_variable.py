@@ -933,6 +933,168 @@ def back_propagate_attribution(
 
     return beta.T
 
+
+def back_propagate_attribution_2(
+    alphas,
+    traces_x,
+    x_tc,
+    x0_tc,
+    *,
+    sigma_ref=None,
+    per_channel=False,
+    dt=None,
+    params,
+    n_jobs=-1,
+    parallel_backend="threading",
+):
+    """
+    Back-propagate MiniRocket feature attributions using the corrected theorem
+    formula:
+
+        beta_i^j = Delta t_i^j * m_{Delta t_i^j, Delta f}
+
+    with multiplier composition:
+
+        m_{Delta t_i^j, Delta f} = sum_k alpha_k / Delta phi_k
+            * 1 / d_k
+            * sum_l Delta sigma_k^l / Delta chi_k^l
+            * sum_{m: D_delta_k(l,m)=j} kappa_k^m
+
+    Notes on implementation choices:
+      - MiniRocket uses 9 taps, so the tap sum uses m=-4..4. The image writes
+        ``m < 4``, but excluding m=4 would drop one MiniRocket tap.
+      - Terms with zero denominators are skipped because the displayed formula
+        is undefined for those cases.
+      - ``dt`` is accepted for signature compatibility but is not used by the
+        displayed formula.
+      - Features sharing a convolution signature are grouped so Delta chi is
+        computed once per signature rather than once per feature.
+      - Tap source indices are cached per dilation and effective length because
+        they are reused across many grouped signatures.
+    """
+    from collections import defaultdict
+    import numpy as np
+
+    alphas = np.asarray(alphas, dtype=np.float64).reshape(-1)
+    x_tc = _as_TC(x_tc).astype(np.float64, copy=False)
+    x0_tc = _as_TC(x0_tc).astype(np.float64, copy=False)
+    if x_tc.shape != x0_tc.shape:
+        raise ValueError(f"x_tc and x0_tc must have the same shape, got {x_tc.shape} and {x0_tc.shape}")
+
+    traces_x = _ensure_sigma_in_traces(traces_x)
+    if sigma_ref is None:
+        sigma_ref = compute_sigma_ref_from_x0(x0_tc, transform_prime, *params)
+
+    T, C = x_tc.shape
+    if dt is not None:
+        dt_vec = np.asarray(dt, dtype=np.float64).reshape(-1)
+        if dt_vec.shape[0] != T:
+            raise ValueError(f"dt debe tener longitud T={T}, recibido {dt_vec.shape[0]}")
+
+    delta_t = x_tc - x0_tc
+    beta_by_channel = np.zeros((T, C), dtype=np.float64)
+    eps = np.finfo(np.float64).eps
+    tap_index_cache = {}
+
+    def _is_zero(value):
+        return abs(float(value)) <= eps
+
+    def _tap_index_arrays(dilation, d_eff, half):
+        cache_key = (int(dilation), int(d_eff), int(half))
+        cached = tap_index_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        centers = np.arange(d_eff, dtype=np.int64)
+        tap_arrays = []
+        for tap_offset in range(-half, half + 1):
+            source = centers + tap_offset * dilation
+            valid_centers = np.flatnonzero((source >= 0) & (source < T))
+            tap_arrays.append((tap_offset + half, valid_centers, source[valid_centers]))
+
+        tap_index_cache[cache_key] = tap_arrays
+        return tap_arrays
+
+    def _delta_chi_total(kappa, dilation, channels, d_eff):
+        delta_chi = np.zeros(d_eff, dtype=np.float64)
+        half = len(kappa) // 2
+        for tap_index, valid_centers, source_valid in _tap_index_arrays(dilation, d_eff, half):
+            if valid_centers.size == 0:
+                continue
+            tap = float(kappa[tap_index])
+            delta_chi[valid_centers] += tap * delta_t[source_valid][:, channels].sum(axis=1)
+        return delta_chi
+
+    feature_groups = defaultdict(list)
+    for k, tr in enumerate(traces_x):
+        if k >= len(alphas) or k >= len(sigma_ref):
+            continue
+        alpha_k = float(alphas[k])
+        if alpha_k == 0.0:
+            continue
+        sigma_x = np.asarray(tr["sigma"], dtype=np.float64).reshape(-1)
+        sigma_0 = np.asarray(sigma_ref[k], dtype=np.float64).reshape(-1)
+        d_eff = min(T, sigma_x.shape[0], sigma_0.shape[0])
+        if d_eff == 0:
+            continue
+
+        delta_sigma = sigma_x[:d_eff] - sigma_0[:d_eff]
+        if not np.any(delta_sigma):
+            continue
+
+        delta_phi = float(delta_sigma.sum() / d_eff)
+        if _is_zero(delta_phi):
+            continue
+
+        feature_weight = alpha_k / delta_phi / d_eff
+
+        kappa = np.asarray(tr["kernel"], dtype=np.float64).reshape(-1)
+        dilation = int(tr["dilation"])
+        channels = tuple(int(channel) for channel in tr.get("channels", list(range(C))) if 0 <= int(channel) < C)
+        if not channels:
+            continue
+
+        group_key = (dilation, channels, tuple(kappa.tolist()), d_eff)
+        feature_groups[group_key].append((feature_weight, delta_sigma))
+
+    for (dilation, channels, kappa_tuple, d_eff), feature_terms in feature_groups.items():
+        channels = list(channels)
+        kappa = np.asarray(kappa_tuple, dtype=np.float64)
+        half = len(kappa) // 2
+        delta_chi_total = _delta_chi_total(kappa, dilation, channels, d_eff)
+        valid_chi = np.abs(delta_chi_total) > eps
+        if not np.any(valid_chi):
+            continue
+
+        center_weight = np.zeros(d_eff, dtype=np.float64)
+        for feature_weight, delta_sigma in feature_terms:
+            valid = valid_chi & (delta_sigma != 0.0)
+            if np.any(valid):
+                center_weight[valid] += feature_weight * delta_sigma[valid] / delta_chi_total[valid]
+
+        if not np.any(center_weight):
+            continue
+
+        nonzero_center_weight = center_weight != 0.0
+        for tap_index, valid_centers, source_valid in _tap_index_arrays(dilation, d_eff, half):
+            if valid_centers.size == 0:
+                continue
+
+            active = nonzero_center_weight[valid_centers]
+            if not np.any(active):
+                continue
+
+            active_centers = valid_centers[active]
+            active_sources = source_valid[active]
+            tap_weight = float(kappa[tap_index]) * center_weight[active_centers]
+            for channel in channels:
+                beta_by_channel[active_sources, channel] += delta_t[active_sources, channel] * tap_weight
+
+    if per_channel:
+        return beta_by_channel.T
+
+    return beta_by_channel.sum(axis=1, keepdims=True).T
+
 MINIROCKET_INDICES = np.array((
     0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
     0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,

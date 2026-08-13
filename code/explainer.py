@@ -291,8 +291,9 @@ class MinirocketExplainer:
         else:
             alphas_to_backpropagate = alphas
             mask = None
-        beta = back_propagate_attribution(alphas_to_backpropagate, out_x["traces"], x_target, reference,
-                                          per_channel=is_multichannel, params=self.minirocket_params)
+        beta = mmv.back_propagate_attribution_2(alphas_to_backpropagate, out_x["traces"], x_target, reference,
+                                                per_channel=is_multichannel, params=self.minirocket_params)
+        #beta *= (x_target - reference)
         #if beta.shape[0] > 1:
         #    beta = beta.T
 
