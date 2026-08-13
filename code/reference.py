@@ -49,7 +49,14 @@ COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
 
 COUNTERFACTUAL_REFERENCE_PARAMS = {
     "ford-a": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
-    "double-freq-test": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5},
+    "double-freq-test": {"maxiter": 100, "tol": 1e-4, "initial_blend": 1.0,
+                         "seed_reference_policy": "opposite_class_medoid",
+                         "weights": {
+                             "dwt": 2.0,
+                             "frequency": 2.0,
+                             "minirocket": 0.0,
+                             "probability": 1.0,
+                         }},
     "abnormal-heartbeat-c1": {"maxiter": 50, "tol": 1e-4, "regularizer_stride": 64,
                               "seed_reference_policy": "opposite_class_farthest_instance"},
     "starlight-c1": {"maxiter": 100, "tol": 1e-4, "initial_blend": 0.5, "regularizer_stride": 32,
