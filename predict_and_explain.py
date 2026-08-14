@@ -337,6 +337,7 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
 
     for tridx in trace_ids:
         trace = explanation.explanation['traces'][tridx]
+        reference_trace = explanation.explanation['reference_traces'][tridx]
         base_mask, dilated_mask = get_dilated_triplet_array(mmv.get_feature_signature(tridx, classifier.minirocket_params))
         if not os.path.exists(f"{base_path}/base_mask_feature_{tridx}.csv"):
             pd.Series(base_mask).T.to_csv(f"{root_path}/base_mask_feature_{tridx}.csv", header=False)
@@ -345,7 +346,10 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
                 pd.Series(dilated_mask).T.to_csv(f"{root_path}/dilated_mask_feature_{tridx}.csv", header=False)
 
         convolved_instance = trace['conv_sum']
+        convolved_reference = reference_trace['conv_sum']
         pd.DataFrame(convolved_instance).to_csv(f"{base_path}/convolved_instance_{idx}_feature_{tridx}.csv", header=False)
+        ref_policy = explanation.explanation['reference_policy']
+        pd.DataFrame(convolved_reference).to_csv(f"{base_path}/convolved_reference_{idx}_reference_policy_{ref_policy}_feature_{tridx}.csv", header=False)
         convolved_instance_after_sigma = trace['sigma']
         if should_export_data:
             pd.DataFrame(convolved_instance_after_sigma).to_csv(f"{base_path}/convolved_instance_after_sigma_instance_{idx}_feature_{tridx}.csv", header=False)

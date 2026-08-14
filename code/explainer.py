@@ -303,6 +303,7 @@ class MinirocketExplainer:
                 'instance': x_target, 'instance_transformed': out_x['phi'][0],
                 'reference_transformed': reference_mr['phi'][0],
                 'traces': out_x['traces'], 'reference': reference,
+                'reference_traces': reference_mr['traces'],
                 'instance_label': y_label,
                 'reference_prediction': y_ref_pred,
                 'instance_prediction': y_pred,
