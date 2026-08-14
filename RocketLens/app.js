@@ -374,6 +374,65 @@
     return xs[lo] * (1 - w) + xs[hi] * w;
   }
 
+  function responseSegmentsAboveThreshold(resp, threshold) {
+    const segments = [];
+    let current = null;
+
+    const finishCurrent = () => {
+      if (current && current.length >= 2) segments.push(current);
+      current = null;
+    };
+    const crossing = (a, b) => {
+      const ratio = (threshold - a.v) / (b.v - a.v);
+      return {
+        t: a.t + (b.t - a.t) * ratio,
+        v: threshold
+      };
+    };
+    const appendEdge = (start, end) => {
+      if (!current) {
+        current = [start, end];
+        return;
+      }
+      const last = current[current.length - 1];
+      if (last.t !== start.t || last.v !== start.v) {
+        finishCurrent();
+        current = [start, end];
+        return;
+      }
+      current.push(end);
+    };
+
+    for (let i = 0; i < (resp || []).length - 1; i++) {
+      const a = resp[i];
+      const b = resp[i + 1];
+      if (!a || !b || !Number.isFinite(a.t) || !Number.isFinite(a.v) || !Number.isFinite(b.t) || !Number.isFinite(b.v)) {
+        finishCurrent();
+        continue;
+      }
+
+      const aAbove = a.v > threshold;
+      const bAbove = b.v > threshold;
+      if (aAbove && bAbove) appendEdge(a, b);
+      else if (!aAbove && bAbove) appendEdge(crossing(a, b), b);
+      else if (aAbove && !bAbove) {
+        appendEdge(a, crossing(a, b));
+        finishCurrent();
+      } else {
+        finishCurrent();
+      }
+    }
+    finishCurrent();
+    return segments;
+  }
+
+  function responseAreaAboveThreshold(areaGenerator, resp, threshold) {
+    return responseSegmentsAboveThreshold(resp, threshold)
+      .map(segment => areaGenerator(segment))
+      .filter(Boolean)
+      .join(' ');
+  }
+
   function clamp(v, a, b) {
     return Math.max(a, Math.min(b, v));
   }
@@ -542,6 +601,7 @@
     features: [],
     activeEmbeddingTab: 'values',
     showReferenceEmbeddings: false,
+    showReferenceConv: false,
     referenceEmbeddingMap: new Map(),
     referenceEmbeddingFile: null,
     selectedFeatureIdx: null,
@@ -626,6 +686,7 @@
     betaFileSelect: document.querySelector('#betaFileSelect'),
     referencePolicySelect: document.querySelector('#referencePolicySelect'),
     showReference: document.querySelector('#showReference'),
+    showReferenceConv: document.querySelector('#showReferenceConv'),
     retropropFeatureBtn: document.querySelector('#retropropFeatureBtn'),
     retroProgressWrap: document.querySelector('#retroProgressWrap'),
     retroProgressText: document.querySelector('#retroProgressText'),
@@ -863,7 +924,9 @@
     y: cG.append('g')
   };
   const cArea = cG.append('path').attr('stroke', 'none').attr('fill', 'rgba(16,185,129,.18)');
+  const cRefArea = cG.append('path').attr('stroke', 'none').attr('fill', 'rgba(99,102,241,.16)').attr('opacity', 0);
   const cPath = cG.append('path').attr('fill', 'none').attr('stroke', 'rgba(16,185,129,.75)').attr('stroke-width', 2);
+  const cRefPath = cG.append('path').attr('fill', 'none').attr('stroke', 'rgba(99,102,241,.85)').attr('stroke-width', 1.75).attr('stroke-dasharray', '6 4').attr('opacity', 0);
   const cThr = cG.append('line').attr('stroke', 'rgba(245,158,11,.95)').attr('stroke-width', 1.5).attr('stroke-dasharray', '6 4');
   const cAlign = cG.append('line').attr('stroke', 'rgba(245,158,11,.40)').attr('stroke-width', 2);
   const cOverlay = cG.append('rect').attr('fill', 'transparent').style('cursor', 'crosshair');
@@ -2102,12 +2165,26 @@
     };
     initConvOverlayHandlers();
 
-    const y = d3.scaleLinear().domain(d3.extent(lastConv.resp, d => d.v)).nice().range([innerH, 0]);
+    const drawReference = !!(
+      el.showReferenceConv
+      && el.showReferenceConv.checked
+      && lastConv.referenceResp
+      && lastConv.referenceResp.length
+    );
+    const yValues = lastConv.resp.map(d => d.v);
+    if (drawReference) lastConv.referenceResp.forEach(d => yValues.push(d.v));
+    const y = d3.scaleLinear().domain(d3.extent(yValues)).nice().range([innerH, 0]);
     const line = d3.line().x(d => x(d.t)).y(d => y(d.v));
-    const area = d3.area().x(d => x(d.t)).y0(y(state.threshold)).y1(d => y(Math.max(d.v, state.threshold)));
+    const area = d3.area().x(d => x(d.t)).y0(y(state.threshold)).y1(d => y(d.v));
 
     cPath.attr('d', line(lastConv.resp));
-    cArea.attr('d', area(lastConv.resp));
+    cRefPath
+      .attr('d', drawReference ? line(lastConv.referenceResp) : '')
+      .attr('opacity', drawReference ? 1 : 0);
+    cArea.attr('d', responseAreaAboveThreshold(area, lastConv.resp, state.threshold));
+    cRefArea
+      .attr('d', drawReference ? responseAreaAboveThreshold(area, lastConv.referenceResp, state.threshold) : '')
+      .attr('opacity', drawReference ? 1 : 0);
 
     cThr
       .attr('x1', x(lastConv.tMin)).attr('x2', x(lastConv.tMax))
@@ -2700,28 +2777,47 @@
 
     // Optional: load convolution files computed by the Python pipeline (when available).
     let fromFile = null;
+    let referenceFromFile = null;
     const featureIdx = (el.featureIdx ? (+el.featureIdx.value) : 0);
 
     if (peState && peState.lastRun && peState.instanceId != null) {
-      const key = `${peState.instanceId}:${featureIdx}`;
+      const cfg = peState.lastRun;
+      const key = [
+        cfg.dataset,
+        cfg.model,
+        cfg.explainer,
+        cfg.label,
+        peState.instanceId,
+        cfg.refPolicy,
+        featureIdx
+      ].join(':');
+
+      const referenceConvFile = `convolved_reference_${peState.instanceId}_reference_policy_${cfg.refPolicy}_feature_${featureIdx}.csv`;
+      const hasReferenceConv = (peState.fileList || []).some(file => String(file).toLowerCase() === referenceConvFile.toLowerCase());
+      if (el.showReferenceConv) el.showReferenceConv.disabled = !hasReferenceConv;
 
       // Only trigger a (cached) load when the feature changes.
       if (state.__convFromFileKey !== key) {
         state.__convFromFileKey = key;
         state.convFromFile = null;
+        state.convReferenceFromFile = null;
 
         peLoadConvForFeature(featureIdx)
           .then(pack => {
             if (!pack) return;
             if (state.__convFromFileKey !== key) return;
             state.convFromFile = pack.resp;
+            state.convReferenceFromFile = pack.referenceResp || null;
             // Re-render once with the loaded file data.
             renderConv();
           })
           .catch(() => { });
       } else if (state.convFromFile) {
         fromFile = state.convFromFile;
+        referenceFromFile = state.convReferenceFromFile;
       }
+    } else if (el.showReferenceConv) {
+      el.showReferenceConv.disabled = true;
     }
 
     // Compute convolution (cached).
@@ -2733,12 +2829,15 @@
     }
 
     const resp = (fromFile && fromFile.length) ? fromFile : computed.resp;
+    const referenceResp = (referenceFromFile && referenceFromFile.length) ? referenceFromFile : null;
+    const drawReference = !!(el.showReferenceConv && el.showReferenceConv.checked && referenceResp);
     const tMin = 0;
     const tMax = (resp && resp.length) ? resp[resp.length - 1].t : computed.tMax;
     const receptive = computed.receptive;
 
     lastConv = {
       resp,
+      referenceResp,
       tMin,
       tMax,
       receptive
@@ -2796,15 +2895,23 @@
 
     initConvOverlayHandlers();
 
-    const y = d3.scaleLinear().domain(d3.extent(resp, d => d.v)).nice().range([innerH, 0]);
+    const yValues = resp.map(d => d.v);
+    if (drawReference) referenceResp.forEach(d => yValues.push(d.v));
+    const y = d3.scaleLinear().domain(d3.extent(yValues)).nice().range([innerH, 0]);
     const line = d3.line().x(d => x(d.t)).y(d => y(d.v));
     const area = d3.area()
       .x(d => x(d.t))
       .y0(y(state.threshold))
-      .y1(d => y(Math.max(d.v, state.threshold)));
+      .y1(d => y(d.v));
 
     cPath.attr('d', line(resp));
-    cArea.attr('d', area(resp));
+    cRefPath
+      .attr('d', drawReference ? line(referenceResp) : '')
+      .attr('opacity', drawReference ? 1 : 0);
+    cArea.attr('d', responseAreaAboveThreshold(area, resp, state.threshold));
+    cRefArea
+      .attr('d', drawReference ? responseAreaAboveThreshold(area, referenceResp, state.threshold) : '')
+      .attr('opacity', drawReference ? 1 : 0);
 
     cThr
       .attr('x1', x(tMin)).attr('x2', x(tMax))
@@ -3515,6 +3622,15 @@
     el.showReference.checked = false;
     el.showReference.addEventListener('change', () => {
       renderSeries();
+    });
+  }
+
+  function initReferenceConvToggle() {
+    if (!el.showReferenceConv) return;
+    el.showReferenceConv.checked = state.showReferenceConv === true;
+    el.showReferenceConv.addEventListener('change', () => {
+      state.showReferenceConv = !!el.showReferenceConv.checked;
+      renderConv();
     });
   }
 
@@ -4391,6 +4507,8 @@
     peState.instanceMeta = null;
     peState.instanceMetaFile = null;
     state.convFromFile = null;
+    state.convReferenceFromFile = null;
+    state.__convFromFileKey = null;
     const folder = `output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
     const entries = await peListEntries(folder, 'files');
     const files = entries.map(e => e.name);
@@ -4594,6 +4712,8 @@
     const folder = `output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
     const files = peState.fileList || (await peListEntries(folder, 'files')).map(e => e.name);
     peState.fileList = files;
+    state.convReferenceFromFile = null;
+    state.__convFromFileKey = null;
     updateReferencePolicySelect(files, instanceId, nextCfg.refPolicy);
 
     const base = `/output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
@@ -4685,6 +4805,7 @@
     renderInstanceDetails();
     renderFeatureCharts();
     focusSelectedFeatureAfterReferenceSwitch();
+    renderConv();
     if (opts.referenceMorphFrom && nextReferenceSeries && el.showReference && el.showReference.checked) {
       renderSeriesWithReferenceMorph(opts.referenceMorphFrom, nextReferenceSeries);
     } else {
@@ -4700,10 +4821,21 @@
     if (peState.availableConvFeatures && !peState.availableConvFeatures.has(featureIdx)) return null;
     const cfg = peState.lastRun;
     const instanceId = peState.instanceId;
-    const key = `${instanceId}:${featureIdx}`;
+    const key = [
+      cfg.dataset,
+      cfg.model,
+      cfg.explainer,
+      cfg.label,
+      instanceId,
+      cfg.refPolicy,
+      featureIdx
+    ].join(':');
     if (peState.convCache.has(key)) return peState.convCache.get(key);
     const base = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
     const convUrl = `${base}/convolved_instance_${instanceId}_feature_${featureIdx}.csv`;
+    const referenceConvFile = `convolved_reference_${instanceId}_reference_policy_${cfg.refPolicy}_feature_${featureIdx}.csv`;
+    const hasReferenceConv = (peState.fileList || []).some(file => String(file).toLowerCase() === referenceConvFile.toLowerCase());
+    const referenceConvUrl = hasReferenceConv ? `${base}/${referenceConvFile}` : null;
     try {
       try {
         const toLink = (u) => {
@@ -4723,8 +4855,15 @@
     try {
       setTopBusy(true, 'Loading convolution…');
       let __cText;
+      let __referenceText;
       try {
-        __cText = await peFetchText(convUrl);
+        [__cText, __referenceText] = await Promise.all([
+          peFetchText(convUrl),
+          referenceConvUrl ? peFetchText(referenceConvUrl).catch(err => {
+            console.warn('Could not load reference convolution:', err);
+            return '';
+          }) : Promise.resolve('')
+        ]);
       } finally {
         setTopBusy(false, '');
       }
@@ -4732,8 +4871,13 @@
         t: d.t,
         v: d.v
       }));
+      const referenceResp = __referenceText ? parseIndexValueCSV(__referenceText, 1).map(d => ({
+        t: d.t,
+        v: d.v
+      })) : null;
       const pack = {
-        resp
+        resp,
+        referenceResp: referenceResp && referenceResp.length ? referenceResp : null
       };
       peState.convCache.set(key, pack);
       return pack;
@@ -6811,6 +6955,7 @@ ${d.kernelId}`
 
 
   initReferenceToggle();
+  initReferenceConvToggle();
   initEmbeddingSortControls();
   initEmbeddingSeriesControls();
   initEmbeddingTabs();

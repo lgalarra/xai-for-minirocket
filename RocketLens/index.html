@@ -313,10 +313,16 @@
       <div class="card">
         <div class="row" style="margin-bottom:6px">
           <h2>Convolution response</h2>
+          <label class="inline" style="gap:8px;">
+            <input id="showReferenceConv" type="checkbox" disabled />
+            <span>Show reference</span>
+          </label>
           <div class="legend">
-            <span><span class="dot" style="background: rgba(16,185,129,.75)"></span>response</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.75)"></span>instance response</span>
+            <span><span class="dot" style="background: rgba(99,102,241,.85)"></span>reference response</span>
             <span><span class="dot" style="background: rgba(245,158,11,.75)"></span>threshold</span>
-            <span><span class="dot" style="background: rgba(16,185,129,.18)"></span>area above threshold</span>
+            <span><span class="dot" style="background: rgba(16,185,129,.18)"></span>instance area above threshold</span>
+            <span><span class="dot" style="background: rgba(99,102,241,.16)"></span>reference area above threshold</span>
           </div>
         </div>
         <svg id="convChart"></svg>
