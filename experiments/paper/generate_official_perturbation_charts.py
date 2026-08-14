@@ -30,7 +30,7 @@ SEGMENTED_RE = re.compile(r"^segmented(?:_n(?P<n>\d+))?_f_minus_f0$")
 TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
 AVERAGE_POLICY_SUFFIXES = {
     "random_no_positive": "random",
-    "bottom": "bottom",
+    "bottom": "bottom (backprop)",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 
@@ -66,7 +66,10 @@ def parse_args():
     parser.add_argument(
         "--perturbation-policy",
         default="gaussian",
-        help="Perturbation policy filter. Use 'all' to disable this filter.",
+        help=(
+            "Perturbation policy filter. Use 'all' to disable this filter, "
+            "or a value ending in '_' to match policies with that prefix."
+        ),
     )
     parser.add_argument(
         "--percentile-cut",
@@ -248,11 +251,29 @@ def should_filter_sigma(args):
     return args.perturbation_policy.startswith("gaussian")
 
 
+def perturbation_policy_mask(data, requested_policy):
+    policies = data["perturbation_policy"].astype(str)
+    if requested_policy.endswith("_"):
+        return policies.str.startswith(requested_policy)
+    return policies == requested_policy
+
+
+def restrict_gradients_to_logistic_regression(data):
+    if "base_explainer" not in data or "mr_classifier" not in data:
+        return data
+    return data[
+        ~(
+            (data["base_explainer"] == "gradients")
+            & (data["mr_classifier"] != "LogisticRegression")
+        )
+    ].copy()
+
+
 def filter_data(data, args):
     data = data.copy()
 
     if args.evolution_factor != "perturbation_policy" and args.perturbation_policy != "all":
-        data = data[data["perturbation_policy"] == args.perturbation_policy]
+        data = data[perturbation_policy_mask(data, args.perturbation_policy)]
 
     if args.evolution_factor != "percentile_cut":
         data = data[np.isclose(data["percentile_cut"], args.percentile_cut, equal_nan=False)]
@@ -269,14 +290,7 @@ def filter_data(data, args):
     if args.reference_policy != "all":
         data = data[data["reference_policy"] == args.reference_policy]
 
-    data = data[
-        ~(
-            (data["mr_classifier"] != "LogisticRegression")
-            & (data["base_explainer"] == "gradients")
-        )
-    ]
-
-    return normalize_dataset_names(data)
+    return normalize_dataset_names(restrict_gradients_to_logistic_regression(data))
 
 
 def filter_average_policy_data(data, args):
@@ -288,11 +302,16 @@ def filter_average_policy_data(data, args):
         suffix_mask |= policies.str.endswith(f"_{suffix}")
 
     if args.evolution_factor != "perturbation_policy" and args.perturbation_policy != "all":
-        target_policies = {
-            f"{args.perturbation_policy}_{suffix}"
-            for suffix in AVERAGE_POLICY_SUFFIXES
-        }
-        data = data[data["perturbation_policy"].isin(target_policies)]
+        if args.perturbation_policy.endswith("_"):
+            data = data[
+                perturbation_policy_mask(data, args.perturbation_policy) & suffix_mask
+            ]
+        else:
+            target_policies = {
+                f"{args.perturbation_policy}_{suffix}"
+                for suffix in AVERAGE_POLICY_SUFFIXES
+            }
+            data = data[data["perturbation_policy"].isin(target_policies)]
     else:
         data = data[suffix_mask]
 
@@ -311,14 +330,7 @@ def filter_average_policy_data(data, args):
     if args.reference_policy != "all":
         data = data[data["reference_policy"] == args.reference_policy]
 
-    data = data[
-        ~(
-            (data["mr_classifier"] != "LogisticRegression")
-            & (data["base_explainer"] == "gradients")
-        )
-    ]
-
-    return normalize_dataset_names(data)
+    return normalize_dataset_names(restrict_gradients_to_logistic_regression(data))
 
 
 def discover_metrics(data, args):
@@ -361,9 +373,35 @@ def average_policy_suffix(policy):
     return None
 
 
-def aggregate_average_policies(data, evolution_factor, metrics):
-    metrics = [metric for metric in metrics if metric in data]
-    if data.empty or not metrics:
+def average_policy_metric(metric_kind):
+    if metric_kind == "probability":
+        return "f_minus_f0-mean"
+    if metric_kind == "probability-norm":
+        return "f_minus_f0_norm-mean"
+    if metric_kind == "change-ratio":
+        return "f_minus_f0-change_ratio"
+    raise ValueError(f"Unknown metric kind: {metric_kind}")
+
+
+def is_backprop_only_plot_policy(policy):
+    return str(policy).endswith(("_bottom", "_random_no_positive"))
+
+
+def metrics_for_plot(metrics, args):
+    if args.evolution_factor == "perturbation_policy":
+        return metrics
+    if args.perturbation_policy == "all":
+        return metrics
+    if not is_backprop_only_plot_policy(args.perturbation_policy):
+        return metrics
+
+    metric = average_policy_metric(args.metric_kind)
+    return [metric] if metric in metrics else []
+
+
+def aggregate_average_policies(data, evolution_factor, metric_kind):
+    metric = average_policy_metric(metric_kind)
+    if data.empty or metric not in data:
         return pd.DataFrame(
             columns=["dataset", "average_policy_suffix", evolution_factor, "average_value"]
         )
@@ -381,11 +419,11 @@ def aggregate_average_policies(data, evolution_factor, metrics):
         )
 
     grouped = (
-        data.groupby(["dataset", "average_policy_suffix", GAUSSIAN_BOTTOM_POLICY_COLUMN, evolution_factor], as_index=False)[metrics]
+        data.groupby(["dataset", "average_policy_suffix", GAUSSIAN_BOTTOM_POLICY_COLUMN, evolution_factor], as_index=False)[metric]
         .mean(numeric_only=True)
         .sort_values(["dataset", "average_policy_suffix", GAUSSIAN_BOTTOM_POLICY_COLUMN, evolution_factor])
     )
-    grouped["average_value"] = grouped[metrics].mean(axis=1, skipna=True)
+    grouped["average_value"] = grouped[metric]
     return grouped.dropna(subset=["average_value"])
 
 
@@ -552,6 +590,12 @@ def output_name(dataset, args):
     return "_".join(safe_filename_part(part) for part in parts) + ".png"
 
 
+def should_write_best_methods_chart(args):
+    if str(args.perturbation_policy).startswith("reference_to_instance_"):
+        return False
+    return not is_backprop_only_plot_policy(args.perturbation_policy)
+
+
 def main():
     args = parse_args()
     raw_data, files = load_data(args.data_dir)
@@ -560,6 +604,7 @@ def main():
         raise ValueError("No rows left after filtering. Adjust the CLI filters.")
 
     metrics = discover_metrics(data, args)
+    metrics = metrics_for_plot(metrics, args)
     if not metrics:
         raise ValueError(f"No metrics discovered for metric kind {args.metric_kind}.")
 
@@ -578,16 +623,17 @@ def main():
         average_ds = aggregate_average_policies(
             average_policy_data[average_policy_data["dataset"] == dataset],
             args.evolution_factor,
-            best_metrics,
+            args.metric_kind,
         )
-        plot_dataset(
-            g_ds,
-            dataset,
-            best_metrics,
-            args,
-            args.out_dir / "best_methods" / filename,
-            average_data=average_ds,
-        )
+        if should_write_best_methods_chart(args):
+            plot_dataset(
+                g_ds,
+                dataset,
+                best_metrics,
+                args,
+                args.out_dir / "best_methods" / filename,
+                average_data=average_ds,
+            )
 
     print(f"Wrote figures under {args.out_dir}")
     print("Best-method plots used:")

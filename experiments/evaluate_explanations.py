@@ -252,6 +252,10 @@ def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations
     return metric, norm_metric, change_ratio, n_perturbed_points
 
 
+def supports_explainer_for_classifier(explainer_method, classifier_name):
+    return explainer_method != 'gradients' or classifier_name == 'LogisticRegression'
+
+
 if __name__ == '__main__':
     THE_DATASET = None
     if len(sys.argv) > 1:
@@ -402,6 +406,12 @@ if __name__ == '__main__':
             print('Classifier', classifier_name)
             for label in LABELS if THE_LABEL is None else [THE_LABEL]:
                 for explainer_method in EXPLAINERS if THE_EXPLAINER is None else [THE_EXPLAINER]:
+                    if not supports_explainer_for_classifier(explainer_method, classifier_name):
+                        print(
+                            f'Skipping {explainer_method} for {classifier_name}: '
+                            'gradients are only supported for LogisticRegression'
+                        )
+                        continue
                     for distance in DISTANCES if THE_DISTANCE is None else [THE_DISTANCE]:
                         metadata_df = data_importer.get_metadata(
                             classifier_name,

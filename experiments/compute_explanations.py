@@ -487,6 +487,11 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
         DataExporter.save_classifier(classifier, dataset_name)
     return classifier
 
+
+def supports_explainer_for_classifier(explainer_method, classifier_name):
+    return explainer_method != 'gradients' or classifier_name == 'LogisticRegression'
+
+
 if __name__ == '__main__':
     (
         should_export_data,
@@ -598,6 +603,12 @@ if __name__ == '__main__':
             y_test_pred = classifier.predict(X_test)
             print(f"Accuracy on test set ({dataset_name}): {accuracy_score(y_test, y_test_pred)}")
             for explainer_method in explainers:
+                if not supports_explainer_for_classifier(explainer_method, mr_classifier_name):
+                    print(
+                        f'Skipping {explainer_method} for {mr_classifier_name}: '
+                        'gradients are only supported for LogisticRegression'
+                    )
+                    continue
                 for label in LABELS:
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
                     print(f"Evaluating configuration {configuration}")
