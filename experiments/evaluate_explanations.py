@@ -256,6 +256,10 @@ def supports_explainer_for_classifier(explainer_method, classifier_name):
     return explainer_method != 'gradients' or classifier_name == 'LogisticRegression'
 
 
+def supports_perturbation_for_explainer(perturbation_policy, explainer_method):
+    return not perturbation_policy.startswith('gradient_gaussian') or explainer_method == 'gradients'
+
+
 if __name__ == '__main__':
     THE_DATASET = None
     if len(sys.argv) > 1:
@@ -343,6 +347,22 @@ if __name__ == '__main__':
                                     'sigma' : [3.0, 2.0, 1.0],
                                   'budget': [BUDGET]
                     },
+                    'gradient_gaussian' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gradient_gaussian_bottom' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gradient_gaussian_random' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gradient_gaussian_random_no_positive' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
                     'reference_to_instance': {'percentile_cut': [90, 75, 50],
                                                'interpolation': [0.25, 0.5, 0.75, 1.0],
                                                'budget': [1]
@@ -426,6 +446,9 @@ if __name__ == '__main__':
                         )
                         print('Label, explainer_method, distance: ', label, explainer_method, distance)
                         for perturbation_policy, all_args in PERTURBATIONS.items():
+                            if not supports_perturbation_for_explainer(perturbation_policy, explainer_method):
+                                print(f'Skipping {perturbation_policy} for {explainer_method}')
+                                continue
                             args_for_explainer = get_perturbation_args_for_explainer(all_args, explainer_method)
                             for combo in itertools.product(*args_for_explainer.values()):
                                 args = dict(zip(args_for_explainer.keys(), combo))

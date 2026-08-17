@@ -266,6 +266,31 @@ def get_gaussian_perturbation_on_mask(X_target: np.ndarray, X_to: np.ndarray, ex
     return X_target_repeated + repeated_mask * rho * delta, explanation_size
 
 
+def get_signed_gaussian_perturbation_on_mask(X_target: np.ndarray, explanation: np.ndarray,
+                                             explanation_mask: np.ndarray, **kwargs):
+    budget = kwargs['budget']
+    signed_explanation = _pad_last_axis(explanation, X_target.shape[-1])
+    explanation_mask = _pad_last_axis(explanation_mask, X_target.shape[-1]).astype(float)
+
+    if explanation_mask.shape[0] == X_target.shape[0]:
+        repeated_mask = np.repeat(explanation_mask, budget, axis=0)
+        repeated_explanation = np.repeat(signed_explanation, budget, axis=0)
+    elif explanation_mask.shape[0] == X_target.shape[0] * budget:
+        repeated_mask = explanation_mask
+        repeated_explanation = np.repeat(signed_explanation, budget, axis=0)
+    else:
+        raise ValueError("explanation_mask must have one row per target instance or per budgeted perturbation")
+
+    X_target_repeated = np.repeat(X_target, budget, axis=0)
+    sigma_multiplier = float(kwargs.get('signed_sigma', kwargs.get('sigma', 1.0)))
+    observation_std = np.std(X_target, axis=tuple(range(1, X_target.ndim)), keepdims=True)
+    perturbation_scale = np.repeat(observation_std, budget, axis=0) * sigma_multiplier
+    perturbation = np.abs(np.random.normal(0.0, perturbation_scale, size=repeated_mask.shape))
+    perturbation = np.sign(repeated_explanation) * perturbation
+    explanation_size = np.count_nonzero(repeated_mask) / budget
+    return X_target_repeated + repeated_mask * perturbation, explanation_size
+
+
 def apply_explanation_mask(xto: np.ndarray, xfrom: np.ndarray,
                            percentile_vector: np.ndarray, interpolation_level: float) -> np.ndarray:
     delta = xfrom - xto
@@ -432,6 +457,65 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             )
             return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
                                                      explanation_mask=explanation_mask, **args)
+    elif policy in ('gradient_gaussian', 'gradient_gaussian_bottom', 'gradient_gaussian_random',
+                    'gradient_gaussian_random_no_positive'):
+        threshold = np.percentile(X_scores, args['percentile_cut'])
+        if policy == 'gradient_gaussian':
+            explanation_mask = (X_scores > max(threshold, 0.0))
+            explanation_mask = _limit_mask(
+                explanation_mask,
+                X_scores,
+                n_perturbed_points=args.get('n_perturbed_points'),
+                random_select=False
+            )
+        elif policy == 'gradient_gaussian_bottom':
+            explanation_mask = _bottom_mask(X_scores, args['percentile_cut'])
+            explanation_mask = _limit_mask(
+                explanation_mask,
+                -X_scores,
+                n_perturbed_points=args.get('n_perturbed_points'),
+                random_select=False
+            )
+        elif policy == 'gradient_gaussian_random':
+            masks = [
+                _limit_mask(
+                    _random_mask(X_scores, args['percentile_cut']),
+                    X_scores,
+                    n_perturbed_points=args.get('n_perturbed_points'),
+                    random_select=True
+                )
+                for _ in range(args['budget'])
+            ]
+            explanation_mask = np.stack(masks, axis=1).reshape(
+                X_scores.shape[0] * args['budget'], *X_scores.shape[1:]
+            )
+        else:
+            top_attribution_mask = (X_scores > max(threshold, 0.0))
+            top_attribution_mask = _limit_mask(
+                top_attribution_mask,
+                X_scores,
+                n_perturbed_points=args.get('n_perturbed_points'),
+                random_select=False
+            )
+            matched_n_perturbed_points = _mask_counts(top_attribution_mask)
+            masks = [
+                _limit_mask(
+                    _random_unconstrained_mask(X_scores, matched_n_perturbed_points),
+                    np.abs(X_scores),
+                    n_perturbed_points=matched_n_perturbed_points,
+                    random_select=True
+                )
+                for _ in range(args['budget'])
+            ]
+            explanation_mask = np.stack(masks, axis=1).reshape(
+                X_scores.shape[0] * args['budget'], *X_scores.shape[1:]
+            )
+        return get_signed_gaussian_perturbation_on_mask(
+            X_target=X_target,
+            explanation=X_explanations,
+            explanation_mask=explanation_mask,
+            **args
+        )
     elif policy == 'reference_to_instance':
         return get_reference_perturbation(xfrom=X_target, xto=X_references, explanation=X_scores,
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)
