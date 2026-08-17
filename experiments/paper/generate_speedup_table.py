@@ -151,13 +151,13 @@ def exclude_counterfactual_reference_policy(df):
     return df[df["reference_policy"] != "counterfactual"].copy()
 
 
-def restrict_gradients_to_logistic_regression(df):
+def restrict_gradients_to_supported_classifiers(df):
     if "base_explainer" not in df or "mr_classifier" not in df:
         return df
     return df[
         ~(
             (df["base_explainer"] == "gradients")
-            & (df["mr_classifier"] != "LogisticRegression")
+            & (~df["mr_classifier"].isin(("LogisticRegression", "MLPClassifier")))
         )
     ].copy()
 
@@ -383,7 +383,7 @@ def main():
     reduced_specs = reduced_variant_specs(specs)
     df = load_results(args.data_dir)
     df = exclude_counterfactual_reference_policy(df)
-    df = restrict_gradients_to_logistic_regression(df)
+    df = restrict_gradients_to_supported_classifiers(df)
     observation_counts = infer_observation_counts(df)
     minirocket_features = load_minirocket_features()
     runtime_df = deduplicate_runtime_profiles(df, specs)

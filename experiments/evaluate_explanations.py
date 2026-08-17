@@ -253,7 +253,7 @@ def compute_perturbation_metrics(classifier, X_test, X_reference, X_explanations
 
 
 def supports_explainer_for_classifier(explainer_method, classifier_name):
-    return explainer_method != 'gradients' or classifier_name == 'LogisticRegression'
+    return explainer_method != 'gradients' or classifier_name in ('LogisticRegression', 'MLPClassifier')
 
 
 def supports_perturbation_for_explainer(perturbation_policy, explainer_method):
@@ -429,7 +429,7 @@ if __name__ == '__main__':
                     if not supports_explainer_for_classifier(explainer_method, classifier_name):
                         print(
                             f'Skipping {explainer_method} for {classifier_name}: '
-                            'gradients are only supported for LogisticRegression'
+                            'gradients are only supported for LogisticRegression and MLPClassifier'
                         )
                         continue
                     for distance in DISTANCES if THE_DISTANCE is None else [THE_DISTANCE]:

@@ -33,6 +33,7 @@ AVERAGE_POLICY_SUFFIXES = {
     "bottom": "bottom (backprop)",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
+GAUSSIAN_POLICY_PREFIXES = ("gaussian", "gradient_gaussian")
 
 
 def parse_args():
@@ -248,7 +249,11 @@ def should_filter_sigma(args):
         return False
     if args.perturbation_policy == "all":
         return False
-    return args.perturbation_policy.startswith("gaussian")
+    return is_gaussian_family_policy(args.perturbation_policy)
+
+
+def is_gaussian_family_policy(policy):
+    return str(policy).startswith(GAUSSIAN_POLICY_PREFIXES)
 
 
 def perturbation_policy_mask(data, requested_policy):
@@ -258,13 +263,13 @@ def perturbation_policy_mask(data, requested_policy):
     return policies == requested_policy
 
 
-def restrict_gradients_to_logistic_regression(data):
+def restrict_gradients_to_supported_classifiers(data):
     if "base_explainer" not in data or "mr_classifier" not in data:
         return data
     return data[
         ~(
             (data["base_explainer"] == "gradients")
-            & (data["mr_classifier"] != "LogisticRegression")
+            & (~data["mr_classifier"].isin(("LogisticRegression", "MLPClassifier")))
         )
     ].copy()
 
@@ -290,7 +295,7 @@ def filter_data(data, args):
     if args.reference_policy != "all":
         data = data[data["reference_policy"] == args.reference_policy]
 
-    return normalize_dataset_names(restrict_gradients_to_logistic_regression(data))
+    return normalize_dataset_names(restrict_gradients_to_supported_classifiers(data))
 
 
 def filter_average_policy_data(data, args):
@@ -330,7 +335,7 @@ def filter_average_policy_data(data, args):
     if args.reference_policy != "all":
         data = data[data["reference_policy"] == args.reference_policy]
 
-    return normalize_dataset_names(restrict_gradients_to_logistic_regression(data))
+    return normalize_dataset_names(restrict_gradients_to_supported_classifiers(data))
 
 
 def discover_metrics(data, args):
@@ -346,7 +351,7 @@ def discover_metrics(data, args):
 
 
 def is_gaussian_bottom_perturbation_policy(policy):
-    return str(policy) == "gaussian_bottom"
+    return str(policy) in {"gaussian_bottom", "gradient_gaussian_bottom"}
 
 
 def aggregate(data, evolution_factor):
