@@ -470,11 +470,30 @@ def average_x_values_for_plot(data, args):
     return 100 - x
 
 
-def style_maps(metrics, explainers):
+def metric_suffix(metric):
+    return metric[len(metric_stem(metric)) :]
+
+
+def canonical_color_metrics(metrics):
+    metrics = sorted(dict.fromkeys(metrics), key=metric_sort_key)
+    suffixes = sorted({metric_suffix(metric) for metric in metrics})
+    anchors = [
+        f"{stem}{suffix}"
+        for suffix in suffixes
+        for stem in CORE_STEMS
+    ]
+    return sorted(dict.fromkeys(anchors + metrics), key=metric_sort_key)
+
+
+def style_maps(metrics, explainers, color_metrics=None):
     cmap = plt.get_cmap("tab20")
+    color_basis = list(metrics)
+    if color_metrics is not None:
+        color_basis.extend(color_metrics)
+    color_metrics = canonical_color_metrics(color_basis)
     color_map = {
         metric: cmap(i % cmap.N)
-        for i, metric in enumerate(metrics)
+        for i, metric in enumerate(color_metrics)
     }
     linestyles = ["-", "--", ":", "-."]
     linestyle_map = {
@@ -484,7 +503,7 @@ def style_maps(metrics, explainers):
     return color_map, linestyle_map
 
 
-def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
+def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, color_metrics=None):
     g_ds = g_ds.copy()
     g_ds["_plot_x"] = x_values_for_plot(g_ds, args)
     if average_data is not None and not average_data.empty:
@@ -493,7 +512,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None):
 
     g_ds = g_ds.sort_values("_plot_x")
     explainers = sorted(g_ds["base_explainer"].unique())
-    color_map, linestyle_map = style_maps(metrics, explainers)
+    color_map, linestyle_map = style_maps(metrics, explainers, color_metrics=color_metrics)
 
     fig_width = max(7, min(14, 0.9 * len(metrics) + 5))
     plt.figure(figsize=(fig_width, 5))
@@ -638,6 +657,7 @@ def main():
                 args,
                 args.out_dir / "best_methods" / filename,
                 average_data=average_ds,
+                color_metrics=metrics,
             )
 
     print(f"Wrote figures under {args.out_dir}")
