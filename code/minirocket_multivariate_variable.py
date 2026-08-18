@@ -1095,6 +1095,190 @@ def back_propagate_attribution_2(
 
     return beta_by_channel.sum(axis=1, keepdims=True).T
 
+
+def _minirocket_lrp_source_index(output_index, tap_index, dilation, input_length):
+    """
+    Map a MiniROCKET output position and 9-tap kernel index to the raw source
+    index used by this file's C_alpha/C_gamma construction.
+    """
+    source_index = int(output_index) + (int(tap_index) - 4) * int(dilation)
+    if 0 <= source_index < int(input_length):
+        return source_index
+    return None
+
+
+def _minirocket_lrp_denominator(z, epsilon, stabilizer):
+    if stabilizer == "paper":
+        return z + epsilon
+    if stabilizer == "signed":
+        if z > 0.0:
+            return z + epsilon
+        if z < 0.0:
+            return z - epsilon
+        return epsilon
+    raise ValueError(
+        f"Unsupported stabilizer={stabilizer!r}; expected 'paper' or 'signed'."
+    )
+
+
+def _minirocket_lrp_reconstruct_conv_at(x_tc, tr, output_index):
+    x_tc = np.asarray(x_tc, dtype=np.float64)
+    T, C = x_tc.shape
+    kappa = np.asarray(tr["kernel"], dtype=np.float64).reshape(-1)
+    dilation = int(tr["dilation"])
+    channels = [
+        int(channel)
+        for channel in tr.get("channels", list(range(C)))
+        if 0 <= int(channel) < C
+    ]
+
+    z = 0.0
+    for tap_index, tap_weight in enumerate(kappa):
+        source_index = _minirocket_lrp_source_index(
+            output_index, tap_index, dilation, T
+        )
+        if source_index is None:
+            continue
+        for channel in channels:
+            z += float(x_tc[source_index, channel]) * float(tap_weight)
+    return z
+
+
+def back_propagate_attribution_lrp(
+    alphas,
+    traces_x,
+    x_tc,
+    *,
+    epsilon=1e-6,
+    stabilizer="paper",
+    per_channel=False,
+    n_jobs=-1,
+    parallel_backend="threading",
+):
+    """
+    Propagate upstream MiniROCKET feature relevance back to raw observations
+    using a ROCKET-LRP rule adapted to MiniROCKET PPV features.
+
+    This method is reference-free, unlike back_propagate_attribution: it does
+    not use x0_tc, sigma_ref, or baseline-dependent differences.
+
+    For each feature k, incoming relevance alpha_k is first distributed equally
+    over all convolution positions satisfying conv_sum > bias_b. The PPV margin
+    magnitude is deliberately ignored at this stage. Each active convolution
+    position then redistributes its share through the actual dilated,
+    multivariate MiniROCKET convolution using signed X[t, c] * kappa[m]
+    contributions. Invalid dilated tap positions are padding and receive no
+    relevance.
+
+    Stabilizer modes:
+      - "paper": denominator z + epsilon, matching the published ROCKET-LRP
+        epsilon denominator for faithful comparison.
+      - "signed": sign-aware epsilon-LRP variant using z + epsilon for z > 0,
+        z - epsilon for z < 0, and epsilon when z == 0.
+
+    Returns beta.T, matching back_propagate_attribution: shape (C, T) when
+    per_channel=True and shape (1, T) when per_channel=False.
+    """
+    import numpy as np
+
+    if stabilizer not in {"paper", "signed"}:
+        raise ValueError(
+            f"Unsupported stabilizer={stabilizer!r}; expected 'paper' or 'signed'."
+        )
+
+    alphas = np.asarray(alphas, dtype=np.float64).reshape(-1)
+    x_tc = _as_TC(x_tc).astype(np.float64, copy=False)
+    traces_x = _ensure_sigma_in_traces(traces_x)
+
+    T, C = x_tc.shape
+    beta_shape = (T, C if per_channel else 1)
+    beta = np.zeros(beta_shape, dtype=np.float64)
+
+    if epsilon < 0:
+        raise ValueError(f"epsilon must be non-negative, got {epsilon}.")
+    epsilon = float(epsilon)
+
+    def _attribution_for_feature(k, tr):
+        alpha_k = float(alphas[k])
+        if alpha_k == 0.0:
+            return None
+
+        conv_sum = np.asarray(tr["conv_sum"], dtype=np.float64).reshape(-1)
+        bias_b = float(tr["bias_b"])
+        d_eff = min(T, conv_sum.shape[0])
+        if d_eff == 0:
+            return None
+
+        active_positions = np.flatnonzero(conv_sum[:d_eff] > bias_b)
+        n_active = int(active_positions.size)
+        if n_active == 0:
+            return None
+
+        kappa = np.asarray(tr["kernel"], dtype=np.float64).reshape(-1)
+        if kappa.shape[0] != 9:
+            raise ValueError(f"Expected a 9-tap MiniROCKET kernel, got {kappa.shape[0]}.")
+
+        dilation = int(tr["dilation"])
+        channels = [
+            int(channel)
+            for channel in tr.get("channels", list(range(C)))
+            if 0 <= int(channel) < C
+        ]
+        if not channels:
+            return None
+
+        beta_k = np.zeros(beta_shape, dtype=np.float64)
+        relevance_per_position = alpha_k / n_active
+
+        for output_index in active_positions:
+            contributions = []
+            z = 0.0
+            for tap_index, tap_weight in enumerate(kappa):
+                source_index = _minirocket_lrp_source_index(
+                    output_index, tap_index, dilation, T
+                )
+                if source_index is None:
+                    continue
+
+                tap_weight = float(tap_weight)
+                for channel in channels:
+                    raw_contribution = float(x_tc[source_index, channel]) * tap_weight
+                    contributions.append((source_index, channel, raw_contribution))
+                    z += raw_contribution
+
+            denominator = _minirocket_lrp_denominator(z, epsilon, stabilizer)
+            if denominator == 0.0:
+                continue
+
+            for source_index, channel, raw_contribution in contributions:
+                relevance = raw_contribution / denominator * relevance_per_position
+                if per_channel:
+                    beta_k[source_index, channel] += relevance
+                else:
+                    beta_k[source_index, 0] += relevance
+
+        return beta_k
+
+    feature_items = [
+        (k, tr)
+        for k, tr in enumerate(traces_x)
+        if k < len(alphas) and float(alphas[k]) != 0.0
+    ]
+
+    if len(feature_items) == 1 or n_jobs == 1:
+        parts = (_attribution_for_feature(k, tr) for k, tr in feature_items)
+    else:
+        parts = Parallel(n_jobs=n_jobs, backend=parallel_backend)(
+            delayed(_attribution_for_feature)(k, tr)
+            for k, tr in feature_items
+        )
+
+    for beta_k in parts:
+        if beta_k is not None:
+            beta += beta_k
+
+    return beta.T
+
 MINIROCKET_INDICES = np.array((
     0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
     0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
