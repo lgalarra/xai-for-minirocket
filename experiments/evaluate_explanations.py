@@ -152,8 +152,48 @@ def count_nonzero_attributions_per_series(explanations) -> np.ndarray:
     return np.array([count_nonzero_attributions(value) for value in values], dtype=int)
 
 
+def get_reference_policy_indices(reference_policies=None):
+    if reference_policies is None:
+        return list(enumerate(REFERENCE_POLICIES))
+    if isinstance(reference_policies, str):
+        reference_policies = [reference_policies]
+
+    unknown = [p for p in reference_policies if p not in REFERENCE_POLICIES]
+    if unknown:
+        raise ValueError(f"Unknown reference policies: {unknown}")
+
+    return [(REFERENCE_POLICIES.index(p), p) for p in reference_policies]
+
+
+def arrayify(value):
+    if isinstance(value, dict):
+        return {k: arrayify(v) for k, v in value.items()}
+    try:
+        return np.array(value)
+    except Exception:
+        return value
+
+
+def get_lrp_explanations_from_metadata(metadata_df, reference_policies=None):
+    policy_indices = get_reference_policy_indices(reference_policies)
+    lrp_explanations = {reference_policy: [] for _, reference_policy in policy_indices}
+
+    for _, df_instance in metadata_df.groupby('instance_id'):
+        for _, reference_policy in policy_indices:
+            lrp_explanations[reference_policy].append([])
+
+        for _, df_instance_id_channel in df_instance.groupby('channel'):
+            for reference_policy_idx, reference_policy in policy_indices:
+                lrp_channel_values = DataImporter._read_optional_series(
+                    df_instance_id_channel, f'beta_lrp_{reference_policy_idx}_attributions'
+                )
+                lrp_explanations[reference_policy][-1].append(lrp_channel_values)
+
+    return arrayify(lrp_explanations)
+
+
 def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explanations_dict,
-                                 segmented_explanations_dict, tshap_explanations_dict):
+                                 segmented_explanations_dict, tshap_explanations_dict, lrp_explanations_dict=None):
     p2p_name, p2p_count, p2p_avg, p2p_per_series_counts = get_explanation_count_info(
         'p2p/end-to-end',
         p2p_explanations_dict[reference_policy]
@@ -170,6 +210,8 @@ def get_perturbation_count_basis(reference_policy, explanations_dict, p2p_explan
     for window_size_percent, stride in TSHAP_CONFIGS:
         key = get_tshap_key(window_size_percent, stride)
         counts.append(get_explanation_count_info(f'tshap_{key}', tshap_explanations_dict[reference_policy][key]))
+    if lrp_explanations_dict is not None:
+        counts.append(get_explanation_count_info('lrp', lrp_explanations_dict[reference_policy]))
 
     positive_counts = [
         (name, count, avg, per_series_counts)
@@ -289,12 +331,24 @@ if __name__ == '__main__':
     if len(sys.argv) > 7:
         THE_DISTANCE = sys.argv[7]
 
+    EXPLANATION_DATA_ROOT = 'data'
+    if len(sys.argv) > 8:
+        EXPLANATION_DATA_ROOT = sys.argv[8].rstrip('/')
+        if EXPLANATION_DATA_ROOT == 'lrp':
+            EXPLANATION_DATA_ROOT = 'lrp-data'
+        if EXPLANATION_DATA_ROOT not in ('data', 'lrp-data'):
+            raise ValueError(
+                "Explanation data root must be 'data' or 'lrp-data'. "
+                "Use 'lrp-data' to load explanations and metadata from experiments/lrp-data."
+            )
+
     DATASETS = ['starlight-c1', 'starlight-c2', 'starlight-c3', 'cognitive-circles', 'ford-a',
                 'handoutlines', 'abnormal-heartbeat-c1', 'double-freq-test']
     CLASSIFIERS = ['LogisticRegression', 'RandomForestClassifier', 'MLPClassifier']
     if THE_CLASSIFIER is not None:
         CLASSIFIERS = [THE_CLASSIFIER]
 
+    # Classifiers are intentionally always loaded from experiments/data.
     def load_classifiers(dataset):
         return [pickle.load(open(f"data/{dataset}/{classifier}.pkl", "rb")) for classifier in CLASSIFIERS]
 
@@ -402,6 +456,8 @@ if __name__ == '__main__':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_CLASSIFIER}.csv')
     if THE_DISTANCE != 'euclidean':
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{THE_DISTANCE}.csv')
+    if EXPLANATION_DATA_ROOT != 'data':
+        OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'_{EXPLANATION_DATA_ROOT}.csv')
 
 
     df_schema = {'timestamp': [], 'base_explainer': [], 'mr_classifier': [], 'reference_policy': [], 'label': [],
@@ -412,6 +468,8 @@ if __name__ == '__main__':
         add_metric_columns(df_schema, 'segmented_' if num_segments == 10 else f'segmented_n{num_segments}_')
     for window_size_percent, stride in TSHAP_CONFIGS:
         add_metric_columns(df_schema, f'tshap_{get_tshap_key(window_size_percent, stride)}_')
+    if EXPLANATION_DATA_ROOT == 'lrp-data':
+        add_metric_columns(df_schema, 'lrp_')
     final_df = pd.DataFrame(df_schema.copy())
     pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
@@ -419,6 +477,7 @@ if __name__ == '__main__':
         dataset_fetch_function = DATASET_FETCH_FUNCTIONS[dataset_name]
         (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
         data_importer = DataImporter(dataset_name)
+        data_importer.data_path = f"{EXPLANATION_DATA_ROOT}/{dataset_name}"
         for classifier in MR_CLASSIFIERS[dataset_name]:
             classifier_name = classifier.classifier.__class__.__name__
             if THE_CLASSIFIER is not None and classifier_name != THE_CLASSIFIER:
@@ -444,6 +503,10 @@ if __name__ == '__main__':
                          segmented_explanations_dict, tshap_explanations_dict) = (
                             DataImporter.get_series_from_metadata(metadata_df, reference_policies=reference_policies)
                         )
+                        lrp_explanations_dict = None
+                        if EXPLANATION_DATA_ROOT == 'lrp-data':
+                            lrp_explanations_dict = get_lrp_explanations_from_metadata(
+                                metadata_df, reference_policies=reference_policies)
                         print('Label, explainer_method, distance: ', label, explainer_method, distance)
                         for perturbation_policy, all_args in PERTURBATIONS.items():
                             if not supports_perturbation_for_explainer(perturbation_policy, explainer_method):
@@ -467,7 +530,8 @@ if __name__ == '__main__':
                                         explanations_dict,
                                         p2p_explanations_dict,
                                         segmented_explanations_dict,
-                                        tshap_explanations_dict
+                                        tshap_explanations_dict,
+                                        lrp_explanations_dict
                                     )
                                     args['n_perturbed_points'] = get_n_perturbed_points(
                                         nonzero_attribution_counts,
@@ -483,19 +547,23 @@ if __name__ == '__main__':
                                         f'perturbing at most {describe_n_perturbed_points(args["n_perturbed_points"])}'
                                     )
 
-                                    print('Backpropagated explanations')
-                                    metric, norm_metric, change_ratio, n_perturbed_points = compute_perturbation_metrics(
-                                        classifier,
-                                        X_test,
-                                        references_dict[reference_policy],
-                                        explanations_dict[reference_policy],
-                                        explainer_method,
-                                        perturbation_policy,
-                                        args,
-                                        perturbation_budget
-                                    )
-                                    print(f'Backpropagated perturbed observations: {n_perturbed_points}')
-                                    append_metrics(df_results, '', metric, norm_metric, change_ratio)
+                                    if has_explanations(explanations_dict[reference_policy]):
+                                        print('Backpropagated explanations')
+                                        metric, norm_metric, change_ratio, n_perturbed_points = compute_perturbation_metrics(
+                                            classifier,
+                                            X_test,
+                                            references_dict[reference_policy],
+                                            explanations_dict[reference_policy],
+                                            explainer_method,
+                                            perturbation_policy,
+                                            args,
+                                            perturbation_budget
+                                        )
+                                        print(f'Backpropagated perturbed observations: {n_perturbed_points}')
+                                        append_metrics(df_results, '', metric, norm_metric, change_ratio)
+                                    else:
+                                        print('Backpropagated explanations missing')
+                                        append_missing_metrics(df_results, '')
 
                                     if has_explanations(p2p_explanations_dict[reference_policy]):
                                         print('P2p explanations')
@@ -560,6 +628,26 @@ if __name__ == '__main__':
                                         else:
                                             print(f'TSHAP explanations missing ({key})')
                                             append_missing_metrics(df_results, prefix)
+
+                                    if EXPLANATION_DATA_ROOT == 'lrp-data':
+                                        lrp_explanations = lrp_explanations_dict[reference_policy]
+                                        if has_explanations(lrp_explanations):
+                                            print('LRP explanations')
+                                            metric, norm_metric, change_ratio, lrp_perturbed_points = compute_perturbation_metrics(
+                                                classifier,
+                                                X_test,
+                                                references_dict[reference_policy],
+                                                lrp_explanations,
+                                                explainer_method,
+                                                perturbation_policy,
+                                                args,
+                                                perturbation_budget
+                                            )
+                                            print(f'LRP perturbed observations: {lrp_perturbed_points}')
+                                            append_metrics(df_results, 'lrp_', metric, norm_metric, change_ratio)
+                                        else:
+                                            print('LRP explanations missing')
+                                            append_missing_metrics(df_results, 'lrp_')
 
                                     del args['y']
                                     del args['n_perturbed_points']

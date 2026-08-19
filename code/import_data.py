@@ -52,6 +52,7 @@ class DataImporter:
                 f"{attributions_path}/"
                 f"{DataExporter.get_metadata_filename_for_reference_policy(reference_policy)}"
             )
+            print(policy_metadata_path)
             if os.path.exists(policy_metadata_path):
                 return pd.read_csv(policy_metadata_path)
             range_metadata_paths = DataImporter._range_metadata_paths(attributions_path, reference_policy)
