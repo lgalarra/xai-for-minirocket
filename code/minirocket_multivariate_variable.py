@@ -12,7 +12,7 @@
 
 from numba import njit, prange, vectorize
 import numpy as np
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, effective_n_jobs
 
 HEAVYSIDE_K = 40
 
@@ -944,7 +944,7 @@ def back_propagate_attribution_2(
     per_channel=False,
     dt=None,
     params,
-    n_jobs=-1,
+    n_jobs=1,
     parallel_backend="threading",
 ):
     """
@@ -969,8 +969,13 @@ def back_propagate_attribution_2(
         displayed formula.
       - Features sharing a convolution signature are grouped so Delta chi is
         computed once per signature rather than once per feature.
-      - Tap source indices are cached per dilation and effective length because
-        they are reused across many grouped signatures.
+      - Tap source indices are precomputed per dilation and effective length
+        before parallel execution because they are reused across many grouped
+        signatures.
+      - When ``n_jobs`` is greater than 1, feature groups are split into worker
+        chunks. Each worker returns a local attribution matrix, and the caller
+        sums those matrices to avoid concurrent writes to the same time/channel
+        positions.
     """
     from collections import defaultdict
     import numpy as np
@@ -1057,14 +1062,15 @@ def back_propagate_attribution_2(
         group_key = (dilation, channels, tuple(kappa.tolist()), d_eff)
         feature_groups[group_key].append((feature_weight, delta_sigma))
 
-    for (dilation, channels, kappa_tuple, d_eff), feature_terms in feature_groups.items():
+    def _beta_for_group(group_item):
+        (dilation, channels, kappa_tuple, d_eff), feature_terms = group_item
         channels = list(channels)
         kappa = np.asarray(kappa_tuple, dtype=np.float64)
         half = len(kappa) // 2
         delta_chi_total = _delta_chi_total(kappa, dilation, channels, d_eff)
         valid_chi = np.abs(delta_chi_total) > eps
         if not np.any(valid_chi):
-            continue
+            return None
 
         center_weight = np.zeros(d_eff, dtype=np.float64)
         for feature_weight, delta_sigma in feature_terms:
@@ -1073,8 +1079,9 @@ def back_propagate_attribution_2(
                 center_weight[valid] += feature_weight * delta_sigma[valid] / delta_chi_total[valid]
 
         if not np.any(center_weight):
-            continue
+            return None
 
+        beta_group = np.zeros((T, C), dtype=np.float64)
         nonzero_center_weight = center_weight != 0.0
         for tap_index, valid_centers, source_valid in _tap_index_arrays(dilation, d_eff, half):
             if valid_centers.size == 0:
@@ -1088,7 +1095,41 @@ def back_propagate_attribution_2(
             active_sources = source_valid[active]
             tap_weight = float(kappa[tap_index]) * center_weight[active_centers]
             for channel in channels:
-                beta_by_channel[active_sources, channel] += delta_t[active_sources, channel] * tap_weight
+                beta_group[active_sources, channel] += delta_t[active_sources, channel] * tap_weight
+
+        return beta_group
+
+    def _beta_for_group_chunk(group_chunk):
+        beta_chunk = np.zeros((T, C), dtype=np.float64)
+        for group_item in group_chunk:
+            beta_group = _beta_for_group(group_item)
+            if beta_group is not None:
+                beta_chunk += beta_group
+        return beta_chunk
+
+    group_items = list(feature_groups.items())
+    for (dilation, _channels, kappa_tuple, d_eff), _feature_terms in group_items:
+        _tap_index_arrays(dilation, d_eff, len(kappa_tuple) // 2)
+
+    if not group_items:
+        parts = ()
+    elif len(group_items) == 1 or n_jobs == 1:
+        parts = (_beta_for_group(group_item) for group_item in group_items)
+    else:
+        n_workers = min(effective_n_jobs(n_jobs), len(group_items))
+        chunk_size = int(np.ceil(len(group_items) / n_workers))
+        group_chunks = [
+            group_items[start:start + chunk_size]
+            for start in range(0, len(group_items), chunk_size)
+        ]
+        parts = Parallel(n_jobs=n_workers, backend=parallel_backend)(
+            delayed(_beta_for_group_chunk)(group_chunk)
+            for group_chunk in group_chunks
+        )
+
+    for beta_group in parts:
+        if beta_group is not None:
+            beta_by_channel += beta_group
 
     if per_channel:
         return beta_by_channel.T

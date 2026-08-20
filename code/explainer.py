@@ -240,7 +240,7 @@ class MinirocketExplainer:
     def _explain_single_instance(self, x_target: np.ndarray, y_label, classifier_explainer_fn,
                                  reference_policy, reference=None, top_alpha=None,
                                  top_alpha_that_change_class=None, feature_to_backpropagate=None,
-                                 dataset_name=None) -> dict:
+                                 dataset_name=None, n_jobs=1, parallel_backend="threading") -> dict:
         """
 
         :param x_target: An array of shape (C, L) representing a multivariate time series
@@ -292,7 +292,8 @@ class MinirocketExplainer:
             alphas_to_backpropagate = alphas
             mask = None
         beta = mmv.back_propagate_attribution_2(alphas_to_backpropagate, out_x["traces"], x_target, reference,
-                                                per_channel=is_multichannel, params=self.minirocket_params)
+                                                per_channel=is_multichannel, params=self.minirocket_params,
+                                                n_jobs=n_jobs, parallel_backend=parallel_backend)
         #beta *= (x_target - reference)
         #if beta.shape[0] > 1:
         #    beta = beta.T
@@ -367,7 +368,7 @@ class MinirocketExplainer:
     def explain_instances(self, X: np.ndarray, y=None, classifier_explainer='shap',
                           reference_policy = 'global_centroid', reference=None, top_alpha=None,
                           top_alpha_that_change_class=None, feature_to_backpropagate=None,
-                          dataset_name=None) -> Generator:
+                          dataset_name=None, n_jobs=1, parallel_backend="threading") -> Generator:
         """
         :param X: A time series dataset (n, C, L) or a single instance (C, L)
         :param y: The class labels (n,) or a single label
@@ -386,7 +387,9 @@ class MinirocketExplainer:
                                                             top_alpha=top_alpha,
                                                             top_alpha_that_change_class=top_alpha_that_change_class,
                                                             feature_to_backpropagate=feature_to_backpropagate,
-                                                            dataset_name=dataset_name))
+                                                            dataset_name=dataset_name,
+                                                            n_jobs=n_jobs,
+                                                            parallel_backend=parallel_backend))
         else:
             for idx, x in enumerate(X):
                 yield Explanation(self._explain_single_instance(x, y[idx],
@@ -394,7 +397,9 @@ class MinirocketExplainer:
                                                                 reference, top_alpha=top_alpha,
                                                                 top_alpha_that_change_class=top_alpha_that_change_class,
                                                                 feature_to_backpropagate=feature_to_backpropagate,
-                                                                dataset_name=dataset_name))
+                                                                dataset_name=dataset_name,
+                                                                n_jobs=n_jobs,
+                                                                parallel_backend=parallel_backend))
 
     def _retain_attributions_that_change_class(self, alphas, reference_logit, instance_logit):
         sum = reference_logit

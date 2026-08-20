@@ -20,10 +20,6 @@ from sklearn.neural_network import MLPClassifier
 from explainer import Explanation, MinirocketExplainer
 from exputils import to_sep_list
 
-# Must be set before importing joblib/sklearn
-os.environ.setdefault("JOBLIB_MULTIPROCESSING", "0")   # force threading backend
-os.environ.setdefault("JOBLIB_START_METHOD", "threading")
-
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
@@ -258,6 +254,24 @@ def parse_args():
         help="Distance metric used to calculate the reference instances: euclidean, pca-mr"
     )
 
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="Number of worker jobs for MiniROCKET attribution backpropagation. Default: 1.",
+    )
+
+    parser.add_argument(
+        "--parallel-backend",
+        type=str,
+        default="threading",
+        choices=["threading", "loky", "multiprocessing"],
+        help=(
+            "Joblib backend for MiniROCKET attribution backpropagation. "
+            "Default: threading. Use loky to try process-based parallelism."
+        ),
+    )
+
 
     args = parser.parse_args()
 
@@ -278,7 +292,9 @@ def parse_args():
         args.end,
         args.metric,
         compute_p2p_explanations,
-        compute_tshap_explanations
+        compute_tshap_explanations,
+        args.n_jobs,
+        args.parallel_backend
     )
 
 MR_CLASSIFIERS = {'LogisticRegression': LogisticRegression,
@@ -380,14 +396,17 @@ def compute_tshap_explanations_for_instance(classifier: MinirocketClassifier, in
 
 def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, explainer, configuration: tuple,
                          reference_policy: str, compute_p2p_explanations=True,
-                         compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None):
+                         compute_segmented_explanations=True, compute_tshap_explanations_enabled=True, top_alpha=None,
+                         n_jobs=1, parallel_backend="threading"):
     (dataset_name, mr_classifier_name, explainer_method, label) = configuration
 
     explanation = list(explainer.explain_instances(x_target, y_target,
                                                    classifier_explainer=explainer_method,
                                                    reference_policy=reference_policy,
                                                    top_alpha=top_alpha,
-                                                   dataset_name=dataset_name))[0]
+                                                   dataset_name=dataset_name,
+                                                   n_jobs=n_jobs,
+                                                   parallel_backend=parallel_backend))[0]
 
     ## Point to point explanation
     reference = explanation.get_reference()
@@ -505,7 +524,9 @@ if __name__ == '__main__':
         end,
         metric,
         compute_p2p_explanations,
-        compute_tshap_explanations
+        compute_tshap_explanations,
+        n_jobs,
+        parallel_backend
     ) = parse_args()
 
     print("should_export_data:", should_export_data)
@@ -520,6 +541,8 @@ if __name__ == '__main__':
     print("metric:", metric)
     print("compute_p2p_explanations:", compute_p2p_explanations)
     print("compute_tshap_explanations:", compute_tshap_explanations)
+    print("n_jobs:", n_jobs)
+    print("parallel_backend:", parallel_backend)
 
 
     LABELS = ['predicted', 'training']
@@ -542,6 +565,8 @@ if __name__ == '__main__':
     # In[42]:
     OUTPUT_FILE = 'results/approximation-results.csv'
     os.makedirs('results', exist_ok=True)
+    if n_jobs != 1:
+        OUTPUT_FILE = OUTPUT_FILE.replace('approximation-results', 'approximation-results_parallel')
     if datasets is not None:
         OUTPUT_FILE = OUTPUT_FILE.replace('.csv', f'-{",".join(datasets)}.csv')
     if labels is not None:
@@ -655,7 +680,9 @@ if __name__ == '__main__':
                                                      compute_p2p_explanations=(topk is None and compute_p2p_explanations),
                                                      compute_segmented_explanations=(topk is None),
                                                      compute_tshap_explanations_enabled=compute_tshap_explanations,
-                                                     top_alpha=topk)
+                                                     top_alpha=topk,
+                                                     n_jobs=n_jobs,
+                                                     parallel_backend=parallel_backend)
                             )
                             explanations_for_instance[reference_policy] = (explanation, explanation_p2p,
                                                                            segmented_explanations,
