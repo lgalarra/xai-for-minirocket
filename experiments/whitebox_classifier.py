@@ -40,6 +40,8 @@ DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[1] / "experiments" / "data"
 RUN_SUMMARY_TSV_FIELDS = [
     "run_started_at_utc",
     "run_finished_at_utc",
+    "run_id",
+    "job_id",
     "classifier_name",
     "classifier_path",
     "tree_pickle_path",
@@ -1200,6 +1202,8 @@ def main() -> None:
     parser.add_argument("--classifier-explainer", default="shap")
     parser.add_argument("--reference-policy", default="global_centroid")
     parser.add_argument("--dataset-name", default="double-freq-test")
+    parser.add_argument("--run-id", type=int, default=None)
+    parser.add_argument("--job-id", type=int, default=None)
     parser.add_argument(
         "--sample-size",
         type=int,
@@ -1552,6 +1556,8 @@ def main() -> None:
     run_summary = {
         "run_started_at_utc": run_started_at,
         "run_finished_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_id": args.run_id,
+        "job_id": args.job_id,
         "classifier_name": args.classifier_name,
         "classifier_path": args.classifier_path,
         "tree_pickle_path": args.tree_pickle_path,
