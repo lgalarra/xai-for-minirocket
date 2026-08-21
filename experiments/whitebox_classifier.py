@@ -1202,8 +1202,8 @@ def main() -> None:
     parser.add_argument("--classifier-explainer", default="shap")
     parser.add_argument("--reference-policy", default="global_centroid")
     parser.add_argument("--dataset-name", default="double-freq-test")
-    parser.add_argument("--run-id", type=int, default=None)
-    parser.add_argument("--job-id", type=int, default=None)
+    parser.add_argument("--run_id", type=int, default=None)
+    parser.add_argument("--job_id", type=int, default=None)
     parser.add_argument(
         "--sample-size",
         type=int,
