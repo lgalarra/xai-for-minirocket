@@ -39,6 +39,8 @@ RUN_SUMMARY_TSV_FIELDS = [
     "sample_size",
     "computed_alpha_attributions",
     "random_state",
+    "random_state_grid",
+    "sample_random_state",
     "n_jobs_requested",
     "n_jobs_resolved",
     "validation_size",
@@ -1196,7 +1198,15 @@ def main() -> None:
         default=100,
         help="Optional total sample size, balanced across predicted classes.",
     )
-    parser.add_argument("--random-state", type=int, default=0)
+    parser.add_argument(
+        "--random-state",
+        type=_parse_int_grid,
+        default=[0],
+        help=(
+            "Comma-separated random_state values for the optimization grid. "
+            "The first value is also used for alpha sampling and the validation split. Default: 0."
+        ),
+    )
     parser.add_argument(
         "--n-clusters",
         type=_parse_int_grid,
@@ -1285,6 +1295,8 @@ def main() -> None:
         )
     elif args.classifier_name is None:
         args.classifier_name = args.classifier_path.stem
+    random_state_grid = _dedupe_preserving_order(args.random_state)
+    sample_random_state = random_state_grid[0]
 
     start = time.perf_counter()
     with args.classifier_path.open("rb") as input_file:
@@ -1299,7 +1311,7 @@ def main() -> None:
         reference_policy=args.reference_policy,
         dataset_name=args.dataset_name,
         sample_size=args.sample_size,
-        random_state=args.random_state,
+        random_state=sample_random_state,
         n_jobs=args.n_jobs,
     )
     _record_runtime(runtimes, "compute_alpha_attributions", start)
@@ -1307,7 +1319,8 @@ def main() -> None:
     print(f"classifier_name={args.classifier_name}")
     print(f"classifier_path={args.classifier_path}")
     print(f"sample_size={args.sample_size}")
-    print(f"random_state={args.random_state}")
+    print(f"random_state_grid={random_state_grid}")
+    print(f"sample_random_state={sample_random_state}")
     print(f"n_jobs={_resolve_n_jobs(args.n_jobs)}")
     top_k_grid = _dedupe_preserving_order(args.top_k)
     n_clusters_grid = _dedupe_preserving_order(args.n_clusters)
@@ -1329,7 +1342,7 @@ def main() -> None:
     train_indexes, validation_indexes = _train_validation_indexes(
         y_train,
         validation_size=args.validation_size,
-        random_state=args.random_state,
+        random_state=sample_random_state,
     )
     _record_runtime(runtimes, "load_data_and_split_validation", start)
     print(f"minirocket_train_accuracy={minirocket_train_accuracy:.6f}")
@@ -1368,107 +1381,117 @@ def main() -> None:
             )
 
         for n_clusters in n_clusters_grid:
-            start = time.perf_counter()
-            clusters_per_class = cluster_positive_segments_by_class_with_dtw_kmeans(
-                positive_segments_by_class,
-                n_clusters=n_clusters,
-                random_state=args.random_state,
-            )
-            _record_runtime(
-                runtimes,
-                f"cluster_positive_segments_top_k_{top_k}_n_clusters_{n_clusters}",
-                start,
-            )
-
-            for predicted_class, clusters in clusters_per_class.items():
-                print(
-                    f"top_k={top_k} n_clusters={n_clusters} class {predicted_class}: "
-                    f"clustered_segments={len(clusters['segments'])} "
-                    f"effective_clusters={len(clusters['clusters'])}",
-                    flush=True,
-                )
-
-            for threshold_scale in threshold_scale_grid:
+            for candidate_random_state in random_state_grid:
                 start = time.perf_counter()
-                detector = build_shapelet_detector_from_cluster_centers(
-                    clusters_per_class,
-                    threshold_scale=threshold_scale,
-                )
-                detector_results = detector(X_train)
-                test_detector_results = detector(X_test)
-                X_train_counts = detector_results_to_shapelet_count_matrix(
-                    detector_results,
-                    n_shapelets=len(detector.shapelets),
-                )
-                X_test_counts = detector_results_to_shapelet_count_matrix(
-                    test_detector_results,
-                    n_shapelets=X_train_counts.shape[1],
+                clusters_per_class = cluster_positive_segments_by_class_with_dtw_kmeans(
+                    positive_segments_by_class,
+                    n_clusters=n_clusters,
+                    random_state=candidate_random_state,
                 )
                 _record_runtime(
                     runtimes,
                     (
-                        f"detect_shapelets_top_k_{top_k}_n_clusters_{n_clusters}"
-                        f"_threshold_scale_{threshold_scale}"
+                        f"cluster_positive_segments_top_k_{top_k}_n_clusters_{n_clusters}"
+                        f"_random_state_{candidate_random_state}"
                     ),
                     start,
                 )
 
-                for max_depth in max_depth_grid:
+                for predicted_class, clusters in clusters_per_class.items():
+                    print(
+                        f"top_k={top_k} n_clusters={n_clusters} "
+                        f"random_state={candidate_random_state} class {predicted_class}: "
+                        f"clustered_segments={len(clusters['segments'])} "
+                        f"effective_clusters={len(clusters['clusters'])}",
+                        flush=True,
+                    )
+
+                for threshold_scale in threshold_scale_grid:
                     start = time.perf_counter()
-                    tree = DecisionTreeClassifier(
-                        random_state=args.random_state,
-                        max_depth=max_depth,
+                    detector = build_shapelet_detector_from_cluster_centers(
+                        clusters_per_class,
+                        threshold_scale=threshold_scale,
                     )
-                    tree.fit(X_train_counts[train_indexes], y_train[train_indexes])
-                    validation_pred = tree.predict(X_train_counts[validation_indexes])
-                    test_pred = tree.predict(X_test_counts)
-                    validation_accuracy = float(
-                        accuracy_score(y_train[validation_indexes], validation_pred)
+                    detector_results = detector(X_train)
+                    test_detector_results = detector(X_test)
+                    X_train_counts = detector_results_to_shapelet_count_matrix(
+                        detector_results,
+                        n_shapelets=len(detector.shapelets),
                     )
-                    test_accuracy = float(accuracy_score(y_test, test_pred))
+                    X_test_counts = detector_results_to_shapelet_count_matrix(
+                        test_detector_results,
+                        n_shapelets=X_train_counts.shape[1],
+                    )
                     _record_runtime(
                         runtimes,
                         (
-                            f"train_tree_top_k_{top_k}_n_clusters_{n_clusters}"
-                            f"_threshold_scale_{threshold_scale}_max_depth_{max_depth}"
+                            f"detect_shapelets_top_k_{top_k}_n_clusters_{n_clusters}"
+                            f"_random_state_{candidate_random_state}"
+                            f"_threshold_scale_{threshold_scale}"
                         ),
                         start,
                     )
 
-                    candidate = {
-                        "top_k": int(top_k),
-                        "n_clusters": int(n_clusters),
-                        "threshold_scale": float(threshold_scale),
-                        "max_depth": int(max_depth),
-                        "validation_accuracy": validation_accuracy,
-                        "test_accuracy": test_accuracy,
-                        "n_shapelets": len(detector.shapelets),
-                        "detector": detector,
-                        "X_train_counts": X_train_counts,
-                        "X_test_counts": X_test_counts,
-                    }
-                    grid_results.append(candidate)
-                    print(
-                        "grid_candidate "
-                        f"top_k={top_k} n_clusters={n_clusters} "
-                        f"threshold_scale={threshold_scale} max_depth={max_depth} "
-                        f"validation_accuracy={validation_accuracy:.6f} "
-                        f"test_accuracy={test_accuracy:.6f} "
-                        f"shapelets={len(detector.shapelets)}",
-                        flush=True,
-                    )
+                    for max_depth in max_depth_grid:
+                        start = time.perf_counter()
+                        tree = DecisionTreeClassifier(
+                            random_state=candidate_random_state,
+                            max_depth=max_depth,
+                        )
+                        tree.fit(X_train_counts[train_indexes], y_train[train_indexes])
+                        validation_pred = tree.predict(X_train_counts[validation_indexes])
+                        test_pred = tree.predict(X_test_counts)
+                        validation_accuracy = float(
+                            accuracy_score(y_train[validation_indexes], validation_pred)
+                        )
+                        test_accuracy = float(accuracy_score(y_test, test_pred))
+                        _record_runtime(
+                            runtimes,
+                            (
+                                f"train_tree_top_k_{top_k}_n_clusters_{n_clusters}"
+                                f"_random_state_{candidate_random_state}"
+                                f"_threshold_scale_{threshold_scale}_max_depth_{max_depth}"
+                            ),
+                            start,
+                        )
 
-                    candidate_key = (
-                        validation_accuracy,
-                        test_accuracy,
-                        -int(max_depth),
-                        -int(top_k),
-                        -int(n_clusters),
-                        -float(threshold_scale),
-                    )
-                    if best_candidate is None or candidate_key > best_candidate["selection_key"]:
-                        candidate["selection_key"] = candidate_key
-                        best_candidate = candidate
+                        candidate = {
+                            "top_k": int(top_k),
+                            "n_clusters": int(n_clusters),
+                            "random_state": int(candidate_random_state),
+                            "threshold_scale": float(threshold_scale),
+                            "max_depth": int(max_depth),
+                            "validation_accuracy": validation_accuracy,
+                            "test_accuracy": test_accuracy,
+                            "n_shapelets": len(detector.shapelets),
+                            "detector": detector,
+                            "X_train_counts": X_train_counts,
+                            "X_test_counts": X_test_counts,
+                        }
+                        grid_results.append(candidate)
+                        print(
+                            "grid_candidate "
+                            f"top_k={top_k} n_clusters={n_clusters} "
+                            f"random_state={candidate_random_state} "
+                            f"threshold_scale={threshold_scale} max_depth={max_depth} "
+                            f"validation_accuracy={validation_accuracy:.6f} "
+                            f"test_accuracy={test_accuracy:.6f} "
+                            f"shapelets={len(detector.shapelets)}",
+                            flush=True,
+                        )
+
+                        candidate_key = (
+                            validation_accuracy,
+                            test_accuracy,
+                            -int(max_depth),
+                            -int(top_k),
+                            -int(n_clusters),
+                            -float(threshold_scale),
+                            -int(candidate_random_state),
+                        )
+                        if best_candidate is None or candidate_key > best_candidate["selection_key"]:
+                            candidate["selection_key"] = candidate_key
+                            best_candidate = candidate
 
     _record_runtime(runtimes, "grid_search_total", grid_start)
 
@@ -1479,6 +1502,7 @@ def main() -> None:
         "best_grid_candidate "
         f"top_k={best_candidate['top_k']} "
         f"n_clusters={best_candidate['n_clusters']} "
+        f"random_state={best_candidate['random_state']} "
         f"threshold_scale={best_candidate['threshold_scale']} "
         f"max_depth={best_candidate['max_depth']} "
         f"validation_accuracy={best_candidate['validation_accuracy']:.6f} "
@@ -1488,7 +1512,7 @@ def main() -> None:
 
     start = time.perf_counter()
     final_tree = DecisionTreeClassifier(
-        random_state=args.random_state,
+        random_state=best_candidate["random_state"],
         max_depth=best_candidate["max_depth"],
     )
     final_tree.fit(best_candidate["X_train_counts"], y_train)
@@ -1523,6 +1547,9 @@ def main() -> None:
             "grid_search": {
                 "top_k_values": top_k_grid,
                 "n_clusters_values": n_clusters_grid,
+                "random_state_values": random_state_grid,
+                "sample_random_state": sample_random_state,
+                "validation_split_random_state": sample_random_state,
                 "threshold_scale_values": threshold_scale_grid,
                 "max_depth_values": max_depth_grid,
                 "validation_size": args.validation_size,
@@ -1535,6 +1562,7 @@ def main() -> None:
                         in {
                             "top_k",
                             "n_clusters",
+                            "random_state",
                             "threshold_scale",
                             "max_depth",
                             "validation_accuracy",
@@ -1547,6 +1575,7 @@ def main() -> None:
                 "best": {
                     "top_k": best_candidate["top_k"],
                     "n_clusters": best_candidate["n_clusters"],
+                    "random_state": best_candidate["random_state"],
                     "threshold_scale": best_candidate["threshold_scale"],
                     "max_depth": best_candidate["max_depth"],
                     "validation_accuracy": best_candidate["validation_accuracy"],
@@ -1580,7 +1609,9 @@ def main() -> None:
         "score_mode": args.score_mode,
         "sample_size": args.sample_size,
         "computed_alpha_attributions": len(alpha_attributions),
-        "random_state": args.random_state,
+        "random_state": best_candidate["random_state"],
+        "random_state_grid": random_state_grid,
+        "sample_random_state": sample_random_state,
         "n_jobs_requested": args.n_jobs,
         "n_jobs_resolved": _resolve_n_jobs(args.n_jobs),
         "validation_size": args.validation_size,
