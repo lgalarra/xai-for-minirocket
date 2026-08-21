@@ -21,20 +21,6 @@ import minirocket_multivariate_variable as mmv
 from explainer import get_classifier_explainer
 
 
-DEFAULT_TREE_PICKLE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "experiments"
-    / "data"
-    / "double-freq-test"
-    / "shapelet_decision_tree.pkl"
-)
-DEFAULT_TREE_PNG_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "experiments"
-    / "data"
-    / "double-freq-test"
-    / "shapelet_decision_tree.png"
-)
 DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[1] / "experiments" / "data"
 
 RUN_SUMMARY_TSV_FIELDS = [
@@ -1246,8 +1232,24 @@ def main() -> None:
         choices=("positive", "absolute", "raw"),
         default="positive",
     )
-    parser.add_argument("--tree-pickle-path", type=Path, default=DEFAULT_TREE_PICKLE_PATH)
-    parser.add_argument("--tree-png-path", type=Path, default=DEFAULT_TREE_PNG_PATH)
+    parser.add_argument(
+        "--tree-pickle-path",
+        type=Path,
+        default=None,
+        help=(
+            "Output pickle path for the shapelet decision tree. Default: "
+            "experiments/data/<dataset-name>/shapelet_decision_tree.pkl."
+        ),
+    )
+    parser.add_argument(
+        "--tree-png-path",
+        type=Path,
+        default=None,
+        help=(
+            "Output PNG path for the shapelet decision tree. Default: "
+            "experiments/data/<dataset-name>/shapelet_decision_tree.png."
+        ),
+    )
     parser.add_argument(
         "--run-summary-tsv-path",
         type=Path,
@@ -1259,6 +1261,16 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.tree_pickle_path is None:
+        args.tree_pickle_path = _default_dataset_output_path(
+            args.dataset_name,
+            "shapelet_decision_tree.pkl",
+        )
+    if args.tree_png_path is None:
+        args.tree_png_path = _default_dataset_output_path(
+            args.dataset_name,
+            "shapelet_decision_tree.png",
+        )
     if args.run_summary_tsv_path is None:
         args.run_summary_tsv_path = _default_dataset_output_path(
             args.dataset_name,
