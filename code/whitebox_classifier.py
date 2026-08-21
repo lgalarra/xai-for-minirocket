@@ -1,9 +1,12 @@
 import argparse
+import csv
+import json
 import os
 import pickle
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Hashable
 
@@ -39,6 +42,58 @@ DEFAULT_TREE_PNG_PATH = (
     / "double-freq-test"
     / "shapelet_decision_tree.png"
 )
+DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[1] / "experiments" / "data"
+
+RUN_SUMMARY_TSV_FIELDS = [
+    "run_started_at_utc",
+    "run_finished_at_utc",
+    "classifier_path",
+    "tree_pickle_path",
+    "tree_png_path",
+    "dataset_name",
+    "classifier_explainer",
+    "reference_policy",
+    "score_mode",
+    "sample_size",
+    "computed_alpha_attributions",
+    "random_state",
+    "n_jobs_requested",
+    "n_jobs_resolved",
+    "validation_size",
+    "train_size",
+    "test_size",
+    "validation_train_size",
+    "validation_size_count",
+    "top_k_grid",
+    "n_clusters_grid",
+    "threshold_scale_grid",
+    "max_depth_grid",
+    "grid_candidates",
+    "minirocket_train_accuracy",
+    "minirocket_test_accuracy",
+    "best_top_k",
+    "best_n_clusters",
+    "best_threshold_scale",
+    "best_max_depth",
+    "best_validation_accuracy",
+    "best_test_accuracy_before_refit",
+    "shapelet_decision_tree_accuracy",
+    "n_shapelets",
+    "shapelet_count_train_rows",
+    "shapelet_count_train_columns",
+    "shapelet_count_test_rows",
+    "shapelet_count_test_columns",
+    "decision_tree_depth",
+    "decision_tree_leaves",
+    "runtime_load_classifier_seconds",
+    "runtime_compute_alpha_attributions_seconds",
+    "runtime_load_data_and_split_validation_seconds",
+    "runtime_grid_search_total_seconds",
+    "runtime_refit_best_decision_tree_seconds",
+    "runtime_save_decision_tree_seconds",
+    "runtime_total_seconds",
+    "runtime_breakdown_seconds",
+]
 
 
 def _training_data(classifier: Any) -> np.ndarray:
@@ -100,6 +155,43 @@ def _record_runtime(runtimes: dict[str, float], stage: str, start: float) -> Non
     runtime = time.perf_counter() - start
     runtimes[stage] = runtime
     print(f"runtime_{stage}_seconds={runtime:.6f}", flush=True)
+
+
+def _json_dumps_for_tsv(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _default_dataset_output_path(dataset_name: str, filename: str) -> Path:
+    return DEFAULT_DATA_ROOT / dataset_name / filename
+
+
+def _write_run_summary_tsv(path: str | Path, row: dict[str, Any]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+
+    serialized_row = {}
+    for field in RUN_SUMMARY_TSV_FIELDS:
+        value = row.get(field, "")
+        if isinstance(value, float):
+            serialized_row[field] = f"{value:.12g}"
+        elif isinstance(value, (list, tuple, dict)):
+            serialized_row[field] = _json_dumps_for_tsv(value)
+        elif value is None:
+            serialized_row[field] = ""
+        else:
+            serialized_row[field] = str(value)
+
+    with path.open("a", newline="") as output_file:
+        writer = csv.DictWriter(
+            output_file,
+            fieldnames=RUN_SUMMARY_TSV_FIELDS,
+            delimiter="\t",
+            extrasaction="ignore",
+        )
+        if write_header:
+            writer.writeheader()
+        writer.writerow(serialized_row)
 
 
 def _resolve_n_jobs(n_jobs: int | None) -> int:
@@ -1079,6 +1171,7 @@ def save_decision_tree_classifier(
 
 def main() -> None:
     total_start = time.perf_counter()
+    run_started_at = datetime.now(timezone.utc).isoformat()
     runtimes = {}
     parser = argparse.ArgumentParser()
     parser.add_argument("--classifier-path", type=Path, default=DEFAULT_CLASSIFIER_PATH)
@@ -1135,7 +1228,22 @@ def main() -> None:
     )
     parser.add_argument("--tree-pickle-path", type=Path, default=DEFAULT_TREE_PICKLE_PATH)
     parser.add_argument("--tree-png-path", type=Path, default=DEFAULT_TREE_PNG_PATH)
+    parser.add_argument(
+        "--run-summary-tsv-path",
+        type=Path,
+        default=None,
+        help=(
+            "Append one TSV row with execution runtimes, accuracies, selected "
+            "hyperparameters, and shapelet counts. Default: "
+            "experiments/data/<dataset-name>/whitebox_classifier_runs.tsv."
+        ),
+    )
     args = parser.parse_args()
+    if args.run_summary_tsv_path is None:
+        args.run_summary_tsv_path = _default_dataset_output_path(
+            args.dataset_name,
+            "whitebox_classifier_runs.tsv",
+        )
 
     start = time.perf_counter()
     with args.classifier_path.open("rb") as input_file:
@@ -1174,12 +1282,16 @@ def main() -> None:
     X_train = _training_data(classifier)
     y_train = _training_labels(classifier)
     (_, _), (X_test, y_test) = _load_dataset_for_classifier(classifier, args.dataset_name)
+    minirocket_train_accuracy = float(accuracy_score(y_train, classifier.predict(X_train)))
+    minirocket_test_accuracy = float(accuracy_score(y_test, classifier.predict(X_test)))
     train_indexes, validation_indexes = _train_validation_indexes(
         y_train,
         validation_size=args.validation_size,
         random_state=args.random_state,
     )
     _record_runtime(runtimes, "load_data_and_split_validation", start)
+    print(f"minirocket_train_accuracy={minirocket_train_accuracy:.6f}")
+    print(f"minirocket_test_accuracy={minirocket_test_accuracy:.6f}")
 
     best_candidate = None
     grid_results = []
@@ -1411,6 +1523,61 @@ def main() -> None:
     print(f"shapelet_decision_tree_pickle={args.tree_pickle_path}")
     print(f"shapelet_decision_tree_png={args.tree_png_path}")
     _record_runtime(runtimes, "total", total_start)
+    run_summary = {
+        "run_started_at_utc": run_started_at,
+        "run_finished_at_utc": datetime.now(timezone.utc).isoformat(),
+        "classifier_path": args.classifier_path,
+        "tree_pickle_path": args.tree_pickle_path,
+        "tree_png_path": args.tree_png_path,
+        "dataset_name": args.dataset_name,
+        "classifier_explainer": args.classifier_explainer,
+        "reference_policy": args.reference_policy,
+        "score_mode": args.score_mode,
+        "sample_size": args.sample_size,
+        "computed_alpha_attributions": len(alpha_attributions),
+        "random_state": args.random_state,
+        "n_jobs_requested": args.n_jobs,
+        "n_jobs_resolved": _resolve_n_jobs(args.n_jobs),
+        "validation_size": args.validation_size,
+        "train_size": len(X_train),
+        "test_size": len(X_test),
+        "validation_train_size": len(train_indexes),
+        "validation_size_count": len(validation_indexes),
+        "top_k_grid": top_k_grid,
+        "n_clusters_grid": n_clusters_grid,
+        "threshold_scale_grid": threshold_scale_grid,
+        "max_depth_grid": max_depth_grid,
+        "grid_candidates": len(grid_results),
+        "minirocket_train_accuracy": minirocket_train_accuracy,
+        "minirocket_test_accuracy": minirocket_test_accuracy,
+        "best_top_k": best_candidate["top_k"],
+        "best_n_clusters": best_candidate["n_clusters"],
+        "best_threshold_scale": best_candidate["threshold_scale"],
+        "best_max_depth": best_candidate["max_depth"],
+        "best_validation_accuracy": best_candidate["validation_accuracy"],
+        "best_test_accuracy_before_refit": best_candidate["test_accuracy"],
+        "shapelet_decision_tree_accuracy": shapelet_tree_result["accuracy"],
+        "n_shapelets": len(detector.shapelets),
+        "shapelet_count_train_rows": shapelet_tree_result["X_train_counts"].shape[0],
+        "shapelet_count_train_columns": shapelet_tree_result["X_train_counts"].shape[1],
+        "shapelet_count_test_rows": shapelet_tree_result["X_test_counts"].shape[0],
+        "shapelet_count_test_columns": shapelet_tree_result["X_test_counts"].shape[1],
+        "decision_tree_depth": final_tree.get_depth(),
+        "decision_tree_leaves": final_tree.get_n_leaves(),
+        "runtime_load_classifier_seconds": runtimes.get("load_classifier"),
+        "runtime_compute_alpha_attributions_seconds": runtimes.get("compute_alpha_attributions"),
+        "runtime_load_data_and_split_validation_seconds": runtimes.get(
+            "load_data_and_split_validation"
+        ),
+        "runtime_grid_search_total_seconds": runtimes.get("grid_search_total"),
+        "runtime_refit_best_decision_tree_seconds": runtimes.get("refit_best_decision_tree"),
+        "runtime_save_decision_tree_seconds": runtimes.get("save_decision_tree"),
+        "runtime_total_seconds": runtimes.get("total"),
+        "runtime_breakdown_seconds": runtimes,
+    }
+    _write_run_summary_tsv(args.run_summary_tsv_path, run_summary)
+    print(f"run_summary_tsv={args.run_summary_tsv_path}")
+
 
 if __name__ == "__main__":
     main()
