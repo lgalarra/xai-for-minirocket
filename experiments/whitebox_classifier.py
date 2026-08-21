@@ -200,6 +200,21 @@ def _parse_int_grid(value: str) -> list[int]:
     return values
 
 
+def _parse_optional_int_grid(value: str) -> list[int | None]:
+    values = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.lower() == "none":
+            values.append(None)
+        else:
+            values.append(int(part))
+    if not values:
+        raise argparse.ArgumentTypeError("Expected at least one integer or None value.")
+    return values
+
+
 def _parse_float_grid(value: str) -> list[float]:
     values = [float(part.strip()) for part in value.split(",") if part.strip()]
     if not values:
@@ -1221,9 +1236,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--max-depth",
-        type=_parse_int_grid,
+        type=_parse_optional_int_grid,
         default=[2, 3, 4, 5],
-        help="Comma-separated decision-tree max_depth values for the grid. Default: 2,3,4,5.",
+        help=(
+            "Comma-separated decision-tree max_depth values for the grid. "
+            "Use None for unlimited depth. Default: 2,3,4,5."
+        ),
     )
     parser.add_argument(
         "--validation-size",
@@ -1460,7 +1478,7 @@ def main() -> None:
                             "n_clusters": int(n_clusters),
                             "random_state": int(candidate_random_state),
                             "threshold_scale": float(threshold_scale),
-                            "max_depth": int(max_depth),
+                            "max_depth": None if max_depth is None else int(max_depth),
                             "validation_accuracy": validation_accuracy,
                             "test_accuracy": test_accuracy,
                             "n_shapelets": len(detector.shapelets),
@@ -1483,7 +1501,7 @@ def main() -> None:
                         candidate_key = (
                             validation_accuracy,
                             test_accuracy,
-                            -int(max_depth),
+                            -10**9 if max_depth is None else -int(max_depth),
                             -int(top_k),
                             -int(n_clusters),
                             -float(threshold_scale),
