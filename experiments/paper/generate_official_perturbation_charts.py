@@ -28,8 +28,9 @@ DATASET_RENAMES = {
 CORE_STEMS = ("f_minus_f0", "p2p_f_minus_f0")
 SEGMENTED_RE = re.compile(r"^segmented(?:_n(?P<n>\d+))?_f_minus_f0$")
 TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
-AVERAGE_POLICY_SUFFIXES = {
-    "random_no_positive": "random",
+AVERAGE_POLICY_SUFFIX_LABELS = {
+    "random": "random",
+    "random_no_positive": "random no positive",
     "bottom": "bottom (backprop)",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
@@ -98,6 +99,16 @@ def parse_args():
         "--reference-policy",
         default="all",
         help="reference_policy filter. Use 'all' to disable this filter.",
+    )
+    parser.add_argument(
+        "--best-method-random-regime",
+        choices=("random", "random_no_positive"),
+        default="random_no_positive",
+        help=(
+            "Random perturbation regime to include in best-method charts. "
+            "Use 'random' for *_random policies or 'random_no_positive' for "
+            "*_random_no_positive policies. Default: random_no_positive."
+        ),
     )
     return parser.parse_args()
 
@@ -300,10 +311,11 @@ def filter_data(data, args):
 
 def filter_average_policy_data(data, args):
     data = data.copy()
+    suffixes = average_policy_suffixes(args)
 
     policies = data["perturbation_policy"].astype(str)
     suffix_mask = pd.Series(False, index=data.index)
-    for suffix in AVERAGE_POLICY_SUFFIXES:
+    for suffix in suffixes:
         suffix_mask |= policies.str.endswith(f"_{suffix}")
 
     if args.evolution_factor != "perturbation_policy" and args.perturbation_policy != "all":
@@ -314,7 +326,7 @@ def filter_average_policy_data(data, args):
         else:
             target_policies = {
                 f"{args.perturbation_policy}_{suffix}"
-                for suffix in AVERAGE_POLICY_SUFFIXES
+                for suffix in suffixes
             }
             data = data[data["perturbation_policy"].isin(target_policies)]
     else:
@@ -370,9 +382,13 @@ def aggregate(data, evolution_factor):
     )
 
 
-def average_policy_suffix(policy):
+def average_policy_suffixes(args):
+    return ("bottom", args.best_method_random_regime)
+
+
+def average_policy_suffix(policy, suffixes):
     policy = str(policy)
-    for suffix in AVERAGE_POLICY_SUFFIXES:
+    for suffix in suffixes:
         if policy.endswith(f"_{suffix}"):
             return suffix
     return None
@@ -404,7 +420,7 @@ def metrics_for_plot(metrics, args):
     return [metric] if metric in metrics else []
 
 
-def aggregate_average_policies(data, evolution_factor, metric_kind):
+def aggregate_average_policies(data, evolution_factor, metric_kind, suffixes):
     metric = average_policy_metric(metric_kind)
     if data.empty or metric not in data:
         return pd.DataFrame(
@@ -412,7 +428,9 @@ def aggregate_average_policies(data, evolution_factor, metric_kind):
         )
 
     data = data.copy()
-    data["average_policy_suffix"] = data["perturbation_policy"].apply(average_policy_suffix)
+    data["average_policy_suffix"] = data["perturbation_policy"].apply(
+        lambda policy: average_policy_suffix(policy, suffixes)
+    )
     data[GAUSSIAN_BOTTOM_POLICY_COLUMN] = data["perturbation_policy"].apply(is_gaussian_bottom_perturbation_policy)
     data = data[pd.notna(data["average_policy_suffix"])]
     if evolution_factor != "perturbation_policy":
@@ -540,6 +558,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
 
     if average_data is not None and not average_data.empty:
         average_styles = {
+            "random": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
             "random_no_positive": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
             "bottom": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
         }
@@ -553,7 +572,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
                 g_avg["_plot_x"],
                 g_avg["average_value"],
                 linewidth=2.5,
-                label=AVERAGE_POLICY_SUFFIXES.get(suffix, f"{suffix} avg"),
+                label=AVERAGE_POLICY_SUFFIX_LABELS.get(suffix, f"{suffix} avg"),
                 **style,
             )
 
@@ -601,7 +620,7 @@ def safe_filename_part(value):
     return str(value).replace("/", "-")
 
 
-def output_name(dataset, args):
+def output_name(dataset, args, best_method_random_regime=None):
     parts = [
         dataset,
         args.evolution_factor,
@@ -611,6 +630,8 @@ def output_name(dataset, args):
         f"reference-{args.reference_policy}",
         f"model-{args.model}",
     ]
+    if best_method_random_regime is not None:
+        parts.append(f"best-random-{best_method_random_regime}")
     return "_".join(safe_filename_part(part) for part in parts) + ".png"
 
 
@@ -648,14 +669,20 @@ def main():
             average_policy_data[average_policy_data["dataset"] == dataset],
             args.evolution_factor,
             args.metric_kind,
+            average_policy_suffixes(args),
         )
         if should_write_best_methods_chart(args):
+            best_filename = output_name(
+                dataset,
+                args,
+                best_method_random_regime=args.best_method_random_regime,
+            )
             plot_dataset(
                 g_ds,
                 dataset,
                 best_metrics,
                 args,
-                args.out_dir / "best_methods" / filename,
+                args.out_dir / "best_methods" / best_filename,
                 average_data=average_ds,
                 color_metrics=metrics,
             )
