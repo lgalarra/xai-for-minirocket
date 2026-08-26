@@ -14,10 +14,11 @@ from counterfactual import (
 )
 
 COUNTERFACTUAL_REFERENCE_POLICY = "counterfactual"
+COUNTERFACTUAL_DTW_REFERENCE_POLICY = "counterfactual_dtw"
 
 REFERENCE_POLICIES = ['opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid',
                       'global_medoid', 'global_centroid', 'opposite_class_farthest_instance',
-                      COUNTERFACTUAL_REFERENCE_POLICY,
+                      COUNTERFACTUAL_REFERENCE_POLICY, COUNTERFACTUAL_DTW_REFERENCE_POLICY,
                       ]
 
 REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class",
@@ -25,7 +26,8 @@ REFERENCE_POLICIES_LABELS = {'opposite_class_medoid': "Medoid of Opposite Class"
                              'global_medoid': "Global Medoid", 'global_centroid': "Global Centroid",
                              'opposite_class_farthest_instance': "Farthest Instance of Opposite Class",
                              'opposite_class_closest_instance': "Closest Instance of Opposite Class",
-                             COUNTERFACTUAL_REFERENCE_POLICY: "Counterfactual"
+                             COUNTERFACTUAL_REFERENCE_POLICY: "Counterfactual",
+                             COUNTERFACTUAL_DTW_REFERENCE_POLICY: "Counterfactual DTW"
                              }
 
 COUNTERFACTUAL_REFERENCE_DEFAULT_PARAMS = {
@@ -101,9 +103,11 @@ def compute_counterfactual_reference(
         dataset_name=None,
         minirocket_parameters=None,
         transform_fn=None,
-        initial_blend=None) -> np.ndarray:
+        initial_blend=None,
+        shape_distance="dwt") -> np.ndarray:
     params = get_counterfactual_reference_params(dataset_name)
     params.pop("seed_reference_policy", None)
+    params["shape_distance"] = shape_distance
     configured_initial_blend = params.pop("initial_blend", None)
     if initial_blend is None:
         initial_blend = configured_initial_blend
@@ -138,7 +142,7 @@ def compute_counterfactual_reference(
     time_elapsed = time.perf_counter() - start
     print(
         "Time elapsed (counterfactual reference): "
-        f"{time_elapsed}; success={info['success']}; "
+        f"{time_elapsed}; shape_distance={shape_distance}; success={info['success']}; "
         f"target_probability={info['probability_target_X_double_prime']}"
     )
     return counterfactual_reference

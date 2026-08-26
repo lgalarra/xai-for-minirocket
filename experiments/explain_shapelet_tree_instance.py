@@ -12,20 +12,27 @@ from matplotlib import gridspec
 import numpy as np
 
 
-DEFAULT_TREE_PICKLE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "experiments"
-    / "data"
-    / "double-freq-test"
-    / "shapelet_decision_tree.pkl"
+DATASET_NAMES = (
+    "ford-a",
+    "double-freq-test",
+    "abnormal-heartbeat-c1",
+    "starlight-c1",
+    "starlight-c2",
+    "starlight-c3",
+    "cognitive-circles",
+    "handoutlines",
 )
-DEFAULT_OUTPUT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "experiments"
-    / "data"
-    / "double-freq-test"
-    / "shapelet_tree_instance_explanation.png"
-)
+
+
+def _default_dataset_output_path(dataset_name: str, filename: str) -> Path:
+    return Path(__file__).resolve().parents[1] / "experiments" / "data" / dataset_name / filename
+
+
+def _default_explanation_output_path(dataset_name: str, test_instance_id: int) -> Path:
+    return _default_dataset_output_path(
+        dataset_name,
+        f"shapelet_tree_instance_{test_instance_id}_explanation.png",
+    )
 
 
 def _euclidean_window_matches(
@@ -60,19 +67,55 @@ def _ensure_tshap_utils_on_path() -> None:
         if str(tshap_repo_path) not in sys.path:
             sys.path.insert(0, str(tshap_repo_path))
 
+    code_path = Path(__file__).resolve().parents[1] / "code"
+    if str(code_path) not in sys.path:
+        sys.path.insert(0, str(code_path))
 
-def _load_double_freq_test(n_samples: int) -> tuple:
+
+def _load_double_freq_test(n_samples: int | None) -> tuple:
     _ensure_tshap_utils_on_path()
     from utils import get_double_freq_test_for_classification
 
+    if n_samples is None:
+        n_samples = 250
     return get_double_freq_test_for_classification(n_samples=n_samples)
 
 
-def _load_forda() -> tuple:
+def load_dataset(dataset_name: str, n_samples: int | None) -> tuple:
     _ensure_tshap_utils_on_path()
-    from utils import get_forda_for_classification
 
-    return get_forda_for_classification()
+    from utils import (
+        get_abnormal_hearbeat_for_classification,
+        get_cognitive_circles_data_for_classification,
+        get_forda_for_classification,
+        get_handoutlines_for_classification,
+        get_starlightcurves_for_classification,
+    )
+
+    if dataset_name == "double-freq-test":
+        return _load_double_freq_test(n_samples=n_samples)
+    if dataset_name == "ford-a":
+        return get_forda_for_classification()
+    if dataset_name == "abnormal-heartbeat-c1":
+        return get_abnormal_hearbeat_for_classification("1")
+    if dataset_name == "starlight-c1":
+        return get_starlightcurves_for_classification("1")
+    if dataset_name == "starlight-c2":
+        return get_starlightcurves_for_classification("2")
+    if dataset_name == "starlight-c3":
+        return get_starlightcurves_for_classification("3")
+    if dataset_name == "cognitive-circles":
+        return get_cognitive_circles_data_for_classification(
+            str(Path(__file__).resolve().parents[1] / "data" / "cognitive-circles"),
+            target_col="RealDifficulty",
+            as_numpy=True,
+        )
+    if dataset_name == "handoutlines":
+        return get_handoutlines_for_classification("1")
+    raise ValueError(
+        f"Dataset '{dataset_name}' is not supported by this script. "
+        f"Supported datasets: {', '.join(DATASET_NAMES)}."
+    )
 
 
 def load_shapelet_tree_bundle(path: str | Path) -> dict[str, Any]:
@@ -190,24 +233,27 @@ def plot_instance_with_shapelet_matches(
 
     n_channels = instance.shape[0]
     n_shapelet_panels = max(1, len(triggered_features))
+    max_shapelet_columns = 4
+    n_shapelet_columns = min(max_shapelet_columns, n_shapelet_panels)
+    n_shapelet_rows = math.ceil(n_shapelet_panels / n_shapelet_columns)
     fig = plt.figure(
-        figsize=(18, max(7.5, 3.0 * n_channels + 2.7)),
+        figsize=(max(20, 5.1 * n_shapelet_columns), max(10.5, 3.3 * n_channels + 2.4 * n_shapelet_rows + 1.4)),
         constrained_layout=True,
     )
     grid = gridspec.GridSpec(
         2,
         1,
         figure=fig,
-        height_ratios=[3.5, 1.45],
-        hspace=0.14,
+        height_ratios=[max(3.5, 3.2 * n_channels), 1.25 + 2.2 * n_shapelet_rows],
+        hspace=0.16,
     )
     series_grid = grid[0].subgridspec(n_channels, 1, hspace=0.12)
     shapelet_grid = grid[1].subgridspec(
-        3,
-        n_shapelet_panels,
-        height_ratios=[0.58, 0.16, 1.0],
-        hspace=0.08,
-        wspace=0.35,
+        2 + n_shapelet_rows,
+        n_shapelet_columns,
+        height_ratios=[0.4, 0.18] + [1.0] * n_shapelet_rows,
+        hspace=0.34,
+        wspace=0.28,
     )
     axes = []
     for channel in range(n_channels):
@@ -284,41 +330,44 @@ def plot_instance_with_shapelet_matches(
         values = np.asarray(shapelet["values"], dtype=np.float64).reshape(-1)
         color = color_cycle[rank % len(color_cycle)]
 
-        mini_ax = fig.add_subplot(shapelet_grid[2, rank])
-        mini_ax.plot(np.arange(values.shape[0]), values, color=color, linewidth=1.6)
-        mini_ax.set_box_aspect(0.55)
-        mini_ax.margins(x=0.05, y=0.22)
+        row = 2 + rank // n_shapelet_columns
+        column = rank % n_shapelet_columns
+        mini_ax = fig.add_subplot(shapelet_grid[row, column])
+        mini_ax.plot(np.arange(values.shape[0]), values, color=color, linewidth=2.1)
+        mini_ax.set_box_aspect(0.42)
+        mini_ax.margins(x=0.06, y=0.28)
         mini_ax.grid(True, alpha=0.2)
-        mini_ax.tick_params(axis="both", labelsize=8)
+        mini_ax.tick_params(axis="both", labelsize=10)
         mini_ax.set_title(
             f"s{shapelet_index}: {feature['rule']}",
-            fontsize=9,
+            fontsize=12,
             loc="left",
-            pad=3,
+            pad=6,
         )
         for spine in mini_ax.spines.values():
             spine.set_alpha(0.35)
 
-    fig.savefig(output_path, dpi=180)
+    for rank in range(len(triggered_features), n_shapelet_rows * n_shapelet_columns):
+        row = 2 + rank // n_shapelet_columns
+        column = rank % n_shapelet_columns
+        fig.add_subplot(shapelet_grid[row, column]).axis("off")
+
+    fig.savefig(output_path, dpi=220)
     plt.close(fig)
-
-
-def load_dataset(dataset_name: str, n_samples: int) -> tuple:
-    if dataset_name == "double-freq-test":
-        return _load_double_freq_test(n_samples=n_samples)
-    if dataset_name == "ford-a":
-        return _load_forda()
-    raise ValueError(f"Dataset '{dataset_name}' is not supported by this script.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tree-pickle-path", type=Path, default=DEFAULT_TREE_PICKLE_PATH)
-    parser.add_argument("--dataset-name", default="double-freq-test")
+    parser.add_argument("--tree-pickle-path", type=Path, default=None)
+    parser.add_argument("--dataset-name", default="double-freq-test", choices=DATASET_NAMES)
     parser.add_argument("--dataset-n-samples", type=int, default=None)
     parser.add_argument("--test-instance-id", type=int, default=0)
-    parser.add_argument("--output-path", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--output-path", type=Path, default=None)
     args = parser.parse_args()
+    if args.tree_pickle_path is None:
+        args.tree_pickle_path = _default_dataset_output_path(args.dataset_name, "shapelet_decision_tree.pkl")
+    if args.output_path is None:
+        args.output_path = _default_explanation_output_path(args.dataset_name, args.test_instance_id)
 
     bundle = load_shapelet_tree_bundle(args.tree_pickle_path)
     tree = bundle["classifier"]

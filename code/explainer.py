@@ -10,7 +10,7 @@ import minirocket_multivariate_variable as mmv
 from minirocket_multivariate_variable import back_propagate_attribution, get_feature_signature
 from reference import centroid_time_series, medoid_time_series_idx, centroid_per_class, medoid_ids_per_class, \
     farthest_series_euclidean, closest_series_euclidean, COUNTERFACTUAL_REFERENCE_POLICY, \
-    compute_counterfactual_reference, get_counterfactual_reference_params
+    COUNTERFACTUAL_DTW_REFERENCE_POLICY, compute_counterfactual_reference, get_counterfactual_reference_params
 from stratoshap.StratoShap import SHAPStratum
 
 
@@ -346,7 +346,7 @@ class MinirocketExplainer:
                                                                   self.minirocket_params)),
                                                     self.subsets_transformed[1 - y])
                 return self.subsets[1 - y][idx]
-        elif reference_policy == COUNTERFACTUAL_REFERENCE_POLICY:
+        elif reference_policy in (COUNTERFACTUAL_REFERENCE_POLICY, COUNTERFACTUAL_DTW_REFERENCE_POLICY):
             params = get_counterfactual_reference_params(dataset_name)
             seed_reference_policy = params["seed_reference_policy"]
             seed_reference = self.get_reference(
@@ -361,6 +361,7 @@ class MinirocketExplainer:
                 self.minirocket_classifier,
                 dataset_name=dataset_name,
                 minirocket_parameters=self.minirocket_params,
+                shape_distance="dtw" if reference_policy == COUNTERFACTUAL_DTW_REFERENCE_POLICY else "dwt",
             )
         else:
             raise ValueError(f"reference_policy '{reference_policy}' not recognized.")

@@ -78,6 +78,29 @@ def dwt_distance(X: ArrayLike, Y: ArrayLike, levels: int | None = None) -> float
     return float(np.linalg.norm(haar_dwt_coefficients(X, levels) - haar_dwt_coefficients(Y, levels)))
 
 
+def dtw_distance(X: ArrayLike, Y: ArrayLike) -> float:
+    """Multivariate Dynamic Time Warping distance between two time series."""
+    X = _as_2d_timeseries(X, "X")
+    Y = _as_2d_timeseries(Y, "Y")
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"X and Y must have the same number of channels; got {X.shape[0]} and {Y.shape[0]}.")
+
+    x_observations = X.T
+    y_observations = Y.T
+    previous = np.full(y_observations.shape[0] + 1, np.inf, dtype=np.float64)
+    current = np.full_like(previous, np.inf)
+    previous[0] = 0.0
+
+    for x_observation in x_observations:
+        current[0] = np.inf
+        costs = np.linalg.norm(y_observations - x_observation, axis=1)
+        for idx, cost in enumerate(costs, start=1):
+            current[idx] = cost + min(previous[idx], current[idx - 1], previous[idx - 1])
+        previous, current = current, previous
+
+    return float(previous[-1])
+
+
 def frequency_magnitude_spectrum(X: ArrayLike) -> np.ndarray:
     """
     Return channel-wise real-FFT magnitudes for a time series of shape (C, L).
@@ -195,6 +218,7 @@ def optimize_minirocket_counterfactual(
         transform_fn: TransformFn | None = None,
         weights: dict[str, float] | None = None,
         probability_mode: str = "margin",
+        shape_distance: str = "dwt",
         wavelet_levels: int | None = None,
         regularizer_stride: int = 1,
         initial: ArrayLike | None = None,
@@ -206,9 +230,9 @@ def optimize_minirocket_counterfactual(
         return_info: bool = False,
         optimizer_options: dict[str, Any] | None = None) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
     """
-    Find X_double_prime balancing three objectives:
+    Find X_double_prime balancing four objectives:
 
-    1. small DWT distance to X;
+    1. small shape distance to X, using Haar-DWT or DTW;
     2. similar real-FFT magnitude spectrum to X;
     3. small Euclidean distance between phi(X_double_prime) and phi(X_prime);
     4. a probability shift from class(X) toward class(X_prime), unless
@@ -216,7 +240,7 @@ def optimize_minirocket_counterfactual(
 
     With probability_mode="margin", the optimized scalar objective is::
 
-        w_dwt * ||DWT(Z) - DWT(X)||^2
+        w_dwt * shape_distance(Z, X)^2
       + w_frequency * |||rFFT(Z)| - |rFFT(X)|||^2
       + w_minirocket * ||phi(Z) - phi(X_prime)||^2
       + w_probability * (1 - (P(target_class | Z) - P(class(X) | Z)))
@@ -249,8 +273,12 @@ def optimize_minirocket_counterfactual(
     probability_mode
         "margin" maximizes P(target_class | Z) - P(class(X) | Z).
         "target_log" maximizes only P(target_class | Z).
+    shape_distance
+        "dwt" uses the original Haar-DWT coefficient distance. "dtw" uses
+        Dynamic Time Warping distance in place of the DWT regularizer.
     wavelet_levels
-        Number of Haar-DWT levels. Defaults to all possible levels.
+        Number of Haar-DWT levels. Defaults to all possible levels. Ignored
+        when shape_distance="dtw".
     regularizer_stride
         Use every Nth time point for the DWT and frequency regularizers. Values
         greater than 1 reduce objective cost for long series at the expense of
@@ -289,6 +317,8 @@ def optimize_minirocket_counterfactual(
             raise ValueError(f"weights[{key!r}] must be non-negative.")
     if probability_mode not in {"margin", "target_log"}:
         raise ValueError("probability_mode must be either 'margin' or 'target_log'.")
+    if shape_distance not in {"dwt", "dtw"}:
+        raise ValueError("shape_distance must be either 'dwt' or 'dtw'.")
     regularizer_stride = int(regularizer_stride)
     if regularizer_stride < 1:
         raise ValueError(f"regularizer_stride must be >= 1; got {regularizer_stride}.")
@@ -300,7 +330,11 @@ def optimize_minirocket_counterfactual(
     X_prime_batch = _as_batch(X_prime)
     phi_prime = transform_minirocket(X_prime_batch)[0]
     X_regularized = X[..., ::regularizer_stride]
-    dwt_X = haar_dwt_coefficients(X_regularized, levels=wavelet_levels) if weights["dwt"] else None
+    dwt_X = (
+        haar_dwt_coefficients(X_regularized, levels=wavelet_levels)
+        if weights["dwt"] and shape_distance == "dwt"
+        else None
+    )
     frequency_X = frequency_magnitude_spectrum(X_regularized) if weights["frequency"] else None
     proba_X = predict_proba(X_batch)[0]
     proba_X_prime = predict_proba(X_prime_batch)[0]
@@ -310,7 +344,10 @@ def optimize_minirocket_counterfactual(
     source_class = classes[source_idx] if classes is not None else source_idx
     resolved_target_class = classes[target_idx] if classes is not None else target_idx
 
-    dwt_scale = max(float(np.linalg.norm(dwt_X)), 1.0) if dwt_X is not None else 1.0
+    if weights["dwt"] and shape_distance == "dtw":
+        dwt_scale = max(dtw_distance(X_regularized, np.zeros_like(X_regularized)), 1.0)
+    else:
+        dwt_scale = max(float(np.linalg.norm(dwt_X)), 1.0) if dwt_X is not None else 1.0
     frequency_scale = max(float(np.linalg.norm(frequency_X)), 1.0) if frequency_X is not None else 1.0
     minirocket_scale = max(float(np.linalg.norm(phi_prime)), 1.0)
 
@@ -318,7 +355,9 @@ def optimize_minirocket_counterfactual(
         candidate = flat_candidate.reshape(X.shape)
         candidate_batch = _as_batch(candidate)
         candidate_regularized = candidate[..., ::regularizer_stride]
-        if dwt_X is not None:
+        if weights["dwt"] and shape_distance == "dtw":
+            dwt_term = float((dtw_distance(candidate_regularized, X_regularized) / dwt_scale) ** 2)
+        elif dwt_X is not None:
             dwt_delta = haar_dwt_coefficients(candidate_regularized, levels=wavelet_levels) - dwt_X
             dwt_term = float((np.linalg.norm(dwt_delta) / dwt_scale) ** 2)
         else:
@@ -408,6 +447,7 @@ def optimize_minirocket_counterfactual(
         "minirocket_term": minirocket_term,
         "probability_term": probability_term,
         "initial_dwt_term": initial_dwt,
+        "shape_distance": shape_distance,
         "initial_frequency_term": initial_frequency,
         "initial_minirocket_term": initial_minirocket,
         "initial_probability_term": initial_probability_term,
@@ -435,6 +475,7 @@ def optimize_minirocket_counterfactual(
         "probability_initial": initial_target_probability,
         "probability_predicted_X_double_prime": float(proba_X_double_prime[predicted_idx_X_double_prime]),
         "dwt_distance": dwt_distance(X_double_prime, X, levels=wavelet_levels),
+        "dtw_distance": dtw_distance(X_double_prime, X),
         "frequency_magnitude_distance": frequency_magnitude_distance(X_double_prime, X),
         "minirocket_distance": float(np.linalg.norm(transform_minirocket(_as_batch(X_double_prime))[0] - phi_prime)),
         "optimizer": result,

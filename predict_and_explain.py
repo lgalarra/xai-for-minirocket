@@ -108,7 +108,7 @@ def parse_args():
         "-r",
         type=lambda s: s.split(','),
         default=None,
-        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance'"
+        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance', 'counterfactual', 'counterfactual_dtw'"
     )
 
     parser.add_argument(

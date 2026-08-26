@@ -452,7 +452,9 @@
     opposite_class_medoid: 'Opposite medoid',
     opposite_class_centroid: 'Opposite centroid',
     global_medoid: 'Global medoid',
-    global_centroid: 'Global centroid'
+    global_centroid: 'Global centroid',
+    counterfactual: 'Counterfactual',
+    counterfactual_dtw: 'Counterfactual DTW'
   };
 
   function getReferencePolicyLabel(policy) {
@@ -520,7 +522,9 @@
       'opposite_class_medoid',
       'opposite_class_centroid',
       'global_medoid',
-      'global_centroid'
+      'global_centroid',
+      'counterfactual',
+      'counterfactual_dtw'
     ];
     discovered.sort((a, b) => {
       const ia = canonicalOrder.indexOf(a);

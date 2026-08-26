@@ -50,6 +50,7 @@ RUN_SUMMARY_TSV_FIELDS = [
     "validation_size_count",
     "top_k_grid",
     "n_clusters_grid",
+    "min_length",
     "threshold_scale_grid",
     "max_depth_grid",
     "grid_candidates",
@@ -152,6 +153,36 @@ def _default_dataset_output_path(dataset_name: str, filename: str) -> Path:
 def _default_classifier_path(dataset_name: str, classifier_name: str) -> Path:
     classifier_filename = f"{Path(classifier_name).stem}.pkl"
     return _default_dataset_output_path(dataset_name, classifier_filename)
+
+
+def _filename_token(value: Any) -> str:
+    if isinstance(value, float):
+        token = f"{value:.12g}"
+    else:
+        token = str(value)
+    token = token.lower()
+    return (
+        token.replace("-", "neg")
+        .replace(".", "p")
+        .replace("+", "")
+        .replace(" ", "")
+        .replace("_", "")
+    )
+
+
+def _append_best_hyperparameters_to_path(
+    path: str | Path,
+    best_candidate: dict[str, Any],
+) -> Path:
+    path = Path(path)
+    hyperparameter_suffix = (
+        f"topk{best_candidate['top_k']}"
+        f"_nclusters{best_candidate['n_clusters']}"
+        f"_thresholdscale{_filename_token(best_candidate['threshold_scale'])}"
+        f"_maxdepth{_filename_token(best_candidate['max_depth'])}"
+        f"_randomstate{best_candidate['random_state']}"
+    )
+    return path.with_name(f"{path.stem}_{hyperparameter_suffix}{path.suffix}")
 
 
 def _write_run_summary_tsv(path: str | Path, row: dict[str, Any]) -> None:
@@ -1229,6 +1260,12 @@ def main() -> None:
         help="Comma-separated cluster counts for the grid. Default: 10,20.",
     )
     parser.add_argument(
+        "--min-length",
+        type=int,
+        default=5,
+        help="Minimum positive-attribution segment length to keep as a shapelet candidate. Default: 5.",
+    )
+    parser.add_argument(
         "--threshold-scale",
         type=_parse_float_grid,
         default=[0.05, 0.1],
@@ -1289,6 +1326,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.min_length <= 0:
+        parser.error("--min-length must be positive.")
     if args.tree_pickle_path is None:
         args.tree_pickle_path = _default_dataset_output_path(
             args.dataset_name,
@@ -1346,6 +1385,7 @@ def main() -> None:
     max_depth_grid = _dedupe_preserving_order(args.max_depth)
     print(f"top_k_grid={top_k_grid}")
     print(f"n_clusters_grid={n_clusters_grid}")
+    print(f"min_length={args.min_length}")
     print(f"threshold_scale_grid={threshold_scale_grid}")
     print(f"max_depth_grid={max_depth_grid}")
     print(f"validation_size={args.validation_size}")
@@ -1403,6 +1443,7 @@ def main() -> None:
                 start = time.perf_counter()
                 clusters_per_class = cluster_positive_segments_by_class_with_dtw_kmeans(
                     positive_segments_by_class,
+                    min_length=args.min_length,
                     n_clusters=n_clusters,
                     random_state=candidate_random_state,
                 )
@@ -1527,6 +1568,10 @@ def main() -> None:
         f"test_accuracy_before_refit={best_candidate['test_accuracy']:.6f}",
         flush=True,
     )
+    args.tree_pickle_path = _append_best_hyperparameters_to_path(
+        args.tree_pickle_path,
+        best_candidate,
+    )
 
     start = time.perf_counter()
     final_tree = DecisionTreeClassifier(
@@ -1639,6 +1684,7 @@ def main() -> None:
         "validation_size_count": len(validation_indexes),
         "top_k_grid": top_k_grid,
         "n_clusters_grid": n_clusters_grid,
+        "min_length": args.min_length,
         "threshold_scale_grid": threshold_scale_grid,
         "max_depth_grid": max_depth_grid,
         "grid_candidates": len(grid_results),
