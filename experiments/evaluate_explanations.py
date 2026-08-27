@@ -379,6 +379,9 @@ if __name__ == '__main__':
                     'instance_to_reference_bottom': {'percentile_cut': [50, 75, 90],
                      'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
                     },
+                    'instance_to_reference_bottom_unsigned': {'percentile_cut': [50, 75, 90],
+                     'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [1]
+                    },
                     'instance_to_reference_random': {'percentile_cut': [50, 75, 90],
                      'interpolation': [0.25, 0.5, 0.75, 1.0], 'budget': [BUDGET]
                     },
@@ -391,6 +394,10 @@ if __name__ == '__main__':
                     },
                     'gaussian_bottom' : {'percentile_cut': [90, 75, 50],
                                     'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gaussian_bottom_unsigned' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
                                   'budget': [BUDGET]
                     },
                     'gaussian_random' : {'percentile_cut': [90, 75, 50],
@@ -422,6 +429,10 @@ if __name__ == '__main__':
                                                'budget': [1]
                     },
                     'reference_to_instance_bottom': {'percentile_cut': [90, 75, 50],
+                                  'interpolation': [0.25, 0.5, 0.75, 1.0],
+                                  'budget': [1]
+                    },
+                    'reference_to_instance_unsigned': {'percentile_cut': [90, 75, 50],
                                   'interpolation': [0.25, 0.5, 0.75, 1.0],
                                   'budget': [1]
                     },

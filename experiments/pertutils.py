@@ -86,6 +86,25 @@ def _bottom_mask(explanation: np.ndarray, percentile_cut: float) -> np.ndarray:
     return mask
 
 
+def _bottom_unsigned_mask(explanation: np.ndarray, percentile_cut: float, n_perturbed_points=None) -> np.ndarray:
+    mask = np.zeros(explanation.shape, dtype=bool)
+    for idx, explanation_i in enumerate(explanation):
+        if n_perturbed_points is None:
+            n_points = int(np.ceil(explanation_i.size * (100.0 - percentile_cut) / 100.0))
+        else:
+            n_points = _n_perturbed_points_for_index(n_perturbed_points, idx)
+        if n_points <= 0:
+            continue
+
+        flat_scores = np.abs(explanation_i).ravel()
+        n_selected = min(n_points, flat_scores.size)
+        selected = np.argpartition(flat_scores, n_selected - 1)[:n_selected]
+        mask_i = np.zeros(flat_scores.size, dtype=bool)
+        mask_i[selected] = True
+        mask[idx] = mask_i.reshape(explanation_i.shape)
+    return mask
+
+
 def _random_mask(explanation: np.ndarray, percentile_cut: float, rng=None) -> np.ndarray:
     top_count = np.count_nonzero(explanation > max(np.percentile(explanation, percentile_cut), 0.0))
     if top_count == 0:
@@ -400,14 +419,22 @@ def ensure_consistency(X: np.ndarray, X1: np.ndarray, X2: np.ndarray, return_kep
 
 def get_perturbations(X_target, X_references, X_explanations, explainer_method, policy='gaussian', **args):
     X_scores = _selection_scores(X_explanations, explainer_method)
-    if policy in ('gaussian', 'gaussian_bottom', 'gaussian_random', 'gaussian random',
-                  'gaussian_random_no_positive'):
+    if policy in ('gaussian', 'gaussian_bottom', 'gaussian_bottom_unsigned', 'gaussian_random',
+                  'gaussian random', 'gaussian_random_no_positive'):
         threshold = np.percentile(X_scores, args['percentile_cut'])
         if policy == 'gaussian':
             percentile_fn = lambda x: 1.0 if x > max(threshold, 0.0) else 0.0
             return get_gaussian_perturbation(X_target=X_target, X_to=X_references, explanation=X_scores,
                                              filter_explanation_fn=percentile_fn,
                                              **args)
+        elif policy == 'gaussian_bottom_unsigned':
+            explanation_mask = _bottom_unsigned_mask(
+                X_scores,
+                args['percentile_cut'],
+                args.get('n_perturbed_points')
+            )
+            return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
+                                                     explanation_mask=explanation_mask, **args)
         elif policy == 'gaussian_bottom':
             explanation_mask = _bottom_mask(X_scores, args['percentile_cut'])
             explanation_mask = _limit_mask(
@@ -519,6 +546,14 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
     elif policy == 'reference_to_instance':
         return get_reference_perturbation(xfrom=X_target, xto=X_references, explanation=X_scores,
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)
+    elif policy == 'reference_to_instance_unsigned':
+        explanation_mask = _bottom_unsigned_mask(
+            X_scores,
+            args['percentile_cut'],
+            args.get('n_perturbed_points')
+        )
+        return get_reference_perturbation_on_mask(xfrom=X_target, xto=X_references,
+                                                  explanation_mask=explanation_mask, **args)
     elif policy == 'reference_to_instance_bottom':
         explanation_mask = _bottom_mask(X_scores, args['percentile_cut'])
         explanation_mask = _limit_mask(
@@ -537,6 +572,14 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
     elif policy == 'instance_to_reference':
         return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_scores,
                                           filter_explanation_fn=lambda x: x if x>0.0 else 0.0, **args)
+    elif policy == 'instance_to_reference_bottom_unsigned':
+        explanation_mask = _bottom_unsigned_mask(
+            X_scores,
+            args['percentile_cut'],
+            args.get('n_perturbed_points')
+        )
+        return get_reference_perturbation_on_mask(xfrom=X_references, xto=X_target,
+                                                  explanation_mask=explanation_mask, **args)
     elif policy == 'instance_to_reference_bottom':
         explanation_mask = _bottom_mask(X_scores, args['percentile_cut'])
         explanation_mask = _limit_mask(
