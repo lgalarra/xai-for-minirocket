@@ -53,11 +53,14 @@ class DataImporter:
                 f"{DataExporter.get_metadata_filename_for_reference_policy(reference_policy)}"
             )
             print(policy_metadata_path)
+            metadata_frames = []
             if os.path.exists(policy_metadata_path):
-                return pd.read_csv(policy_metadata_path)
+                metadata_frames.append(pd.read_csv(policy_metadata_path))
             range_metadata_paths = DataImporter._range_metadata_paths(attributions_path, reference_policy)
             if range_metadata_paths:
-                return DataImporter._read_metadata_files(range_metadata_paths)
+                metadata_frames.append(DataImporter._read_metadata_files(range_metadata_paths))
+            if metadata_frames:
+                return pd.concat(metadata_frames, ignore_index=True)
 
         legacy_metadata_path = f"{attributions_path}/{DataExporter.METADATA_FILE}"
         if os.path.exists(legacy_metadata_path):

@@ -14,8 +14,8 @@ GENERATOR = SCRIPT_DIR / "generate_official_perturbation_charts.py"
 DEFAULT_PERTURBATION_POLICIES = (
     "gaussian",
     "instance_to_reference",
+    "instance_to_reference_bottom_unsigned",
     "reference_to_instance",
-    "reference_to_instance_bottom",
     "reference_to_instance_random",
     "reference_to_instance_random_no_positive",
 )

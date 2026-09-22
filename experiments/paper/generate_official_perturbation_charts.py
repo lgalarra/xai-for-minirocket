@@ -31,7 +31,7 @@ TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
 AVERAGE_POLICY_SUFFIX_LABELS = {
     "random": "random",
     "random_no_positive": "random no positive",
-    "bottom": "bottom (backprop)",
+    "bottom_unsigned": "bottom (backprop)",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 GAUSSIAN_POLICY_PREFIXES = ("gaussian", "gradient_gaussian")
@@ -363,7 +363,11 @@ def discover_metrics(data, args):
 
 
 def is_gaussian_bottom_perturbation_policy(policy):
-    return str(policy) in {"gaussian_bottom", "gradient_gaussian_bottom"}
+    return str(policy) in {
+        "gaussian_bottom",
+        "gaussian_bottom_unsigned",
+        "gradient_gaussian_bottom",
+    }
 
 
 def aggregate(data, evolution_factor):
@@ -383,7 +387,7 @@ def aggregate(data, evolution_factor):
 
 
 def average_policy_suffixes(args):
-    return ("bottom", args.best_method_random_regime)
+    return ("bottom_unsigned", args.best_method_random_regime)
 
 
 def average_policy_suffix(policy, suffixes):
@@ -405,7 +409,7 @@ def average_policy_metric(metric_kind):
 
 
 def is_backprop_only_plot_policy(policy):
-    return str(policy).endswith(("_bottom", "_random_no_positive"))
+    return str(policy).endswith(("_bottom", "_bottom_unsigned", "_random_no_positive"))
 
 
 def metrics_for_plot(metrics, args):
@@ -560,7 +564,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
         average_styles = {
             "random": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
             "random_no_positive": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
-            "bottom": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
+            "bottom_unsigned": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
         }
         average_data = average_data.sort_values("_plot_x")
         for suffix, g_avg in average_data.groupby("average_policy_suffix"):
