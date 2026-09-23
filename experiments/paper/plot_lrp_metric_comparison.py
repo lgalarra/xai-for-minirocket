@@ -392,10 +392,11 @@ def plot_charts(observations: list[Observation], output_dir: Path) -> list[Chart
                         )
                     )
                 )
-                ax.set_xlabel("% observations perturbed")
-                ax.set_ylabel("Probability drop")
+                ax.set_xlabel("% observations perturbed", fontsize=14)
+                ax.set_ylabel("Probability drop", fontsize=14)
+                ax.tick_params(axis="both", labelsize=14)
                 ax.grid(True, axis="both", alpha=0.25)
-                ax.legend(frameon=False, fontsize=9)
+                ax.legend(frameon=False, fontsize=14)
 
                 output_path = output_dir / f"{sanitize_filename(dataset)}__{policy}__{explainer}.png"
                 fig.savefig(output_path, dpi=200)

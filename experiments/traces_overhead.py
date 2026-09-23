@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 import copy
+import csv
 import itertools
 # In[41]:
 import os
@@ -43,6 +44,9 @@ from sklearn.metrics import accuracy_score, r2_score
 from compute_explanations import MINIROCKET_PARAMS_DICT
 
 
+OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "traces_overhead.tsv")
+RESULT_COLUMNS = ["Dataset", "Instance", "Time RT", "Time NRT"]
+
 
 def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> (np.array, np.array, float):
     X_test_expanded = np.repeat(X_test, budget, axis=0)
@@ -61,12 +65,12 @@ def compute_difference(classifier, X_test, X_perturbed, X_reference, budget) -> 
 
 if __name__ == '__main__':
     DATASET_FETCH_FUNCTIONS = {
-#        "ford-a": "get_forda_for_classification()",
-#        "starlight-c1": "get_starlightcurves_for_classification('1')",
-#        "starlight-c2": "get_starlightcurves_for_classification('2')",
-#        "starlight-c3": "get_starlightcurves_for_classification('3')",
-#        "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
-#        "handoutlines": "get_handoutlines_for_classification('1')",
+        "ford-a": "get_forda_for_classification()",
+        "starlight-c1": "get_starlightcurves_for_classification('1')",
+        "starlight-c2": "get_starlightcurves_for_classification('2')",
+        "starlight-c3": "get_starlightcurves_for_classification('3')",
+        "cognitive-circles": "get_cognitive_circles_data_for_classification('../data/cognitive-circles', target_col='RealDifficulty', as_numpy=True)",
+        "handoutlines": "get_handoutlines_for_classification('1')",
         "abnormal-heartbeat-c1": "get_abnormal_hearbeat_for_classification('1')",
     }
 
@@ -82,35 +86,42 @@ if __name__ == '__main__':
     #final_df = pd.DataFrame(df_schema.copy())
     #pd.DataFrame(final_df).to_csv(OUTPUT_FILE, mode='w', index=False, header=True)
 
-    print('Dataset\tInstance\tTime RT\tTime NRT')
-    for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
-        import minirocket_multivariate as mv
-        (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
-        minirocket_params = mmv.fit_minirocket_parameters(X_train, **MINIROCKET_PARAMS_DICT[dataset_name])
-        n, C, L = X_train.shape
-        for X in (X_train, X_test):
-            for idx, x_train in enumerate(X):
+    with open(OUTPUT_FILE, "w", newline="") as output_file:
+        writer = csv.writer(output_file, delimiter="\t", lineterminator="\n")
+        writer.writerow(RESULT_COLUMNS)
+
+        print("\t".join(RESULT_COLUMNS))
+        for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
+            import minirocket_multivariate as mv
+            (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
+            minirocket_params = mmv.fit_minirocket_parameters(X_train, **MINIROCKET_PARAMS_DICT[dataset_name])
+            n, C, L = X_train.shape
+            for X in (X_train, X_test):
+                for idx, x_train in enumerate(X):
+                    start = time.perf_counter()
+                    mmv.transform_prime(x_train, parameters=minirocket_params)
+                    time_elapsed1 = time.perf_counter() - start
+                    Xi = x_train.astype(np.float32)  # (C, L)
+                    Li = np.array([L], dtype=np.int32)
+                    start = time.perf_counter()
+                    mmv.transform(Xi, Li, minirocket_params)
+                    time_elapsed2 = time.perf_counter() - start
+                    row = [dataset_name, idx, time_elapsed1, time_elapsed2]
+                    writer.writerow(row)
+                    print(f'{dataset_name}\t{idx}\t{time_elapsed1}\t{time_elapsed2}')
+
+        for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
+            (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
+            for X in (X_train, X_test):
+                minirocket_params = mmv.fit_minirocket_parameters(X, **MINIROCKET_PARAMS_DICT[dataset_name])
                 start = time.perf_counter()
-                mmv.transform_prime(x_train, parameters=minirocket_params)
+                mmv.transform_prime(X, parameters=minirocket_params)
                 time_elapsed1 = time.perf_counter() - start
-                Xi = x_train.astype(np.float32)  # (C, L)
-                Li = np.array([L], dtype=np.int32)
                 start = time.perf_counter()
-                mmv.transform(Xi, Li, minirocket_params)
+                mmv._transform_batch(X, minirocket_params)
                 time_elapsed2 = time.perf_counter() - start
-                print(f'{dataset_name}\t{idx}\t{time_elapsed1}\t{time_elapsed2}')
+                row = [dataset_name, "BATCH", time_elapsed1, time_elapsed2]
+                writer.writerow(row)
+                print(f'{dataset_name}\tBATCH\t{time_elapsed1}\t{time_elapsed2}')
 
-    for dataset_name, dataset_fetch_function in DATASET_FETCH_FUNCTIONS.items():
-        (X_train, y_train), (X_test, y_test) = eval(dataset_fetch_function)
-        for X in (X_train, X_test):
-            minirocket_params = mmv.fit_minirocket_parameters(X, **MINIROCKET_PARAMS_DICT[dataset_name])
-            start = time.perf_counter()
-            mmv.transform_prime(X, parameters=minirocket_params)
-            time_elapsed1 = time.perf_counter() - start
-            print('Augmented:', time_elapsed1)
-            start = time.perf_counter()
-            mmv._transform_batch(X, minirocket_params)
-            time_elapsed2 = time.perf_counter() - start
-            print('Non-augmented:', time_elapsed2)
-            print(f'{dataset_name}\tBATCH\t{time_elapsed1}\t{time_elapsed2}')
-
+    print(f"Saved results to {OUTPUT_FILE}")
