@@ -287,11 +287,59 @@ def build_latex_table(merged):
     return "\n".join(latex_lines)
 
 
+def build_kernelshap_latex_table(merged):
+    kernelshap = merged[merged["base_explainer"] == "shap"].sort_values("dataset")
+    latex_lines = [
+        r"\begin{table}",
+        r"\centering",
+        r"\small",
+        r"\begin{tabular}{l c c}",
+        r"\toprule",
+        (
+            r"\textbf{Dataset} & \textbf{sequential} & "
+            r"\textbf{parallel} \\"
+        ),
+        r"\midrule",
+    ]
+
+    for _, row in kernelshap.iterrows():
+        latex_lines.append(
+            rf"{latex_escape(row['dataset'])} & "
+            rf"{format_speedup(row, 'sequential')} & "
+            rf"{format_speedup(row, 'parallel')} \\"
+        )
+
+    latex_lines.extend(
+        [
+            r"\bottomrule",
+            r"\end{tabular}",
+            (
+                r"\caption{KernelSHAP runtime overhead of the comparison "
+                r"explanation strategy with respect to the backpropagation "
+                r"strategy, computed as comparison runtime divided by "
+                r"backpropagated runtime. For cognitive-circles, the comparison "
+                r"runtime is segmented $n=20$ because end-to-end runtimes are "
+                r"unavailable. Values are mean $\pm$ standard deviation over "
+                r"deduplicated runtime runs.}"
+            ),
+            r"\label{tab:kernelshap-backprop-overhead-sequential-parallel}",
+            r"\end{table}",
+        ]
+    )
+    return "\n".join(latex_lines)
+
+
 def main():
     args = parse_args()
     sequential = aggregate_speedups(args.sequential_dir, "sequential")
     parallel = aggregate_speedups(args.parallel_dir, "parallel")
-    latex_table = build_latex_table(merge_speedups(sequential, parallel))
+    merged = merge_speedups(sequential, parallel)
+    latex_table = "\n\n".join(
+        [
+            build_latex_table(merged),
+            build_kernelshap_latex_table(merged),
+        ]
+    )
 
     print(latex_table)
     args.output.parent.mkdir(parents=True, exist_ok=True)

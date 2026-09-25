@@ -40,7 +40,7 @@ POLICY_BY_CHART = {
 }
 POLICIES = tuple(POLICY_BY_CHART)
 EXPLAINERS = tuple(sorted({name for names in POLICY_BY_CHART.values() for name in names}))
-LATEX_FIGURE_POLICIES = ("gaussian", "instance_to_reference")
+LATEX_FIGURE_POLICIES = ("gaussian", "instance_to_reference", "gradient_gaussian")
 DISPLAY_LABELS = {
     "abnormal-heartbeat-c1": "abnormal-heartbeat",
     "gaussian": "perturbation",
@@ -52,6 +52,7 @@ DISPLAY_LABELS = {
 }
 LATEX_CAPTION_POLICY_LABELS = {
     "gaussian": "gaussian",
+    "gradient_gaussian": "gaussian gradients",
     "instance_to_reference": "occlusion",
 }
 

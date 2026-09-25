@@ -29,8 +29,8 @@ CORE_STEMS = ("f_minus_f0", "p2p_f_minus_f0")
 SEGMENTED_RE = re.compile(r"^segmented(?:_n(?P<n>\d+))?_f_minus_f0$")
 TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
 AVERAGE_POLICY_SUFFIX_LABELS = {
-    "random": "random",
-    "random_no_positive": "random no positive",
+    "random": "(only pos.)",
+    "random_no_positive": "random",
     "bottom_unsigned": "bottom (backprop)",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
@@ -367,6 +367,7 @@ def is_gaussian_bottom_perturbation_policy(policy):
         "gaussian_bottom",
         "gaussian_bottom_unsigned",
         "gradient_gaussian_bottom",
+        "gradient_gaussian_opposite_bottom",
     }
 
 
@@ -584,7 +585,6 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
     plt.yticks(fontsize=18)
     plt.xlabel(EVOLUTION_FACTORS_LABELS[args.evolution_factor], fontsize=20)
     plt.ylabel(y_axis_label(args.metric_kind), fontsize=20)
-    plt.title(dataset, fontsize=20)
     plt.grid(True, alpha=0.3)
 
     ax = plt.gca()
@@ -597,7 +597,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
         plt.legend(
             handles,
             labels,
-            fontsize=12,
+            fontsize=18,
             ncol=ncols,
             frameon=False,
             handlelength=2.0,
@@ -612,7 +612,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
 
 def y_axis_label(metric_kind):
     if metric_kind == "probability":
-        return "Delta f - probability drop"
+        return "Δf - probability drop"
     if metric_kind == "probability-norm":
         return "Normalized probability drop"
     if metric_kind == "change-ratio":

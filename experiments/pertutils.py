@@ -305,7 +305,8 @@ def get_signed_gaussian_perturbation_on_mask(X_target: np.ndarray, explanation: 
     observation_std = np.std(X_target, axis=tuple(range(1, X_target.ndim)), keepdims=True)
     perturbation_scale = np.repeat(observation_std, budget, axis=0) * sigma_multiplier
     perturbation = np.abs(np.random.normal(0.0, perturbation_scale, size=repeated_mask.shape))
-    perturbation = np.sign(repeated_explanation) * perturbation
+    sign_multiplier = -1.0 if kwargs.get('opposite_gradient', False) else 1.0
+    perturbation = sign_multiplier * np.sign(repeated_explanation) * perturbation
     explanation_size = np.count_nonzero(repeated_mask) / budget
     return X_target_repeated + repeated_mask * perturbation, explanation_size
 
@@ -485,9 +486,11 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             return get_gaussian_perturbation_on_mask(X_target=X_target, X_to=X_references,
                                                      explanation_mask=explanation_mask, **args)
     elif policy in ('gradient_gaussian', 'gradient_gaussian_bottom', 'gradient_gaussian_random',
-                    'gradient_gaussian_random_no_positive'):
+                    'gradient_gaussian_random_no_positive', 'gradient_gaussian_opposite',
+                    'gradient_gaussian_opposite_bottom',
+                    'gradient_gaussian_opposite_random_no_positive'):
         threshold = np.percentile(X_scores, args['percentile_cut'])
-        if policy == 'gradient_gaussian':
+        if policy in ('gradient_gaussian', 'gradient_gaussian_opposite'):
             explanation_mask = (X_scores > max(threshold, 0.0))
             explanation_mask = _limit_mask(
                 explanation_mask,
@@ -495,7 +498,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                 n_perturbed_points=args.get('n_perturbed_points'),
                 random_select=False
             )
-        elif policy == 'gradient_gaussian_bottom':
+        elif policy in ('gradient_gaussian_bottom', 'gradient_gaussian_opposite_bottom'):
             explanation_mask = _bottom_mask(X_scores, args['percentile_cut'])
             explanation_mask = _limit_mask(
                 explanation_mask,
@@ -541,6 +544,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
             X_target=X_target,
             explanation=X_explanations,
             explanation_mask=explanation_mask,
+            opposite_gradient=str(policy).startswith('gradient_gaussian_opposite'),
             **args
         )
     elif policy == 'reference_to_instance':

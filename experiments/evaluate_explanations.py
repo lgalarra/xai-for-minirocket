@@ -412,7 +412,15 @@ if __name__ == '__main__':
                                     'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
                                   'budget': [BUDGET]
                     },
+                    'gradient_gaussian_opposite' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.5, 2.0, 1.5, 1.0],
+                                  'budget': [BUDGET]
+                    },
                     'gradient_gaussian_bottom' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gradient_gaussian_opposite_bottom' : {'percentile_cut': [90, 75, 50],
                                     'sigma' : [3.0, 2.0, 1.0],
                                   'budget': [BUDGET]
                     },
@@ -421,6 +429,10 @@ if __name__ == '__main__':
                                   'budget': [BUDGET]
                     },
                     'gradient_gaussian_random_no_positive' : {'percentile_cut': [90, 75, 50],
+                                    'sigma' : [3.0, 2.0, 1.0],
+                                  'budget': [BUDGET]
+                    },
+                    'gradient_gaussian_opposite_random_no_positive' : {'percentile_cut': [90, 75, 50],
                                     'sigma' : [3.0, 2.0, 1.0],
                                   'budget': [BUDGET]
                     },

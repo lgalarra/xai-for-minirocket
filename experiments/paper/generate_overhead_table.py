@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Load the TSV file
-df = pd.read_csv("traces_overhead.tsv", sep="\t")
+df = pd.read_csv("../traces_overhead.tsv", sep="\t")
 
 df["Dataset"] = df["Dataset"].str.replace(
     r"^starlight-c.*",
