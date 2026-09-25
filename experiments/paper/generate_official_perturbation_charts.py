@@ -186,11 +186,11 @@ def metric_label(metric):
     segmented_match = SEGMENTED_RE.match(stem)
     if segmented_match:
         n = segmented_match.group("n")
-        return "segmented n=10" if n is None else f"segmented n={n}"
+        return "leftist n=10" if n is None else f"leftist n={n}"
 
     tshap_match = TSHAP_RE.match(stem)
     if tshap_match:
-        return f"t-shap w={tshap_match.group('w')} s={tshap_match.group('s')}"
+        return f"tshap w={tshap_match.group('w')} s={tshap_match.group('s')}"
 
     return stem.replace("_", " ")
 
@@ -508,15 +508,30 @@ def canonical_color_metrics(metrics):
     return sorted(dict.fromkeys(anchors + metrics), key=metric_sort_key)
 
 
-def style_maps(metrics, explainers, color_metrics=None):
+def color_family_key(metric):
+    family = metric_family(metric)
+    if family == "segmented":
+        return f"segmented{metric_suffix(metric)}"
+    if family == "tshap":
+        return f"tshap{metric_suffix(metric)}"
+    return metric
+
+
+def style_maps(metrics, explainers, color_metrics=None, family_colors=False):
     cmap = plt.get_cmap("tab20")
     color_basis = list(metrics)
     if color_metrics is not None:
         color_basis.extend(color_metrics)
     color_metrics = canonical_color_metrics(color_basis)
+    color_keys = [color_family_key(metric) if family_colors else metric for metric in color_metrics]
+    color_keys = list(dict.fromkeys(color_keys))
+    color_by_key = {
+        key: cmap(i % cmap.N)
+        for i, key in enumerate(color_keys)
+    }
     color_map = {
-        metric: cmap(i % cmap.N)
-        for i, metric in enumerate(color_metrics)
+        metric: color_by_key[color_family_key(metric) if family_colors else metric]
+        for metric in color_metrics
     }
     linestyles = ["-", "--", ":", "-."]
     linestyle_map = {
@@ -526,7 +541,7 @@ def style_maps(metrics, explainers, color_metrics=None):
     return color_map, linestyle_map
 
 
-def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, color_metrics=None):
+def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, color_metrics=None, family_colors=False):
     g_ds = g_ds.copy()
     g_ds["_plot_x"] = x_values_for_plot(g_ds, args)
     if average_data is not None and not average_data.empty:
@@ -535,7 +550,12 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
 
     g_ds = g_ds.sort_values("_plot_x")
     explainers = sorted(g_ds["base_explainer"].unique())
-    color_map, linestyle_map = style_maps(metrics, explainers, color_metrics=color_metrics)
+    color_map, linestyle_map = style_maps(
+        metrics,
+        explainers,
+        color_metrics=color_metrics,
+        family_colors=family_colors,
+    )
 
     fig_width = max(7, min(14, 0.9 * len(metrics) + 5))
     plt.figure(figsize=(fig_width, 5))
@@ -689,6 +709,7 @@ def main():
                 args.out_dir / "best_methods" / best_filename,
                 average_data=average_ds,
                 color_metrics=metrics,
+                family_colors=True,
             )
 
     print(f"Wrote figures under {args.out_dir}")
