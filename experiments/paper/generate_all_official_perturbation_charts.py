@@ -20,10 +20,12 @@ DEFAULT_PERTURBATION_POLICIES = (
     "reference_to_instance_random_no_positive",
 )
 GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
-    "gaussian": "gradient_gaussian",
-    "gaussian_bottom": "gradient_gaussian_bottom",
-    "gaussian_random": "gradient_gaussian_random",
-    "gaussian_random_no_positive": "gradient_gaussian_random_no_positive",
+    "gaussian": "gradient_gaussian_opposite",
+    "gaussian_bottom": "gradient_gaussian_opposite_bottom",
+    # There is no separate gradient_gaussian_opposite_random policy; the opposite
+    # random baseline uses the no-positive random mask variant.
+    "gaussian_random": "gradient_gaussian_opposite_random_no_positive",
+    "gaussian_random_no_positive": "gradient_gaussian_opposite_random_no_positive",
 }
 DEFAULT_EVOLUTION_FACTORS = ("percentile_cut",)
 DEFAULT_METRIC_KINDS = ("probability",)
@@ -139,8 +141,11 @@ def discover_values(data_dir):
         df = pd.read_csv(
             csv_file,
             usecols=lambda col: col in {"perturbation_policy", "base_explainer"},
+            nrows=1,
             low_memory=False,
         )
+        if df.empty:
+            continue
         policies.update(df["perturbation_policy"].dropna().astype(str).unique())
         explainers.update(df["base_explainer"].dropna().astype(str).unique())
 

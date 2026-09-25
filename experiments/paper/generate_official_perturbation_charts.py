@@ -35,6 +35,21 @@ AVERAGE_POLICY_SUFFIX_LABELS = {
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 GAUSSIAN_POLICY_PREFIXES = ("gaussian", "gradient_gaussian")
+FILTER_COLUMNS = (
+    "base_explainer",
+    "mr_classifier",
+    "perturbation_policy",
+    "reference_policy",
+)
+REQUIRED_DATA_COLUMNS = (
+    "args",
+    "base_explainer",
+    "dataset",
+    "mr_classifier",
+    "perturbation_policy",
+    "reference_policy",
+)
+PARSED_ARGS_COLUMNS = ("budget", "interpolation", "percentile_cut", "sigma")
 
 
 def parse_args():
@@ -233,19 +248,109 @@ def coerce_metric_columns(df):
     return df
 
 
-def load_data(data_dir):
+def should_read_column(column, metric_kind):
+    return column in REQUIRED_DATA_COLUMNS or is_metric_for_kind(column, metric_kind)
+
+
+def policy_matches(policy, requested_policy):
+    policy = str(policy)
+    if requested_policy == "all":
+        return True
+    if requested_policy.endswith("_"):
+        return policy.startswith(requested_policy)
+    return policy == requested_policy
+
+
+def target_average_policies(requested_policy, suffixes):
+    if requested_policy == "all":
+        return None
+    if requested_policy.endswith("_"):
+        return None
+    return {f"{requested_policy}_{suffix}" for suffix in suffixes}
+
+
+def policy_can_contribute_to_average(policy, args):
+    policy = str(policy)
+    suffixes = average_policy_suffixes(args)
+    if not any(policy.endswith(f"_{suffix}") for suffix in suffixes):
+        return False
+
+    if args.evolution_factor == "perturbation_policy" or args.perturbation_policy == "all":
+        return True
+    if args.perturbation_policy.endswith("_"):
+        return policy.startswith(args.perturbation_policy)
+
+    return policy in target_average_policies(args.perturbation_policy, suffixes)
+
+
+def file_matches_metadata_filters(metadata, args):
+    if args.base_explainer != "all" and metadata["base_explainer"] != args.base_explainer:
+        return False
+    if args.model != "all" and metadata["mr_classifier"] != args.model:
+        return False
+    if (
+        args.reference_policy != "all"
+        and metadata["reference_policy"] != args.reference_policy
+    ):
+        return False
+
+    policy = metadata["perturbation_policy"]
+    primary_policy = (
+        args.evolution_factor == "perturbation_policy"
+        or policy_matches(policy, args.perturbation_policy)
+    )
+    return primary_policy or policy_can_contribute_to_average(policy, args)
+
+
+def read_file_metadata(csv_file):
+    metadata = pd.read_csv(
+        csv_file,
+        usecols=lambda column: column in FILTER_COLUMNS,
+        nrows=1,
+        low_memory=False,
+    )
+    if metadata.empty:
+        return None
+
+    return metadata.iloc[0].astype(str).to_dict()
+
+
+def matching_result_files(files, args):
+    selected = []
+    for csv_file in files:
+        metadata = read_file_metadata(csv_file)
+        if metadata is None:
+            continue
+        if file_matches_metadata_filters(metadata, args):
+            selected.append(csv_file)
+    return selected
+
+
+def load_data(data_dir, args):
     files = sorted(data_dir.glob("perturbation-results-*"))
     if not files:
         raise FileNotFoundError(f"No perturbation-results-* files found in {data_dir}")
 
+    selected_files = matching_result_files(files, args)
+    if not selected_files:
+        return (
+            pd.DataFrame(columns=REQUIRED_DATA_COLUMNS + PARSED_ARGS_COLUMNS),
+            selected_files,
+            len(files),
+        )
+
     dfs = []
-    for csv_file in files:
-        df = pd.read_csv(csv_file, low_memory=False)
+    for csv_file in selected_files:
+        df = pd.read_csv(
+            csv_file,
+            usecols=lambda column: should_read_column(column, args.metric_kind),
+            low_memory=False,
+        )
         df = parse_args_column(df)
         df = coerce_metric_columns(df)
         dfs.append(df)
 
-    return pd.concat(dfs, ignore_index=True), files
+    return pd.concat(dfs, ignore_index=True), selected_files, len(files)
 
 
 def normalize_dataset_names(data):
@@ -667,7 +772,7 @@ def should_write_best_methods_chart(args):
 
 def main():
     args = parse_args()
-    raw_data, files = load_data(args.data_dir)
+    raw_data, files, total_files = load_data(args.data_dir, args)
     data = filter_data(raw_data, args)
     if data.empty:
         raise ValueError("No rows left after filtering. Adjust the CLI filters.")
@@ -679,7 +784,7 @@ def main():
 
     agg = aggregate(data, args.evolution_factor)
     average_policy_data = filter_average_policy_data(raw_data, args)
-    print(f"Read {len(files)} files from {args.data_dir}")
+    print(f"Read {len(files)} matching files out of {total_files} from {args.data_dir}")
     print(f"Plotting {len(metrics)} metrics: {', '.join(metric_label(m) for m in metrics)}")
 
     selected = {}
