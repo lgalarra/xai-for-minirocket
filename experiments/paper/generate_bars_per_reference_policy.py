@@ -20,6 +20,9 @@ METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
 PERTURBATION_POLICIES = ("gaussian", "instance_to_reference")
 #MODEL_NAME = "RandomForestClassifier"
+GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
+    "gaussian": "gradient_gaussian",
+}
 
 
 def as_float(value, default=np.nan):
@@ -115,15 +118,31 @@ def safe_filename_part(value):
     return str(value).replace("/", "-")
 
 
+def perturbation_policy_for_explainer(explainer, perturbation_policy):
+    if explainer == "gradients":
+        return GRADIENT_PERTURBATION_POLICY_REPLACEMENTS.get(
+            perturbation_policy,
+            perturbation_policy,
+        )
+    return perturbation_policy
+
+
 def filter_for_plot(data, explainer, perturbation_policy):
+    resolved_perturbation_policy = perturbation_policy_for_explainer(
+        explainer,
+        perturbation_policy,
+    )
     filtered = data[
         (data["base_explainer"] == explainer)
         & (data["label"] == LABEL)
-        & (data["perturbation_policy"] == perturbation_policy)
+        & (data["perturbation_policy"] == resolved_perturbation_policy)
         & (np.isclose(data["percentile_cut"], 90.0))
     ]
 
-    if perturbation_policy == "gaussian":
+    if (
+        resolved_perturbation_policy.startswith("gradient_gaussian")
+        or resolved_perturbation_policy == "gaussian"
+    ):
         return filtered[np.isclose(filtered["sigma"], 3.0)]
 
     return filtered[
@@ -136,6 +155,10 @@ written_files = []
 explainers = sorted(data["base_explainer"].dropna().unique())
 for perturbation_policy in PERTURBATION_POLICIES:
     for explainer in explainers:
+        plot_perturbation_policy = perturbation_policy_for_explainer(
+            explainer,
+            perturbation_policy,
+        )
         plot_data = filter_for_plot(data, explainer, perturbation_policy)
         if plot_data.empty:
             continue
@@ -178,7 +201,7 @@ for perturbation_policy in PERTURBATION_POLICIES:
 
             out_file = OUT_DIR / (
                 f"{safe_filename_part(dataset)}_{safe_filename_part(explainer)}_"
-                f"{safe_filename_part(BASE_METRIC)}_{safe_filename_part(perturbation_policy)}_"
+                f"{safe_filename_part(BASE_METRIC)}_{safe_filename_part(plot_perturbation_policy)}_"
                 "reference_policy_boxplot.png"
             )
             fig.savefig(out_file, dpi=300, bbox_inches="tight")
