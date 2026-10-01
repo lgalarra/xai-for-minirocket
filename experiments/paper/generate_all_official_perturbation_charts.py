@@ -13,6 +13,7 @@ DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
 GENERATOR = SCRIPT_DIR / "generate_official_perturbation_charts.py"
 DEFAULT_PERTURBATION_POLICIES = (
     "gaussian",
+    "gaussian_bottom",
     "instance_to_reference",
     "instance_to_reference_bottom_unsigned",
     "reference_to_instance",
@@ -29,6 +30,10 @@ GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
 }
 DEFAULT_EVOLUTION_FACTORS = ("percentile_cut",)
 DEFAULT_METRIC_KINDS = ("probability",)
+DEFAULT_PER_REFERENCE_POLICIES = (
+    "gradient_gaussian_opposite",
+    "gradient_gaussian_opposite_bottom",
+)
 
 
 def parse_args():
@@ -137,10 +142,12 @@ def discover_values(data_dir):
 
     policies = set()
     explainers = set()
+    reference_policies = set()
     for csv_file in files:
         df = pd.read_csv(
             csv_file,
-            usecols=lambda col: col in {"perturbation_policy", "base_explainer"},
+            usecols=lambda col: col
+            in {"perturbation_policy", "base_explainer", "reference_policy"},
             nrows=1,
             low_memory=False,
         )
@@ -148,8 +155,11 @@ def discover_values(data_dir):
             continue
         policies.update(df["perturbation_policy"].dropna().astype(str).unique())
         explainers.update(df["base_explainer"].dropna().astype(str).unique())
+        reference_policies.update(
+            df["reference_policy"].dropna().astype(str).unique()
+        )
 
-    return sorted(policies), sorted(explainers), len(files)
+    return sorted(policies), sorted(explainers), sorted(reference_policies), len(files)
 
 
 def expand_requested_policies(requested_policies, discovered_policies):
@@ -168,7 +178,14 @@ def expand_requested_policies(requested_policies, discovered_policies):
     return sorted(dict.fromkeys(expanded))
 
 
-def build_command(args, policy, explainer, evolution_factor, metric_kind):
+def build_command(
+    args,
+    policy,
+    explainer,
+    evolution_factor,
+    metric_kind,
+    reference_policy,
+):
     policy = policy_for_explainer(policy, explainer)
     return [
         sys.executable,
@@ -188,7 +205,7 @@ def build_command(args, policy, explainer, evolution_factor, metric_kind):
         "--model",
         args.model,
         "--reference-policy",
-        args.reference_policy,
+        reference_policy,
         "--best-method-random-regime",
         args.best_method_random_regime,
         "--percentile-cut",
@@ -211,13 +228,54 @@ def expand_policy_explainer_combinations(policies, explainers):
     return sorted(dict.fromkeys(combinations))
 
 
+def reference_policies_for_per_reference_charts(args, discovered_reference_policies):
+    if args.reference_policy != "all":
+        return [args.reference_policy]
+    return discovered_reference_policies
+
+
+def expand_per_reference_combinations(
+    discovered_policies,
+    explainers,
+    reference_policies,
+    evolution_factors,
+    metric_kinds,
+):
+    policies = [
+        policy
+        for policy in DEFAULT_PER_REFERENCE_POLICIES
+        if policy in discovered_policies
+    ]
+    if "gradients" not in explainers:
+        return []
+
+    return list(
+        itertools.product(
+            policies,
+            ("gradients",),
+            evolution_factors,
+            metric_kinds,
+            reference_policies,
+        )
+    )
+
+
 def main():
     args = parse_args()
-    discovered_policies, discovered_explainers, file_count = discover_values(args.data_dir)
+    (
+        discovered_policies,
+        discovered_explainers,
+        discovered_reference_policies,
+        file_count,
+    ) = discover_values(args.data_dir)
 
     requested_policies = args.policies or list(DEFAULT_PERTURBATION_POLICIES)
     policies = expand_requested_policies(requested_policies, discovered_policies)
     explainers = sorted(args.explainers) if args.explainers else discovered_explainers
+    reference_policies = reference_policies_for_per_reference_charts(
+        args,
+        discovered_reference_policies,
+    )
     policy_explainer_pairs = expand_policy_explainer_combinations(policies, explainers)
     resolved_policies = sorted({policy for policy, _ in policy_explainer_pairs})
     missing_policies = sorted(set(resolved_policies) - set(discovered_policies))
@@ -226,32 +284,64 @@ def main():
             "Requested policies are not present in the result files: "
             + ", ".join(missing_policies)
         )
+    missing_reference_policies = sorted(
+        set(reference_policies) - set(discovered_reference_policies)
+    )
+    if missing_reference_policies:
+        raise ValueError(
+            "Requested reference policies are not present in the result files: "
+            + ", ".join(missing_reference_policies)
+        )
     evolution_factors = args.evolution_factors or list(DEFAULT_EVOLUTION_FACTORS)
     metric_kinds = args.metric_kinds or list(DEFAULT_METRIC_KINDS)
 
     combinations = list(
-        (policy, explainer, evolution_factor, metric_kind)
+        (policy, explainer, evolution_factor, metric_kind, args.reference_policy)
         for (policy, explainer), evolution_factor, metric_kind
         in itertools.product(policy_explainer_pairs, evolution_factors, metric_kinds)
     )
+    per_reference_combinations = expand_per_reference_combinations(
+        discovered_policies,
+        explainers,
+        reference_policies,
+        evolution_factors,
+        metric_kinds,
+    )
+    combinations = list(dict.fromkeys(combinations + per_reference_combinations))
 
     print(f"Discovered {file_count} result files in {args.data_dir}")
     print(f"Policies: {', '.join(resolved_policies)}")
     print(f"Explainers: {', '.join(explainers)}")
+    print(f"Reference policies: {', '.join(reference_policies)}")
     print(f"Evolution factors: {', '.join(evolution_factors)}")
     print(f"Metric kinds: {', '.join(metric_kinds)}")
+    print(f"Per-reference policies: {', '.join(DEFAULT_PER_REFERENCE_POLICIES)}")
     print(f"Best-method random regime: {args.best_method_random_regime}")
     print(f"Running {len(combinations)} chart-generation commands")
 
     failures = []
-    for index, (policy, explainer, evolution_factor, metric_kind) in enumerate(
+    for index, (
+        policy,
+        explainer,
+        evolution_factor,
+        metric_kind,
+        reference_policy,
+    ) in enumerate(
         combinations,
         start=1,
     ):
-        command = build_command(args, policy, explainer, evolution_factor, metric_kind)
+        command = build_command(
+            args,
+            policy,
+            explainer,
+            evolution_factor,
+            metric_kind,
+            reference_policy,
+        )
         label = (
             f"[{index}/{len(combinations)}] policy={policy} "
-            f"explainer={explainer} evolution={evolution_factor} metric={metric_kind}"
+            f"explainer={explainer} reference={reference_policy} "
+            f"evolution={evolution_factor} metric={metric_kind}"
         )
         print(label, flush=True)
         if args.dry_run:

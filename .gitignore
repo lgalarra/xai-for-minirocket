@@ -1,5 +1,10 @@
 output/
 experiments/
+!experiments/
+experiments/*
+!experiments/paper/
+experiments/paper/*
+!experiments/paper/generate_official_perturbation_latex_figures.py
 node_modules/
 **/__pycache__/
 **/.ipynb_checkpoints

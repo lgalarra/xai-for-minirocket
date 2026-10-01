@@ -21,7 +21,7 @@ LABEL = "predicted"
 PERTURBATION_POLICIES = ("gaussian", "instance_to_reference")
 #MODEL_NAME = "RandomForestClassifier"
 GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
-    "gaussian": "gradient_gaussian",
+    "gaussian": "gradient_gaussian_opposite",
 }
 
 
@@ -55,8 +55,13 @@ if not dfs:
     raise FileNotFoundError(f"No perturbation-results-* files found in {DATA_DIR}")
 
 data = pd.concat(dfs, ignore_index=True)
-data = data.drop(data[(data["mr_classifier"] != "LogisticRegression")
-& (data["base_explainer"] == "gradients")].index)
+data = data.drop(
+    data[
+        (~data["mr_classifier"].isin(("LogisticRegression", "MLPClassifier")))
+        & (data["base_explainer"] == "gradients")
+    ].index
+)
+data = data[data["reference_policy"] != "counterfactual"].copy()
 
 # Normalize dataset names
 data["dataset"] = data["dataset"].str.replace(
@@ -196,6 +201,8 @@ for perturbation_policy in PERTURBATION_POLICIES:
                 title="Model",
                 loc="best",
                 frameon=True,
+                fontsize=14,
+                title_fontsize=15,
             )
             fig.tight_layout()
 

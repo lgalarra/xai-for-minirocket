@@ -1,5 +1,6 @@
 import argparse
 import ast
+import copy
 import re
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from matplotlib.ticker import MaxNLocator
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
+FIGURE_SIZE = (12, 5)
+FIGURE_DPI = 300
 
 EVOLUTION_FACTORS_LABELS = {
     "percentile_cut": "% observations perturbed",
@@ -31,7 +34,12 @@ TSHAP_RE = re.compile(r"^tshap_w(?P<w>\d+)_s(?P<s>\d+)_f_minus_f0$")
 AVERAGE_POLICY_SUFFIX_LABELS = {
     "random": "(only pos.)",
     "random_no_positive": "random",
+    "bottom": "bottom",
     "bottom_unsigned": "bottom (backprop)",
+}
+BEST_METHOD_FAMILY_COLORS = {
+    "segmented": plt.get_cmap("tab20")(2),
+    "tshap": "tab:red",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 GAUSSIAN_POLICY_PREFIXES = ("gaussian", "gradient_gaussian")
@@ -248,6 +256,21 @@ def coerce_metric_columns(df):
     return df
 
 
+def mask_missing_optional_metrics(df):
+    optional_metric_columns = [
+        col
+        for col in df.columns
+        if col.startswith(("p2p_", "tshap_"))
+        and (
+            col.endswith(("-mean", "-std", "-change_ratio"))
+            or col.endswith(("_norm-mean", "_norm-std"))
+        )
+    ]
+    for col in optional_metric_columns:
+        df.loc[df[col] == -1.0, col] = np.nan
+    return df
+
+
 def should_read_column(column, metric_kind):
     return column in REQUIRED_DATA_COLUMNS or is_metric_for_kind(column, metric_kind)
 
@@ -348,6 +371,7 @@ def load_data(data_dir, args):
         )
         df = parse_args_column(df)
         df = coerce_metric_columns(df)
+        df = mask_missing_optional_metrics(df)
         dfs.append(df)
 
     return pd.concat(dfs, ignore_index=True), selected_files, len(files)
@@ -493,6 +517,8 @@ def aggregate(data, evolution_factor):
 
 
 def average_policy_suffixes(args):
+    if str(args.perturbation_policy).startswith("gradient_gaussian"):
+        return ("bottom", args.best_method_random_regime)
     return ("bottom_unsigned", args.best_method_random_regime)
 
 
@@ -638,6 +664,11 @@ def style_maps(metrics, explainers, color_metrics=None, family_colors=False):
         metric: color_by_key[color_family_key(metric) if family_colors else metric]
         for metric in color_metrics
     }
+    if family_colors:
+        for metric in color_metrics:
+            family = metric_family(metric)
+            if family in BEST_METHOD_FAMILY_COLORS:
+                color_map[metric] = BEST_METHOD_FAMILY_COLORS[family]
     linestyles = ["-", "--", ":", "-."]
     linestyle_map = {
         explainer: linestyles[i % len(linestyles)]
@@ -662,8 +693,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
         family_colors=family_colors,
     )
 
-    fig_width = max(7, min(14, 0.9 * len(metrics) + 5))
-    plt.figure(figsize=(fig_width, 5))
+    plt.figure(figsize=FIGURE_SIZE)
 
     for explainer, g_exp in g_ds.groupby("base_explainer"):
         for metric in metrics:
@@ -690,6 +720,7 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
         average_styles = {
             "random": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
             "random_no_positive": {"color": "black", "linestyle": (0, (5, 2)), "marker": "x"},
+            "bottom": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
             "bottom_unsigned": {"color": "0.35", "linestyle": (0, (1, 2)), "marker": "P"},
         }
         average_data = average_data.sort_values("_plot_x")
@@ -731,13 +762,13 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
 
     plt.tight_layout()
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_file, dpi=300, bbox_inches="tight")
+    plt.savefig(out_file, dpi=FIGURE_DPI)
     plt.close()
 
 
 def y_axis_label(metric_kind):
     if metric_kind == "probability":
-        return "Δf - probability drop"
+        return "Δf̃ - probability drop"
     if metric_kind == "probability-norm":
         return "Normalized probability drop"
     if metric_kind == "change-ratio":
@@ -770,6 +801,70 @@ def should_write_best_methods_chart(args):
     return not is_backprop_only_plot_policy(args.perturbation_policy)
 
 
+def write_best_methods_charts(
+    agg,
+    metrics,
+    args,
+    average_policy_data,
+    selected,
+    selected_prefix="",
+):
+    if not should_write_best_methods_chart(args):
+        return
+
+    for dataset, g_ds in agg.groupby("dataset"):
+        best_metrics = best_metric_subset(g_ds, metrics)
+        selected[f"{selected_prefix}{dataset}"] = [
+            metric_label(m) for m in best_metrics
+        ]
+        average_ds = aggregate_average_policies(
+            average_policy_data[average_policy_data["dataset"] == dataset],
+            args.evolution_factor,
+            args.metric_kind,
+            average_policy_suffixes(args),
+        )
+        best_filename = output_name(
+            dataset,
+            args,
+            best_method_random_regime=args.best_method_random_regime,
+        )
+        plot_dataset(
+            g_ds,
+            dataset,
+            best_metrics,
+            args,
+            args.out_dir / "best_methods" / best_filename,
+            average_data=average_ds,
+            color_metrics=metrics,
+            family_colors=True,
+        )
+
+
+def write_per_classifier_best_methods_charts(data, metrics, args, average_policy_data, selected):
+    if args.model != "all":
+        return
+
+    for classifier in sorted(data["mr_classifier"].dropna().unique()):
+        classifier_data = data[data["mr_classifier"] == classifier]
+        if classifier_data.empty:
+            continue
+
+        classifier_args = copy.copy(args)
+        classifier_args.model = classifier
+        classifier_average_data = average_policy_data[
+            average_policy_data["mr_classifier"] == classifier
+        ]
+        classifier_agg = aggregate(classifier_data, classifier_args.evolution_factor)
+        write_best_methods_charts(
+            classifier_agg,
+            metrics,
+            classifier_args,
+            classifier_average_data,
+            selected,
+            selected_prefix=f"{classifier} | ",
+        )
+
+
 def main():
     args = parse_args()
     raw_data, files, total_files = load_data(args.data_dir, args)
@@ -792,30 +887,14 @@ def main():
         filename = output_name(dataset, args)
         plot_dataset(g_ds, dataset, metrics, args, args.out_dir / "all_methods" / filename)
 
-        best_metrics = best_metric_subset(g_ds, metrics)
-        selected[dataset] = [metric_label(m) for m in best_metrics]
-        average_ds = aggregate_average_policies(
-            average_policy_data[average_policy_data["dataset"] == dataset],
-            args.evolution_factor,
-            args.metric_kind,
-            average_policy_suffixes(args),
-        )
-        if should_write_best_methods_chart(args):
-            best_filename = output_name(
-                dataset,
-                args,
-                best_method_random_regime=args.best_method_random_regime,
-            )
-            plot_dataset(
-                g_ds,
-                dataset,
-                best_metrics,
-                args,
-                args.out_dir / "best_methods" / best_filename,
-                average_data=average_ds,
-                color_metrics=metrics,
-                family_colors=True,
-            )
+    write_best_methods_charts(agg, metrics, args, average_policy_data, selected)
+    write_per_classifier_best_methods_charts(
+        data,
+        metrics,
+        args,
+        average_policy_data,
+        selected,
+    )
 
     print(f"Wrote figures under {args.out_dir}")
     print("Best-method plots used:")
