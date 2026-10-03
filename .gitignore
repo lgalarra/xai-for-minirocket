@@ -4,6 +4,7 @@ experiments/
 experiments/*
 !experiments/paper/
 experiments/paper/*
+!experiments/paper/count_backprop_perturbation_wins.py
 !experiments/paper/generate_official_perturbation_latex_figures.py
 node_modules/
 **/__pycache__/
