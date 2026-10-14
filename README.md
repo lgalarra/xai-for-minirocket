@@ -83,6 +83,93 @@ Unlike ROCKET, MINIROCKET does **not** require the input time series to be norma
 
 ## Examples
 
+### Aggregate precomputed explanations
+
+Run from the repository root:
+
+```bash
+python experiments/plot_aggregated_explanations.py \
+  --dataset abnormal-heartbeat-c1 --classifier LogisticRegression --explainer shap \
+  --reference-policies opposite_class_closest_instance,opposite_class_medoid,global_centroid \
+  --aggregation avg --instances 0,22 \
+  --output-dir reports/aggregated_explanations
+```
+
+This reads existing `DataExporter` CSVs from
+`experiments/data/<dataset>/<classifier>/<explainer>/<label>/<metric>/`.
+Use `--export-root PATH` for a different directory containing `data/`; relative
+paths inside metadata are resolved against that directory. Defaults are
+`--label predicted`, `--metric euclidean`, and `--attribution beta`.
+Policy-specific metadata, range-sharded metadata, and legacy `metadata.csv`
+are supported. No model or explainer is executed.
+
+Aggregation (`max`, `avg`, `sum`, or `min`) operates on signed, unnormalized
+attributions at each time step independently across the selected policies.
+Each instance produces a PNG with one subplot per channel: a black series line
+over a heatmap (red positive, blue negative), with a shared symmetric color scale.
+Omit `--instances` to plot all exported instances. Missing explanations,
+conflicting metadata, mismatched series/targets, or time indices raise errors.
+Use a separate output directory for each policy group to avoid overwriting images.
+Other exported attribution types can be selected with `--attribution`, for
+example `beta_p2p`, `beta_lrp`, `beta_segmented`, or `beta_tshap_w10_s5`.
+
+### Evaluate aggregated explanations
+
+`experiments/evaluate_aggregated_explanations.py` reuses the original evaluator's
+perturbation and metric functions, without modifying `evaluate_explanations.py`.
+Its positional arguments are dataset, label, explainer, reference policy group,
+perturbation, classifier, optional distance, and optional data root (`data` or
+`lrp-data`). Join constituent policies with `+`:
+
+```bash
+python experiments/evaluate_aggregated_explanations.py \
+  double-freq-test predicted shap \
+  opposite_class_medoid+opposite_class_closest_instance \
+  both RandomForestClassifier \
+  --aggregation max --compare-individual --start 0 --end 9 \
+  --output experiments/aggregated-results/evaluation-max.csv
+```
+
+`--aggregation` accepts `max` (default), `min`, `avg`, or `sum` and combines
+signed attributions pointwise. All explanation types available for every
+constituent policy are evaluated independently, including backpropagated, P2P,
+segmented, TSHAP, and LRP exports. Missing types are omitted, while partially
+missing or mismatched arrays fail validation. Individual policy names also work.
+
+Select instance IDs with `--instances 0,3,9` or an inclusive interval such as
+`--start 86 --end 99`. Omit `--end` to evaluate all remaining exported test
+instances from `--start` onward. `--end` requires `--start`; bounds must satisfy
+`0 <= start <= end` when both are supplied, and cannot be combined with `--instances`.
+Every requested ID must be available for all selected policies; missing IDs
+raise an error. Omit both selection forms to evaluate all exported instances.
+
+This script supports `gaussian`, `instance_to_reference`, or `both`, with one
+explicit configuration per invocation: `--percentile-cut 90`, `--sigma 3`,
+`--interpolation 1`, `--budget 10`, and `--seed 0` by default. The budget applies
+to Gaussian trials; deterministic instance-to-reference uses one trial.
+The existing Gaussian implementation uses clipped random interpolation toward
+the reference (sigma 3 maps to interpolation standard deviation 0.25).
+
+Both perturbations require replacement references. By default,
+`--reference-strategy average-scores` evaluates the aggregated explanation
+against each constituent reference, then averages the probability drops.
+`mean-reference` instead uses the mean reference series; `first` uses the first
+policy's reference. Individual baselines use their own references.
+`--compare-individual` uses a shared per-instance perturbation-count limit:
+the minimum count basis among the aggregate and individual explanations,
+using the original evaluator's P2P-first rule. Percentile/positive-attribution
+selection can reduce the actual count further. Random draws are paired by seed.
+
+By default, results are saved in `experiments/aggregated-results/`, which is
+created automatically if it does not exist. Use `--output` to override the path.
+The output consists of a summary CSV, an `-instances.csv` file (trial- and
+reference-averaged scores), and a `-samples.csv` file retaining each target and
+trial. `f_minus_f0` is the original predicted-class probability minus its
+perturbed probability; higher values indicate larger drops. Normalized metrics
+can be nonfinite when the reference probability equals the instance probability.
+Model and export loading require the same dependencies as the original evaluator;
+`TSHAP_REPO_PATH` can locate its TSHAP dependency. No explanations are recomputed.
+
 **MINIROCKET**
 
 ```python
