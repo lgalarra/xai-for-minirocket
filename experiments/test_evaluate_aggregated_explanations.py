@@ -1,6 +1,7 @@
 import argparse
 from contextlib import redirect_stderr
 import io
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 
@@ -28,6 +29,12 @@ class AggregatedEvaluationTests(unittest.TestCase):
                 parse_reference_group(value)
         args = parse_args(["double-freq-test", "predicted", "shap", "medoid+closest", "both", "RandomForestClassifier"])
         self.assertEqual(args.aggregation, "max")
+        self.assertTrue(args.compare_individual)
+
+    def test_individual_comparison_can_be_disabled(self):
+        arguments = ["ford-a", "predicted", "shap", "medoid+closest", "both", "LogisticRegression"]
+        self.assertFalse(parse_args(arguments + ["--no-compare-individual"]).compare_individual)
+        self.assertTrue(parse_args(arguments + ["--compare-individual"]).compare_individual)
 
     def test_loader_selects_policy_rows_from_sparse_legacy_metadata(self):
         frame = pd.DataFrame([
@@ -63,6 +70,18 @@ class AggregatedEvaluationTests(unittest.TestCase):
         args.start = 8
         with self.assertRaisesRegex(ValueError, "Missing"):
             load_inputs(evaluator, args, args.reference_policy)
+
+    def test_output_name_uses_experiment_arguments_and_allows_override(self):
+        arguments = ["ford-a", "predicted", "shap", "medoid+closest", "both", "LogisticRegression"]
+        args = parse_args(arguments + ["--aggregation", "sum"])
+        self.assertEqual(args.output.parent.name, "aggregated-results")
+        self.assertEqual(args.output.name, "ford-a__predicted__shap__medoid+closest__LogisticRegression__sum__both.csv")
+        for index, value in enumerate(["double-freq-test", "training", "gradients", "medoid", "gaussian", "RandomForestClassifier"]):
+            changed = arguments.copy()
+            changed[index] = value
+            self.assertNotEqual(parse_args(changed + ["--aggregation", "sum"]).output, args.output)
+        self.assertNotEqual(parse_args(arguments).output, args.output)
+        self.assertEqual(parse_args(arguments + ["--output", "custom/results.csv"]).output, Path("custom/results.csv"))
 
     def test_inclusive_instance_interval(self):
         arguments = ["ford-a", "predicted", "shap", "medoid+closest", "both", "LogisticRegression"]

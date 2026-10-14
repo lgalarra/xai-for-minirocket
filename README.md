@@ -155,13 +155,20 @@ Both perturbations require replacement references. By default,
 against each constituent reference, then averages the probability drops.
 `mean-reference` instead uses the mean reference series; `first` uses the first
 policy's reference. Individual baselines use their own references.
-`--compare-individual` uses a shared per-instance perturbation-count limit:
+Individual comparisons are enabled by default; use `--no-compare-individual`
+to evaluate only the aggregate. `--compare-individual` explicitly enables them.
+Comparisons use a shared per-instance perturbation-count limit:
 the minimum count basis among the aggregate and individual explanations,
 using the original evaluator's P2P-first rule. Percentile/positive-attribution
 selection can reduce the actual count further. Random draws are paired by seed.
 
 By default, results are saved in `experiments/aggregated-results/`, which is
 created automatically if it does not exist. Use `--output` to override the path.
+The default summary filename is
+`<dataset>__<label>__<explainer>__<policies>__<classifier>__<aggregation>__<perturbation>.csv`,
+with policies joined by `+`. Per-instance and sample files use the same stem.
+Runs with the same filename overwrite previous results; use `--output` to
+distinguish changes to instance selection, seed, or other evaluation settings.
 The output consists of a summary CSV, an `-instances.csv` file (trial- and
 reference-averaged scores), and a `-samples.csv` file retaining each target and
 trial. `f_minus_f0` is the original predicted-class probability minus its

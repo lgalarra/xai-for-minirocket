@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import pickle
+import re
 import sys
 
 import numpy as np
@@ -194,7 +195,8 @@ def parse_args(argv=None):
     parser.add_argument("data_root", nargs="?", choices=("data", "lrp-data"), default="data")
     parser.add_argument("--aggregation", choices=("max", "min", "avg", "sum"), default="max")
     parser.add_argument("--reference-strategy", choices=("average-scores", "mean-reference", "first"), default="average-scores")
-    parser.add_argument("--compare-individual", action="store_true")
+    parser.add_argument("--compare-individual", action=argparse.BooleanOptionalAction, default=True,
+                        help="Compare against each constituent policy (default: enabled)")
     parser.add_argument("--instances", type=lambda value: [int(item) for item in value.split(",")])
     parser.add_argument("--start", type=int, help="First instance ID (inclusive)")
     parser.add_argument("--end", type=int, help="Last instance ID (inclusive); defaults to all remaining exported test instances; requires --start")
@@ -204,7 +206,7 @@ def parse_args(argv=None):
     parser.add_argument("--budget", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--export-root", type=Path, default=ROOT / "experiments")
-    parser.add_argument("--output", type=Path, default=ROOT / "experiments/aggregated-results/aggregated-perturbation-results.csv")
+    parser.add_argument("--output", type=Path, help="Override the automatically named CSV in experiments/aggregated-results/")
     args = parser.parse_args(argv)
     if args.start is not None or args.end is not None:
         if args.instances is not None:
@@ -221,6 +223,11 @@ def parse_args(argv=None):
         parser.error("Sigma must be finite and nonnegative; budget must be positive.")
     if not 0 <= args.seed < 2 ** 32:
         parser.error("Seed must be in [0, 2**32).")
+    if args.output is None:
+        components = [args.dataset, args.label, args.explainer, "+".join(args.reference_policy),
+                      args.classifier, args.aggregation, args.perturbation]
+        filename = "__".join(re.sub(r"[^A-Za-z0-9_.+-]", "_", component) for component in components)
+        args.output = ROOT / "experiments/aggregated-results" / f"{filename}.csv"
     return args
 
 
