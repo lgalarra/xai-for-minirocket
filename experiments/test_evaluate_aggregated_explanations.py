@@ -10,10 +10,26 @@ import pandas as pd
 
 from evaluate_aggregated_explanations import (
     combine_variants, count_basis, evaluate, load_inputs, parse_args, parse_reference_group, reference_targets,
+    validate_explanation_shape,
 )
 
 
 class AggregatedEvaluationTests(unittest.TestCase):
+    def test_segmented_exports_allow_truncated_remainder(self):
+        for segments in (10, 20, 50, 100):
+            values = np.ones((2, 1, (1024 // segments) * segments))
+            result = validate_explanation_shape(values, (2, 1, 1024), f"segmented_n{segments}", "medoid")
+            np.testing.assert_array_equal(result, values)
+        validate_explanation_shape(np.ones((2, 1, 1024)), (2, 1, 1024), "segmented_n10", "medoid")
+
+    def test_invalid_segmented_exports_still_fail(self):
+        for values, name in ((np.ones((2, 1, 1000)), "segmented_n10"),
+                             (np.ones((1, 1, 1020)), "segmented_n10"),
+                             (np.full((2, 1, 1020), np.nan), "segmented_n10"),
+                             (np.ones((2, 1, 1020)), "backpropagated")):
+            with self.subTest(name=name, shape=values.shape), self.assertRaisesRegex(ValueError, "explanation shape="):
+                validate_explanation_shape(values, (2, 1, 1024), name, "medoid")
+
     def setUp(self):
         self.inputs = {
             "medoid": {"reference": np.array([[[1., 3.]]]),

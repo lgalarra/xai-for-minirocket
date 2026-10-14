@@ -34,6 +34,23 @@ def working_directory(directory):
         os.chdir(previous)
 
 
+def validate_explanation_shape(values, series_shape, name, policy):
+    values = np.asarray(values, dtype=float)
+    expected_shape = tuple(series_shape)
+    if name.startswith("segmented_n"):
+        segments = int(name.removeprefix("segmented_n"))
+        segmented_length = (series_shape[-1] // segments) * segments
+        if values.shape == (*series_shape[:-1], segmented_length) and segmented_length > 0:
+            expected_shape = values.shape
+    if values.shape != expected_shape or not np.isfinite(values).all():
+        raise ValueError(
+            f"Incomplete or misaligned {name} explanations for {policy}: "
+            f"explanation shape={values.shape}, series shape={tuple(series_shape)}, "
+            f"nonfinite values={np.count_nonzero(~np.isfinite(values))}"
+        )
+    return values
+
+
 def load_inputs(evaluator, args, policies):
     importer = evaluator.DataImporter(args.dataset)
     importer.data_path = f"{args.data_root}/{args.dataset}"
@@ -74,10 +91,7 @@ def load_inputs(evaluator, args, policies):
             if not evaluator.has_explanations(values):
                 del variants[name]
                 continue
-            values = np.asarray(values, dtype=float)
-            if values.shape != series.shape or not np.isfinite(values).all():
-                raise ValueError(f"Incomplete or misaligned {name} explanations for {policy}")
-            variants[name] = values
+            variants[name] = validate_explanation_shape(values, series.shape, name, policy)
         reference = np.asarray(references[policy], dtype=float)
         if reference.shape != series.shape or not np.isfinite(reference).all() or not np.isfinite(series).all():
             raise ValueError(f"Invalid series/reference for {policy}")
