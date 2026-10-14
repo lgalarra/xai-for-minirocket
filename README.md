@@ -130,7 +130,7 @@ python experiments/evaluate_aggregated_explanations.py \
   --output experiments/aggregated-results/evaluation-max.csv
 ```
 
-`--aggregation` accepts `max` (default), `min`, `avg`, or `sum` and combines
+`--aggregation` accepts `max`, `min`, `avg` (default), or `sum` and combines
 signed attributions pointwise. All explanation types available for every
 constituent policy are evaluated independently, including backpropagated, P2P,
 segmented, TSHAP, and LRP exports. Missing types are omitted, while partially

@@ -193,7 +193,7 @@ def parse_args(argv=None):
     parser.add_argument("classifier")
     parser.add_argument("distance", nargs="?", default="euclidean")
     parser.add_argument("data_root", nargs="?", choices=("data", "lrp-data"), default="data")
-    parser.add_argument("--aggregation", choices=("max", "min", "avg", "sum"), default="max")
+    parser.add_argument("--aggregation", choices=("max", "min", "avg", "sum"), default="avg")
     parser.add_argument("--reference-strategy", choices=("average-scores", "mean-reference", "first"), default="average-scores")
     parser.add_argument("--compare-individual", action=argparse.BooleanOptionalAction, default=True,
                         help="Compare against each constituent policy (default: enabled)")

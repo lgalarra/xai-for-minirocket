@@ -28,7 +28,7 @@ class AggregatedEvaluationTests(unittest.TestCase):
             with self.assertRaises(argparse.ArgumentTypeError):
                 parse_reference_group(value)
         args = parse_args(["double-freq-test", "predicted", "shap", "medoid+closest", "both", "RandomForestClassifier"])
-        self.assertEqual(args.aggregation, "max")
+        self.assertEqual(args.aggregation, "avg")
         self.assertTrue(args.compare_individual)
 
     def test_individual_comparison_can_be_disabled(self):
