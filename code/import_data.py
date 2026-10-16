@@ -137,7 +137,7 @@ class DataImporter:
                 for window_size_percent, stride in TSHAP_CONFIGS:
                     tshap_explanations[reference_policy][get_tshap_key(window_size_percent, stride)].append([])
 
-            for channel, df_instance_id_channel in df_instance.groupby('channel'):
+            for channel, df_instance_id_channel in df_instance.groupby('channel', sort=False):
                 channel_values = pd.read_csv(df_instance_id_channel['series'].values[0], header=None, index_col=0).iloc[:, 0]
                 instances[len(instances) - 1].append(channel_values.values)
                 for i, reference_policy in policy_indices:

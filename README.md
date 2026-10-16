@@ -177,6 +177,61 @@ can be nonfinite when the reference probability equals the instance probability.
 Model and export loading require the same dependencies as the original evaluator;
 `TSHAP_REPO_PATH` can locate its TSHAP dependency. No explanations are recomputed.
 
+### Reconstruct missing metadata
+
+`experiments/reconstruct_explanation_metadata.py` stages metadata for header-only
+`data/` exports using matching `lrp-data/` templates. It keeps the original
+`data/` backpropagated explanation files, removes LRP columns, checks all required
+file paths, and verifies sampled series/reference contents and classifier
+predictions before writing staged CSVs and `audit.json`. It never installs files
+or overwrites populated metadata. Optional explanation paths that do not exist
+are cleared and recorded. Defaults target cognitive-circles, LogisticRegression,
+SHAP, predicted/euclidean, and closest + medoid + farthest opposite-class policies.
+
+```bash
+python experiments/reconstruct_explanation_metadata.py \
+  --experiments-root /path/to/source/experiments \
+  --model-file /path/to/source/experiments/data/cognitive-circles/LogisticRegression.pkl \
+  --staging-dir reports/reconstructed-metadata
+```
+
+Use the classifier saved with the source exports. Content/prediction checks use
+seven evenly spaced instances by default (`--sample-size`); passing this check
+does not prove historical model provenance for every attribution. Staged paths
+are relative to the source experiments directory. Inspect the audit and back up
+original metadata before installing the reconstructed CSVs.
+
+### Report aggregated evaluation results
+
+```bash
+python experiments/report_aggregated_results.py
+```
+
+Reads summary CSVs from `experiments/aggregated-results/` (excluding per-instance
+and per-sample files), prints Markdown to the terminal, and writes two tables
+under `experiments/aggregated-results/tables/`: `by-dataset.md/.tex` and
+`by-dataset-classifier.md/.tex`. `report.md` and `report.tex` include both tables,
+policy/group/configuration legends, and reporting methodology. LaTeX files are
+fragments suitable for inclusion in a document; wide tables may need landscape
+pages or scaling. The Markdown report also lists input files for provenance.
+
+Defaults are `--explainer shap --attribution-type backpropagated
+--metric f_minus_f0-mean`. Use `--attribution-type p2p` (or another exported
+variant), `--metric f_minus_f0_norm-mean`, `--digits 7`, `--stdout latex`, or
+`--stdout none` as needed. `--input-dir` and `--output-dir` override directories.
+Use different output directories to preserve reports for different variants.
+
+Dataset tables average classifier scores with equal weight. Both tables keep
+Gaussian and instance-to-reference results, aggregations, and evaluation
+configurations separate. Individual policies receive dynamic P1, P2, ... columns;
+each combination gets its own group row and Combined column, so adding results
+for three or more policies needs no code change. Baselines stay within their
+original group because instance coverage and perturbation-count limits may
+differ between groups. Delta best is Combined minus the largest individual
+score at that table's level. For probability-drop metrics, larger is better.
+Missing baselines, unequal within-run coverage/count limits, nonfinite scores,
+and duplicate experiments cause errors rather than silent averaging.
+
 **MINIROCKET**
 
 ```python

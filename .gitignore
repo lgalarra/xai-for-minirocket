@@ -2,6 +2,9 @@ output/
 experiments/
 !experiments/
 experiments/*
+!experiments/report_aggregated_results.py
+!experiments/reconstruct_explanation_metadata.py
+!experiments/test_reconstruct_explanation_metadata.py
 !experiments/paper/
 experiments/paper/*
 !experiments/paper/count_backprop_perturbation_wins.py

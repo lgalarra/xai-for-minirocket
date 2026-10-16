@@ -87,6 +87,31 @@ class AggregatedEvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing"):
             load_inputs(evaluator, args, args.reference_policy)
 
+    def test_loader_preserves_multivariate_channel_order(self):
+        channels = ["X", "Y", "V", "D", "A", "VA", "DR"]
+        frame = pd.DataFrame({"instance_id": [0] * len(channels), "channel": channels,
+                              "reference_0": [f"{channel}.csv" for channel in channels]})
+
+        class Importer:
+            def __init__(self, dataset):
+                pass
+
+            def get_metadata(self, *args):
+                return frame
+
+            @staticmethod
+            def get_series_from_metadata(selected, policies):
+                self.assertEqual(selected.channel.tolist(), channels)
+                values = np.ones((1, len(channels), 2))
+                policy = policies[0]
+                return values, np.array([1]), {policy: values}, {policy: values}, {policy: [None]}, {policy: {}}, {policy: {}}
+
+        evaluator = SimpleNamespace(DataImporter=Importer,
+                                    get_reference_policy_indices=lambda policies: [(0, policies[0])],
+                                    has_explanations=lambda values: np.asarray(values, dtype=object).flat[0] is not None)
+        args = parse_args(["example", "predicted", "shap", "medoid", "both", "model"])
+        load_inputs(evaluator, args, args.reference_policy)
+
     def test_output_name_uses_experiment_arguments_and_allows_override(self):
         arguments = ["ford-a", "predicted", "shap", "medoid+closest", "both", "LogisticRegression"]
         args = parse_args(arguments + ["--aggregation", "sum"])

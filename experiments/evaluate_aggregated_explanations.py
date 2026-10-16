@@ -69,7 +69,7 @@ def load_inputs(evaluator, args, policies):
         frame = frame.drop_duplicates()
         if frame.empty or frame.duplicated(["instance_id", "channel"]).any():
             raise ValueError(f"Missing or conflicting metadata for {policy}")
-        frames[policy] = frame.sort_values(["instance_id", "channel"])
+        frames[policy] = frame.sort_values("instance_id", kind="stable")
     first = frames[policies[0]]
     keys = list(zip(first.instance_id, first.channel))
     instance_ids = sorted(first.instance_id.unique())
