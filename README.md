@@ -1,359 +1,363 @@
-[`ROCKET`](https://github.com/angus924/rocket) &middot; [**`MINIROCKET`**](https://github.com/angus924/minirocket) &middot; [`HYDRA`](https://github.com/angus924/hydra)
+# XAI for MiniROCKET
 
-# MINIROCKET
+This repository is a fork of
+[MiniROCKET](https://github.com/angus924/minirocket) on which we implemented XAI
+for MiniROCKET. It compares the proposed back-propagated explanations with
+end-to-end explanations, fixed-segment explanations (called LEFTIST in the
+paper), TSHAP, and an LRP-style back-propagation variant.
 
-***MINIROCKET: A Very Fast (Almost) Deterministic Transform for Time Series Classification***
+## Reproducing the experiments
 
-[KDD 2021](https://dl.acm.org/doi/abs/10.1145/3447548.3467231) / [arXiv:2012.08791](https://arxiv.org/abs/2012.08791) (preprint)
+### Reproducibility status
 
-> <div align="justify">Until recently, the most accurate methods for time series classification were limited by high computational complexity.  ROCKET achieves state-of-the-art accuracy with a fraction of the computational expense of most existing methods by transforming input time series using random convolutional kernels, and using the transformed features to train a linear classifier.  We reformulate ROCKET into a new method, MINIROCKET, making it up to 75 times faster on larger datasets, and making it almost deterministic (and optionally, with additional computational expense, fully deterministic), while maintaining essentially the same accuracy.  Using this method, it is possible to train and test a classifier on all of 109 datasets from the UCR archive to state-of-the-art accuracy in less than 10 minutes.  MINIROCKET is significantly faster than any other method of comparable accuracy (including ROCKET), and significantly more accurate than any other method of even roughly-similar computational expense.  As such, we suggest that MINIROCKET should now be considered and used as the default variant of ROCKET.</div>
+The experiment pipeline is reproducible from this repository, but exact
+reproduction of the numbers currently typeset in the manuscript requires the
+paper-era model configuration and the complete historical result set. There
+are two important qualifications:
 
-Please cite as:
+1. The paper states that MiniROCKET used 500 features for `ford-a` and the three
+   `starlight` one-vs-rest datasets, and 1,000 features for the other datasets.
+   The current `MINIROCKET_PARAMS_DICT` in
+   [`experiments/compute_explanations.py`](./experiments/compute_explanations.py)
+   uses a newer configuration (5,000 for `ford-a`, `starlight-c1`,
+   `starlight-c3`, and `handoutlines`; 1,000 for `starlight-c2`; 500 for
+   `cognitive-circles`; and 10,000 for `abnormal-heartbeat-c1`). The original
+   500/1,000 mapping is visible at Git revision `1b6a61ec` in
+   `predict_and_explain.py`. Use that mapping and retrain all classifiers for an
+   exact paper-era rerun; do not mix classifiers trained with different feature
+   counts.
+2. The manuscript tables were assembled before several reporting scripts were
+   generalized. Current generators can therefore report additional datasets,
+   segment counts, TSHAP settings, or slightly different aggregates. The asset
+   inventory below distinguishes exact manuscript filters from current
+   supersets.
 
-```bibtex
-@inproceedings{dempster_etal_2021,
-  author    = {Dempster, Angus and Schmidt, Daniel F and Webb, Geoffrey I},
-  title     = {{MiniRocket}: A Very Fast (Almost) Deterministic Transform for Time Series Classification},
-  booktitle = {Proceedings of the 27th ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
-  publisher = {ACM},
-  address   = {New York},
-  year      = {2021},
-  pages     = {248--257}
-}
-```
+The paper reports runs with 8 CPU cores and at least 64 GB of RAM. Runtime
+ratios are meaningful only when the target instance, explainer, and reference
+policy being compared ran on the same node.
 
-## Podcast
+### Environment and working directory
 
-Hear more about MINIROCKET and time series classification on the [Data Skeptic](https://dataskeptic.com/blog/episodes/2021/minirocket) podcast!
-
-## GPU Implementation \*NEW\*
-
-A GPU implementation of MINIROCKET, developed by Malcolm McLean and Ignacio Oguiza, is available through [`tsai`](https://github.com/timeseriesAI/tsai).  See the [examples](https://github.com/timeseriesAI/tsai/blob/main/tutorial_nbs/10_Time_Series_Classification_and_Regression_with_MiniRocket.ipynb).  Many thanks to Malcolm and Ignacio for their work in developing the GPU implementation and making it part of `tsai`.
-
-## `sktime`\* / Multivariate
-
-MINIROCKET (including a basic multivariate implementation) is also available through [`sktime`](https://github.com/alan-turing-institute/sktime).  See the [examples](https://github.com/alan-turing-institute/sktime/blob/master/examples/minirocket.ipynb).
-
-\* *for larger datasets (10,000+ training examples), the `sktime` methods should be integrated with SGD or similar as per [`softmax.py`](./code/softmax.py) (replace calls to `fit(...)` and `transform(...)` from `minirocket.py` with calls to the relevant `sktime` methods as appropriate)*
-
-## Results
-
-* UCR Archive (109 Datasets, 30 Resamples)
-  * [Mean Accuracy + Training/Test Times](./results/results_ucr109_mean.csv)
-  * [Accuracy Per Resample](./results/accuracy_ucr109_resamples.csv)
-* Scalability / Training Set Size\*
-  * [MosquitoSound](./results/time_training_MosquitoSound.csv) (139,780 &times; 3,750)
-  * [InsectSound](./results/time_training_InsectSound.csv) (25,000 &times; 600)
-  * [FruitFlies](./results/time_training_FruitFlies.csv) (17,259 &times; 5,000)
-* Scalability / Time Series Length
-  * [DucksAndGeese](./results/time_training_DucksAndGeese.csv) (50 &times; 236,784)
-
-\* *`num_training_examples` does* ***not*** *include the validation set of 2,048 training examples, but the transform time for the validation set* ***is*** *included in `time_training_seconds`*
-
-## Requirements\*
-
-* Python, NumPy, pandas
-* Numba (0.50+)
-* scikit-learn or similar
-* PyTorch or similar (for larger datasets)
-
-\* *all pre-packaged with or otherwise available through Anaconda*
-
-## Code
-
-### [`minirocket.py`](./code/minirocket.py)
-### [`minirocket_dv.py`](./code/minirocket_dv.py) (MINIROCKET<sub>DV</sub>)
-### [`softmax.py`](./code/softmax.py) (PyTorch / 10,000+ Training Examples)
-### [`minirocket_multivariate.py`](./code/minirocket_multivariate.py) (equivalent to [sktime/MiniRocketMultivariate](https://github.com/alan-turing-institute/sktime/blob/master/sktime/transformations/panel/rocket/_minirocket_multivariate.py))
-### [`minirocket_variable.py`](./code/minirocket_variable.py) (variable-length input; *experimental*)
-
-## Important Notes
-
-### Compilation
-
-The functions in [`minirocket.py`](./code/minirocket.py) and [`minirocket_dv.py`](./code/minirocket_dv.py) are compiled by Numba on import, which may take some time.  By default, the compiled functions are now cached, so this should only happen once (i.e., on the first import).
-
-### Input Data Type
-
-Input data should be of type `np.float32`.  Alternatively, you can change the Numba signatures to accept, e.g., `np.float64`.
-
-### Normalisation
-
-Unlike ROCKET, MINIROCKET does **not** require the input time series to be normalised.  (However, whether or not it makes sense to normalise the input time series may depend on your particular application.)
-
-## Examples
-
-### Aggregate precomputed explanations
-
-Run from the repository root:
+Python 3.11 is the tested environment represented by
+[`requirements-3_11.txt`](./requirements-3_11.txt). From the repository root:
 
 ```bash
-python experiments/plot_aggregated_explanations.py \
-  --dataset abnormal-heartbeat-c1 --classifier LogisticRegression --explainer shap \
-  --reference-policies opposite_class_closest_instance,opposite_class_medoid,global_centroid \
-  --aggregation avg --instances 0,22 \
-  --output-dir reports/aggregated_explanations
+python3.11 -m venv .venv311
+source .venv311/bin/activate
+python -m pip install -r requirements-3_11.txt
+export TSHAP_REPO_PATH=/path/to/tshap
 ```
 
-This reads existing `DataExporter` CSVs from
-`experiments/data/<dataset>/<classifier>/<explainer>/<label>/<metric>/`.
-Use `--export-root PATH` for a different directory containing `data/`; relative
-paths inside metadata are resolved against that directory. Defaults are
-`--label predicted`, `--metric euclidean`, and `--attribution beta`.
-Policy-specific metadata, range-sharded metadata, and legacy `metadata.csv`
-are supported. No model or explainer is executed.
+`compute_explanations.py` imports TSHAP from a separate checkout. Set
+`TSHAP_REPO_PATH` explicitly. Most legacy experiment scripts assume that the
+current directory is `experiments/` and that `../code` is importable:
 
-Aggregation (`max`, `avg`, `sum`, or `min`) operates on signed, unnormalized
-attributions at each time step independently across the selected policies.
-Each instance produces a PNG with one subplot per channel: a black series line
-over a heatmap (red positive, blue negative), with a shared symmetric color scale.
-Omit `--instances` to plot all exported instances. Missing explanations,
-conflicting metadata, mismatched series/targets, or time indices raise errors.
-Use a separate output directory for each policy group to avoid overwriting images.
-Other exported attribution types can be selected with `--attribution`, for
-example `beta_p2p`, `beta_lrp`, `beta_segmented`, or `beta_tshap_w10_s5`.
+```bash
+cd experiments
+export PYTHONPATH=../code:.
+```
 
-### Evaluate aggregated explanations
+The public benchmark loaders download/cache data through `sktime`; the
+`cognitive-circles` loader instead expects the HDF5 data under
+`data/cognitive-circles/`. All input arrays are converted to the shapes and
+types expected by the repository loaders.
 
-`experiments/evaluate_aggregated_explanations.py` reuses the original evaluator's
-perturbation and metric functions, without modifying `evaluate_explanations.py`.
-Its positional arguments are dataset, label, explainer, reference policy group,
-perturbation, classifier, optional distance, and optional data root (`data` or
-`lrp-data`). Join constituent policies with `+`:
+### Datasets, models, explainers, and references
+
+The paper uses these dataset identifiers:
+
+| Paper name | CLI identifier | Test instances | Notes |
+| --- | --- | ---: | --- |
+| abnormal-heartbeat | `abnormal-heartbeat-c1` | 82 | Binary class 1 task |
+| cognitive-circles | `cognitive-circles` | 48 | 7 channels |
+| hand-outlines | `handoutlines` | 100 | Binary class 1 task |
+| ford-a | `ford-a` | 500 | Univariate |
+| starlight | `starlight-c1`, `starlight-c2`, `starlight-c3` | 1,500 each | Three one-vs-rest tasks |
+
+The models are `LogisticRegression`, `MLPClassifier`, and
+`RandomForestClassifier`. The base explainers are `shap` (KernelSHAP),
+`stratoshap-k1` (ST-SHAP), `extreme_feature_coalitions` (EFC), and `gradients`.
+For the paper's original experiments, gradients should be restricted to
+logistic regression.
+
+The six paper reference policies are:
+
+```text
+global_centroid
+global_medoid
+opposite_class_closest_instance
+opposite_class_farthest_instance
+opposite_class_centroid
+opposite_class_medoid
+```
+
+`counterfactual` and `counterfactual_dtw` are later additions and must be
+excluded when reproducing the paper tables and figures. The paper uses
+`--labels predicted` and Euclidean reference distance.
+
+### 1. Train or load classifiers
+
+Explanation scripts load
+`experiments/data/<dataset>/<Classifier>.pkl`, training and saving a model if it
+does not already exist. Use `train_classifiers.py` to generate the classifiers:
+you can train the classifier families selected for the paper
+(`LogisticRegression`, `MLPClassifier`, and `RandomForestClassifier`) or choose
+any supported classifier configuration that better suits your experiment. For
+a controlled run, train them first and keep the accuracy/provenance report:
+
+```bash
+python train_classifiers.py \
+  --datasets abnormal-heartbeat-c1,cognitive-circles,handoutlines,ford-a,starlight-c1,starlight-c2,starlight-c3 \
+  --models LogisticRegression,MLPClassifier,RandomForestClassifier \
+  --random-state 42 --n-jobs 8 \
+  --output results/classifier-accuracies.csv
+```
+
+For exact paper values, first restore the paper's 500/1,000 feature mapping
+described above. The paper says that scikit-learn defaults were used and does
+not record random seeds; the command above is the deterministic current
+protocol, not a claim about the original seed.
+
+### 2. Compute explanation data
+
+[`experiments/compute_explanations.py`](./experiments/compute_explanations.py)
+is the primary producer. For every selected test instance it:
+
+- computes attribution `alpha` on the MiniROCKET feature vector;
+- back-propagates `alpha` through the MiniROCKET traces to observation-level
+  attribution `beta`;
+- optionally computes an end-to-end (`p2p`) explanation on the original series;
+- computes fixed-segment explanations with 10, 20, 50, and 100 segments;
+- computes TSHAP explanations for window percentages 10, 15, and 20 with
+  strides 5 and 20;
+- exports series, references, attributions, metadata, runtime, local-accuracy,
+  complexity, and Kendall statistics.
+
+The paper used the back-propagated, end-to-end, and 10-segment outputs. A
+single reproducible shard looks like this (`--end` is exclusive):
+
+```bash
+python compute_explanations.py \
+  --dump-data yes \
+  --datasets ford-a \
+  --labels predicted \
+  --models LogisticRegression \
+  --explainers shap \
+  --reference_policy opposite_class_medoid \
+  --start 0 --end 50 \
+  --metric euclidean \
+  --p2p_explanations yes \
+  --tshap_explanations yes \
+  --n-jobs 8 --parallel-backend threading
+```
+
+Repeat over all datasets, supported model/explainer pairs, six paper reference
+policies, and non-overlapping instance ranges. Use the same range boundaries on
+every run. Each shard writes:
+
+- `results/approximation-results-*.csv`, the run-level runtime/complexity data;
+- `data/<dataset>/<classifier>/<explainer>/predicted/euclidean/`, containing
+  range- and reference-policy-specific metadata plus the exported arrays.
+
+Do not run two jobs that write the same metadata filename. Give each job a
+distinct instance range and reference policy. Preserve the classifier pickles
+with the exports because evaluation always loads classifiers from
+`experiments/data/`, even when explanation metadata comes from another root.
+
+[`experiments/compute_backpropagated_explanations.py`](./experiments/compute_backpropagated_explanations.py)
+is the newer BP-vs-LRP producer. It computes the existing
+`back_propagate_attribution_2` result, an epsilon-rule LRP result, and optionally
+the end-to-end result, exporting them under `experiments/lrp-data/`:
+
+```bash
+python compute_backpropagated_explanations.py \
+  --dump-data yes --datasets ford-a --labels predicted \
+  --models LogisticRegression --explainers shap \
+  --reference_policy opposite_class_medoid \
+  --start 0 --end 50 --metric euclidean \
+  --lrp-epsilon 1e-6 --lrp-stabilizer paper --n-jobs 8
+```
+
+This LRP pipeline post-dates the current manuscript figures. Use it for the LRP
+appendix/metric comparisons produced by `experiments/paper/plot_lrp_metric_comparison.py`,
+not as a silent replacement for the paper's `beta` files.
+
+### 3. Evaluate fidelity
+
+[`experiments/evaluate_explanations.py`](./experiments/evaluate_explanations.py)
+loads precomputed explanations and measures predicted-class probability drop,
+normalized probability drop, and class-change ratio. Its positional interface
+is:
+
+```text
+evaluate_explanations.py DATASET LABEL EXPLAINER REFERENCE_POLICY PERTURBATION CLASSIFIER [DISTANCE] [DATA_ROOT]
+```
+
+For example:
+
+```bash
+python evaluate_explanations.py \
+  ford-a predicted shap opposite_class_medoid gaussian \
+  LogisticRegression euclidean data
+
+python evaluate_explanations.py \
+  ford-a predicted stratoshap-k1 opposite_class_medoid instance_to_reference \
+  LogisticRegression euclidean data
+```
+
+One invocation evaluates the full hard-coded parameter grid for the requested
+perturbation. The paper assets select these rows afterward:
+
+| Paper operation | `PERTURBATION` | Selected parameters |
+| --- | --- | --- |
+| Occlusion | `instance_to_reference` | `percentile_cut=90`, `interpolation=1.0`, `budget=1` |
+| Noise addition | `gaussian` | `percentile_cut=90`, `sigma=3.0`, `budget=10` |
+| Top-k evolution | `gaussian` | `percentile_cut` 90, 75, 50 (plotted as top 10%, 25%, 50%), `sigma=3.0`, `budget=10` |
+
+For gradients, the current reporting pipeline maps Gaussian noise to
+`gradient_gaussian_opposite`; this is a later correction. Record which regime
+is used rather than merging `gaussian` and `gradient_gaussian_opposite` rows.
+The evaluator writes `results/perturbation-results-*.csv`. Copy completed,
+non-overlapping result shards into `experiments/official-results/` before
+running paper generators.
+
+### 4. Tables and figures in the manuscript
+
+Run reporting commands from `experiments/paper/` unless noted otherwise.
+
+| Paper asset | Producer and required parameters |
+| --- | --- |
+| Table `tab:datasets` - dataset statistics | No generator exists. The table is authored in `sections/experiments.tex` from the dataset loaders. Use the paper-era train/test splits and report length, class count, channel count, and split sizes. |
+| Table `tab:overhead` - trace overhead | From `experiments/`, run `python traces_overhead.py`; then from `experiments/paper/`, run `python generate_overhead_table.py`. The first command writes `experiments/traces_overhead.tsv`; the second has no CLI parameters. The producer now appends rows whose `Instance` is `BATCH`, while the paper reports prediction on one instance; filter those rows out before the generator. Runtime values are hardware-sensitive, and the current checked-in inputs do not reproduce the typeset values exactly. |
+| Table `tab:runtime` and appendix runtime table | Input: `approximation-results-*` produced with `predicted`, all six paper references, all supported classifiers, and explainers. The paper compares `runtimes-p2p-seconds / runtimes-seconds` and `runtimes-segmented-seconds / runtimes-seconds` for 10 segments. Revision `7e598047` of `generate_speedup_table.py`, run against `experiments/paper/runtime-results-full/`, matches the original P2P/10-segment table layout. The current `python generate_speedup_table.py --data-dir ../official-results` is a generalized superset with extra segment/TSHAP settings and is not a bit-for-bit generator for the typeset table. The main paper shows only cognitive-circles, handoutlines, and starlight; the appendix shows all datasets. |
+| Appendix Table `tab:accuracy_results` | From `experiments/`, run `python generate_accuracies_table.py`. It takes no parameters and loads all seven task-specific classifier pickles. The newer `python train_classifiers.py ... --output results/classifier-accuracies.csv` also records provenance but emits CSV rather than the manuscript LaTeX. |
+| Appendix Table `tab:alpha-nonzero-ratio` | The ratios are computed from exported `alphas_instance_*.csv`, grouped by base explainer, as `count_nonzero(alpha) / len(alpha)` and then averaged. There is no dedicated table generator in the current tree; `generate_alphas_attribution.py` creates a class-wise attribution/dilation histogram, not this ratio table. |
+| Appendix Tables `tab:complexity_shap`, `tab:complexity_stratoshap-k1`, `tab:complexity_gradients`, `tab:complexity_extreme_feature_coalitions` | Set `METHOD` in `generate_complexity_table.py` to `shap`, `stratoshap-k1`, `gradients`, or `extreme_feature_coalitions`, respectively, keep `INPUT_DIR=runtime-results-full`, and run the script once per method. It reads `complexity-mean`, `complexity-p2p-mean`, and the 10-segment `complexity-segmented-mean`. |
+| Figure `fig:infidelity_r2i_reference_policy` - occlusion reference-policy boxplots | Run `python generate_bars_per_reference_policy.py`. Select `instance_to_reference`, `predicted`, `percentile_cut=90`, `interpolation=1.0`, `budget=1`; manuscript panels are `starlight` and `ford-a`, base explainer `stratoshap-k1`, all classifiers and six paper references. |
+| Figure `fig:infidelity_gaussian_reference_policy` - noise reference-policy boxplots | Same generator; select `gaussian`, `predicted`, `percentile_cut=90`, `sigma=3.0`, `budget=10`. Manuscript panels are abnormal-heartbeat/EFC and handoutlines/gradients. The second panel is captioned “cognitive-circles” in the manuscript although the included filename is `handoutlines_gradients_...`; treat the filename as authoritative. |
+| Figures `fig:fidelity_vs_top_k` and `fig:fidelity_vs_top_k_2` | In `generate_perturbation_charts.py`, set `DATA_DIR=../official-results`, `PERTURBATION_POLICY='gaussian'`, `EVOLUTION_FACTOR='percentile_cut'`, `MODEL=None`, and `EXPLANATION_METHOD='shap'` or `'gradients'`; run once for each explainer. The selected fixed values are `sigma=3.0`, `budget=10`. Copy the `ford-a`, `handoutlines`, and `cognitive-circles` PNGs. |
+| Figures `fig:backpropagated-attribution` and `fig:second_feature` - qualitative case study | The raw arrays come from `predict_and_explain.py` with `--datasets abnormal-heartbeat-c1 --labels predicted --models RandomForestClassifier --explainers stratoshap-k1`, using `opposite_class_medoid` for the first analysis and `opposite_class_farthest_instance` for the reference example. First export every test instance's `alphas_mr_explanations_*` values and aggregate positive attribution per predicted class to obtain the global top 10; `--propagate_top_features 10` alone selects features per instance, not globally. `--propagate_this_feature FEATURE_ID` exports one feature's mask, convolution, thresholded trace, beta, series, and reference. The manuscript files indicate features 88 and 209, but the exact test-instance ID and plotting code are not recorded in the repository, so the six final PNG panels cannot currently be reproduced bit-for-bit. |
+| Appendix Figures `fig:infidelity_gaussian_reference_policy_for_other_datasets_*` | Run `python generate_bars_per_reference_policy.py` with the same noise settings (`predicted`, top 10%, `sigma=3`, `budget=10`) for each dataset and base explainer. The panels cover `ford-a`, `starlight`, `abnormal-heartbeat-c1`, `handoutlines`, and `cognitive-circles` with SHAP, ST-SHAP, gradients, and EFC. One manuscript panel captioned “ST-SHAP on hand-outlines” includes `starlight_extreme_feature_coalitions_...`; this is a source-file mismatch and should be corrected when rebuilding the paper. |
+
+The newer parameterized chart driver can generate a consistent superset of the
+legacy figures:
+
+```bash
+python generate_all_official_perturbation_charts.py \
+  --data-dir ../official-results \
+  --out-dir official-perturbation-figures \
+  --evolution-factor percentile_cut \
+  --metric-kind probability \
+  --percentile-cut 90 --sigma 3
+```
+
+This driver also emits best-method and per-classifier charts, so its directory
+is not a one-to-one list of the figures included in the current manuscript.
+
+### 5. White-box shapelet classifier
+
+[`experiments/whitebox_classifier.py`](./experiments/whitebox_classifier.py) is
+a downstream interpretability experiment. It samples instances balanced by the
+MiniROCKET classifier's predicted class, computes feature-space attribution,
+ranks features per predicted class, back-propagates positive regions, clusters
+the resulting segments with DTW k-means, builds shapelet-count features, and
+selects a decision tree on a held-out validation split. It saves the selected
+tree, a PNG rendering, and an append-only TSV with accuracy and timing.
+
+The default grid can be reproduced for one dataset with:
+
+```bash
+cd ../..
+python experiments/whitebox_classifier.py \
+  --dataset-name double-freq-test \
+  --classifier-name RandomForestClassifier \
+  --classifier-explainer shap \
+  --reference-policy global_centroid \
+  --sample-size 100 \
+  --top-k 5,10 \
+  --n-clusters 10,20 \
+  --min-length 5 \
+  --threshold-scale 0.05,0.1 \
+  --max-depth 2,3,4,5 \
+  --validation-size 0.2 \
+  --random-state 0 \
+  --score-mode positive \
+  --n-jobs 8
+```
+
+Run once per dataset. Then generate the LaTeX accuracy table from the latest
+completed RF-based run in each dataset directory:
+
+```bash
+python experiments/paper/generate_whitebox_accuracy_table.py \
+  --data-root experiments/data \
+  --output experiments/paper/whitebox_accuracy_table.tex \
+  --digits 3
+```
+
+This experiment is newer than the tables and figures enumerated above.
+
+### 6. Aggregated-reference explanations
+
+[`experiments/evaluate_aggregated_explanations.py`](./experiments/evaluate_aggregated_explanations.py)
+does not recompute explanations. It aligns the exported explanations for two or
+more reference policies, aggregates signed observation attribution pointwise
+(`max`, `min`, `avg`, or `sum`), evaluates the aggregate, and optionally evaluates
+each constituent policy using paired perturbations. Example:
 
 ```bash
 python experiments/evaluate_aggregated_explanations.py \
-  double-freq-test predicted shap \
-  opposite_class_medoid+opposite_class_closest_instance \
-  both RandomForestClassifier \
-  --aggregation max --compare-individual --start 0 --end 9 \
-  --output experiments/aggregated-results/evaluation-max.csv
+  ford-a predicted shap \
+  opposite_class_medoid+opposite_class_closest_instance+opposite_class_farthest_instance \
+  both LogisticRegression euclidean data \
+  --aggregation min \
+  --reference-strategy average-scores \
+  --compare-individual \
+  --percentile-cut 90 --sigma 3 --interpolation 1 \
+  --budget 10 --seed 0
 ```
 
-`--aggregation` accepts `max`, `min`, `avg` (default), or `sum` and combines
-signed attributions pointwise. All explanation types available for every
-constituent policy are evaluated independently, including backpropagated, P2P,
-segmented, TSHAP, and LRP exports. Missing types are omitted, while partially
-missing or mismatched arrays fail validation. Individual policy names also work.
-
-Select instance IDs with `--instances 0,3,9` or an inclusive interval such as
-`--start 86 --end 99`. Omit `--end` to evaluate all remaining exported test
-instances from `--start` onward. `--end` requires `--start`; bounds must satisfy
-`0 <= start <= end` when both are supplied, and cannot be combined with `--instances`.
-Every requested ID must be available for all selected policies; missing IDs
-raise an error. Omit both selection forms to evaluate all exported instances.
-
-This script supports `gaussian`, `instance_to_reference`, or `both`, with one
-explicit configuration per invocation: `--percentile-cut 90`, `--sigma 3`,
-`--interpolation 1`, `--budget 10`, and `--seed 0` by default. The budget applies
-to Gaussian trials; deterministic instance-to-reference uses one trial.
-The existing Gaussian implementation uses clipped random interpolation toward
-the reference (sigma 3 maps to interpolation standard deviation 0.25).
-
-Both perturbations require replacement references. By default,
-`--reference-strategy average-scores` evaluates the aggregated explanation
-against each constituent reference, then averages the probability drops.
-`mean-reference` instead uses the mean reference series; `first` uses the first
-policy's reference. Individual baselines use their own references.
-Individual comparisons are enabled by default; use `--no-compare-individual`
-to evaluate only the aggregate. `--compare-individual` explicitly enables them.
-Comparisons use a shared per-instance perturbation-count limit:
-the minimum count basis among the aggregate and individual explanations,
-using the original evaluator's P2P-first rule. Percentile/positive-attribution
-selection can reduce the actual count further. Random draws are paired by seed.
-
-By default, results are saved in `experiments/aggregated-results/`, which is
-created automatically if it does not exist. Use `--output` to override the path.
-The default summary filename is
-`<dataset>__<label>__<explainer>__<policies>__<classifier>__<aggregation>__<perturbation>.csv`,
-with policies joined by `+`. Per-instance and sample files use the same stem.
-Runs with the same filename overwrite previous results; use `--output` to
-distinguish changes to instance selection, seed, or other evaluation settings.
-The output consists of a summary CSV, an `-instances.csv` file (trial- and
-reference-averaged scores), and a `-samples.csv` file retaining each target and
-trial. `f_minus_f0` is the original predicted-class probability minus its
-perturbed probability; higher values indicate larger drops. Normalized metrics
-can be nonfinite when the reference probability equals the instance probability.
-Model and export loading require the same dependencies as the original evaluator;
-`TSHAP_REPO_PATH` can locate its TSHAP dependency. No explanations are recomputed.
-
-### Reconstruct missing metadata
-
-`experiments/reconstruct_explanation_metadata.py` stages metadata for header-only
-`data/` exports using matching `lrp-data/` templates. It keeps the original
-`data/` backpropagated explanation files, removes LRP columns, checks all required
-file paths, and verifies sampled series/reference contents and classifier
-predictions before writing staged CSVs and `audit.json`. It never installs files
-or overwrites populated metadata. Optional explanation paths that do not exist
-are cleared and recorded. Defaults target cognitive-circles, LogisticRegression,
-SHAP, predicted/euclidean, and closest + medoid + farthest opposite-class policies.
+Run the same policy triple for `--aggregation min` and `--aggregation avg`, for
+every desired dataset/classifier. Results go to `experiments/aggregated-results/`
+as summary, per-instance, and per-sample CSVs. Generate the reports requested by
+the aggregation study with:
 
 ```bash
-python experiments/reconstruct_explanation_metadata.py \
-  --experiments-root /path/to/source/experiments \
-  --model-file /path/to/source/experiments/data/cognitive-circles/LogisticRegression.pkl \
-  --staging-dir reports/reconstructed-metadata
+python experiments/report_aggregated_results.py \
+  --input-dir experiments/aggregated-results \
+  --output-dir experiments/aggregated-results/tables \
+  --explainer shap \
+  --attribution-type backpropagated \
+  --metric f_minus_f0-mean \
+  --digits 5 --stdout markdown
 ```
 
-Use the classifier saved with the source exports. Content/prediction checks use
-seven evenly spaced instances by default (`--sample-size`); passing this check
-does not prove historical model provenance for every attribution. Staged paths
-are relative to the source experiments directory. Inspect the audit and back up
-original metadata before installing the reconstructed CSVs.
+The compact `aggregation-comparison.tex` and
+`aggregation-comparison-by-classifier.tex` tables use M/C/F for the medoid,
+closest, and farthest enemy baselines and compare them with the three-policy
+`min` and `avg` aggregations. These aggregation assets are post-paper analyses,
+not figures in the current manuscript.
 
-### Report aggregated evaluation results
+### Output lineage
 
-```bash
-python experiments/report_aggregated_results.py
+```text
+train_classifiers.py
+  -> experiments/data/<dataset>/<classifier>.pkl
+
+compute_explanations.py
+  -> experiments/data/... attribution arrays + metadata
+  -> experiments/results/approximation-results-*.csv
+
+compute_backpropagated_explanations.py
+  -> experiments/lrp-data/... BP2 + LRP attribution arrays + metadata
+  -> experiments/results/backpropagated-explanation-results-*.csv
+
+evaluate_explanations.py
+  -> experiments/results/perturbation-results-*.csv
+
+evaluate_aggregated_explanations.py
+  -> experiments/aggregated-results/{summary,instances,samples}.csv
+
+experiments/paper/*.py and report_aggregated_results.py
+  -> manuscript PNGs and Markdown/LaTeX tables
 ```
-
-Reads summary CSVs from `experiments/aggregated-results/` (excluding per-instance
-and per-sample files), prints Markdown to the terminal, and writes two tables
-under `experiments/aggregated-results/tables/`: `by-dataset.md/.tex` and
-`by-dataset-classifier.md/.tex`. `report.md` and `report.tex` include both tables,
-policy/group/configuration legends, and reporting methodology. LaTeX files are
-fragments suitable for inclusion in a document; wide tables may need landscape
-pages or scaling. The Markdown report also lists input files for provenance.
-
-The script also writes `aggregation-comparison.tex`, a compact dataset-level
-table with O for occlusion (`instance_to_reference`) and N for noise addition
-(`gaussian`). Its M, C, and F columns are the medoid, closest-instance, and
-farthest-instance baselines from the three-policy `min` run; `min` and `avg` are
-the corresponding three-policy combined scores. Scores are equal-weight means
-over classifier coverage shared by both aggregations, and unavailable
-combinations are shown as dashes. The `starlight-c1`, `starlight-c2`,
-and `starlight-c3` scores are first averaged per dataset and then reported as a
-single, equal-weight `starlight` result.
-The dataset cells use `\multirow`, and `booktabs` rules separate dataset blocks,
-so documents including this fragment must load the LaTeX `multirow` and
-`booktabs` packages. Scores in this compact table use three decimal places;
-absolute values below 0.001 are displayed as `< 0.001`. Three-point spacing
-between all columns and suppressed outer padding keep the table compact enough
-for a two-column document. The best score in each row is bold; exact ties are
-all bolded.
-
-`aggregation-comparison-by-classifier.tex` provides the same comparison with a
-classifier column. Logistic regression, MLP, and random forest are abbreviated
-as LR, MLP, and RF. Starlight scores remain equal-weight averages across C1--C3,
-computed separately for each classifier. This appendix-oriented table uses
-standard LaTeX intercolumn spacing for a full-width, two-column float. Classifier
-labels use `\multirow` across their O and N rows, with partial `\cmidrule`
-separators that leave the dataset column open.
-
-Defaults are `--explainer shap --attribution-type backpropagated
---metric f_minus_f0-mean`. Use `--attribution-type p2p` (or another exported
-variant), `--metric f_minus_f0_norm-mean`, `--digits 7`, `--stdout latex`, or
-`--stdout none` as needed. `--input-dir` and `--output-dir` override directories.
-Use different output directories to preserve reports for different variants.
-
-Dataset tables average classifier scores with equal weight. Both tables keep
-Gaussian and instance-to-reference results, aggregations, and evaluation
-configurations separate. Individual policies receive dynamic P1, P2, ... columns;
-each combination gets its own group row and Combined column, so adding results
-for three or more policies needs no code change. Baselines stay within their
-original group because instance coverage and perturbation-count limits may
-differ between groups. Delta best is Combined minus the largest individual
-score at that table's level. For probability-drop metrics, larger is better.
-Missing baselines, unequal within-run coverage/count limits, nonfinite scores,
-and duplicate experiments cause errors rather than silent averaging.
-
-**MINIROCKET**
-
-```python
-from minirocket import fit, transform
-from sklearn.linear_model import RidgeClassifierCV
-
-[...] # load data, etc.
-
-# note:
-# * input time series do *not* need to be normalised
-# * input data should be np.float32
-
-parameters = fit(X_training)
-
-X_training_transform = transform(X_training, parameters)
-
-classifier = RidgeClassifierCV(alphas = np.logspace(-3, 3, 10), normalize = True)
-classifier.fit(X_training_transform, Y_training)
-
-X_test_transform = transform(X_test, parameters)
-
-predictions = classifier.predict(X_test_transform)
-```
-
-**MINIROCKET<sub>DV</sub>**
-
-```python
-from minirocket_dv import fit_transform
-from minirocket import transform
-from sklearn.linear_model import RidgeClassifierCV
-
-[...] # load data, etc.
-
-# note:
-# * input time series do *not* need to be normalised
-# * input data should be np.float32
-
-parameters, X_training_transform = fit_transform(X_training)
-
-classifier = RidgeClassifierCV(alphas = np.logspace(-3, 3, 10), normalize = True)
-classifier.fit(X_training_transform, Y_training)
-
-X_test_transform = transform(X_test, parameters)
-
-predictions = classifier.predict(X_test_transform)
-```
-
-**PyTorch / 10,000+ Training Examples**
-
-```python
-from softmax import train, predict
-
-model_etc = train("InsectSound_TRAIN_shuffled.csv", num_classes = 10, training_size = 22952)
-# note: 22,952 = 25,000 - 2,048 (validation)
-
-predictions, accuracy = predict("InsectSound_TEST.csv", *model_etc)
-```
-
-**Variable-Length Input** (*Experimental*)
-
-```python
-from minirocket_variable import fit, transform, filter_by_length
-from sklearn.linear_model import RidgeClassifierCV
-
-[...] # load data, etc.
-
-# note:
-# * input time series do *not* need to be normalised
-# * input data should be np.float32
-
-# special instructions for variable-length input:
-# * concatenate variable-length input time series into a single 1d numpy array
-# * provide another 1d array with the lengths of each of the input time series
-# * input data should be np.float32 (as above); lengths should be np.int32
-
-# optionally, use a different reference length when setting dilation (default is
-# the length of the longest time series), and use fit(...) with time series of
-# at least this length, e.g.:
-# >>> reference_length = X_training_lengths.mean()
-# >>> X_training_1d_filtered, X_training_lengths_filtered = \
-# >>> filter_by_length(X_training_1d, X_training_lengths, reference_length)
-# >>> parameters = fit(X_training_1d_filtered, X_training_lengths_filtered, reference_length)
-
-parameters = fit(X_training_1d, X_training_lengths)
-
-X_training_transform = transform(X_training_1d, X_training_lengths, parameters)
-
-classifier = RidgeClassifierCV(alphas = np.logspace(-3, 3, 10), normalize = True)
-classifier.fit(X_training_transform, Y_training)
-
-X_test_transform = transform(X_test_1d, X_test_lengths, parameters)
-
-predictions = classifier.predict(X_test_transform)
-```
-
-## Acknowledgements
-
-We thank Professor Eamonn Keogh and all the people who have contributed to the UCR time series classification archive.  Figures in our paper showing mean ranks were produced using code from [Ismail Fawaz et al. (2019)](https://github.com/hfawaz/cd-diagram).
-
-<div align="center">:rocket:<sub>:rocket:</sub><sub><sub>:rocket:</sub></sub></div>

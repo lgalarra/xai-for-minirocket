@@ -13,12 +13,8 @@ DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
 GENERATOR = SCRIPT_DIR / "generate_official_perturbation_charts.py"
 DEFAULT_PERTURBATION_POLICIES = (
     "gaussian",
-    "gaussian_bottom",
     "instance_to_reference",
-    "instance_to_reference_bottom_unsigned",
     "reference_to_instance",
-    "reference_to_instance_random",
-    "reference_to_instance_random_no_positive",
 )
 GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
     "gaussian": "gradient_gaussian_opposite",
@@ -32,7 +28,6 @@ DEFAULT_EVOLUTION_FACTORS = ("percentile_cut",)
 DEFAULT_METRIC_KINDS = ("probability",)
 DEFAULT_PER_REFERENCE_POLICIES = (
     "gradient_gaussian_opposite",
-    "gradient_gaussian_opposite_bottom",
 )
 
 
@@ -208,6 +203,7 @@ def build_command(
         reference_policy,
         "--best-method-random-regime",
         args.best_method_random_regime,
+        "--best-methods-only",
         "--percentile-cut",
         str(args.percentile_cut),
         "--sigma",

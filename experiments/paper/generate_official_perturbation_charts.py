@@ -133,6 +133,11 @@ def parse_args():
             "*_random_no_positive policies. Default: random_no_positive."
         ),
     )
+    parser.add_argument(
+        "--best-methods-only",
+        action="store_true",
+        help="Write only best-method charts and skip all-method charts.",
+    )
     return parser.parse_args()
 
 
@@ -883,9 +888,16 @@ def main():
     print(f"Plotting {len(metrics)} metrics: {', '.join(metric_label(m) for m in metrics)}")
 
     selected = {}
-    for dataset, g_ds in agg.groupby("dataset"):
-        filename = output_name(dataset, args)
-        plot_dataset(g_ds, dataset, metrics, args, args.out_dir / "all_methods" / filename)
+    if not args.best_methods_only:
+        for dataset, g_ds in agg.groupby("dataset"):
+            filename = output_name(dataset, args)
+            plot_dataset(
+                g_ds,
+                dataset,
+                metrics,
+                args,
+                args.out_dir / "all_methods" / filename,
+            )
 
     write_best_methods_charts(agg, metrics, args, average_policy_data, selected)
     write_per_classifier_best_methods_charts(
