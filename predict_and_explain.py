@@ -27,6 +27,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
 import importlib
+import re
+from typing import NamedTuple, Optional
 
 import minirocket_multivariate_variable as mmv
 
@@ -44,6 +46,84 @@ from sklearn.metrics import accuracy_score, r2_score
 from reference import REFERENCE_POLICIES
 
 import argparse
+
+
+AGGREGATIONS = {"max": np.max, "min": np.min, "avg": np.mean, "sum": np.sum}
+REFERENCE_POLICY_ALIASES = {
+    "opposite_class_further_instance": "opposite_class_farthest_instance",
+}
+
+
+class ReferencePolicySpecification(NamedTuple):
+    name: str
+    policies: tuple
+    aggregation: Optional[str] = None
+
+
+def parse_reference_policy(value: str) -> ReferencePolicySpecification:
+    value = value.strip()
+    match = re.fullmatch(r"(max|min|avg|sum)\(([^()]*)\)", value)
+    if match:
+        aggregation, policy_group = match.groups()
+        policies = tuple(policy.strip() for policy in policy_group.split("+"))
+        if len(policies) < 2 or not all(policies) or len(set(policies)) != len(policies):
+            raise argparse.ArgumentTypeError(
+                "Aggregated reference policies must contain at least two distinct policies separated by '+'."
+            )
+    else:
+        aggregation = None
+        policies = (value,)
+
+    policies = tuple(REFERENCE_POLICY_ALIASES.get(policy, policy) for policy in policies)
+    unknown = [policy for policy in policies if policy not in REFERENCE_POLICIES]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"Unknown reference policies: {', '.join(unknown)}")
+    if len(set(policies)) != len(policies):
+        raise argparse.ArgumentTypeError("Reference policies must be distinct after resolving aliases.")
+
+    name = policies[0] if aggregation is None else f"{aggregation}({'+'.join(policies)})"
+    return ReferencePolicySpecification(name, policies, aggregation)
+
+
+def parse_reference_policies(value: str):
+    return [parse_reference_policy(item) for item in value.split(',')]
+
+
+def aggregate_explanations(explanations, specification: ReferencePolicySpecification) -> Explanation:
+    if specification.aggregation is None:
+        if len(explanations) != 1:
+            raise ValueError("A non-aggregated policy requires exactly one explanation.")
+        return explanations[0]
+    if len(explanations) != len(specification.policies):
+        raise ValueError("Each constituent reference policy must have one explanation.")
+
+    explanation_dicts = [explanation.explanation for explanation in explanations]
+    result = copy.deepcopy(explanation_dicts[0])
+    for key in ("coefficients",):
+        arrays = [np.asarray(explanation[key], dtype=float) for explanation in explanation_dicts]
+        if any(array.shape != arrays[0].shape for array in arrays):
+            raise ValueError(f"Cannot aggregate differently shaped {key} arrays.")
+        if any(not np.isfinite(array).all() for array in arrays):
+            raise ValueError(f"Cannot aggregate non-finite {key} arrays.")
+        result[key] = AGGREGATIONS[specification.aggregation](np.stack(arrays), axis=0)
+
+    for trace_index in range(len(result["reference_traces"])):
+        reference_convolutions = [
+            np.asarray(explanation["reference_traces"][trace_index]["conv_sum"], dtype=float)
+            for explanation in explanation_dicts
+        ]
+        if any(values.shape != reference_convolutions[0].shape for values in reference_convolutions):
+            raise ValueError("Cannot aggregate differently shaped reference convolution arrays.")
+        result["reference_traces"][trace_index]["conv_sum"] = AGGREGATIONS[specification.aggregation](
+            np.stack(reference_convolutions), axis=0
+        )
+
+    result["reference_policy"] = specification.name
+    result["reference_policies"] = list(specification.policies)
+    result["aggregation"] = specification.aggregation
+    result["time_elapsed"] = sum(explanation["time_elapsed"] for explanation in explanation_dicts)
+    result["selected_features"] = None
+    return Explanation(result)
 
 
 def parse_args():
@@ -106,9 +186,9 @@ def parse_args():
     parser.add_argument(
         "--reference_policy",
         "-r",
-        type=lambda s: s.split(','),
+        type=parse_reference_policies,
         default=None,
-        help="The used reference policy: 'opposite_class_closest_instance', 'opposite_class_medoid', 'opposite_class_centroid', 'global_medoid', 'global_centroid', 'opposite_class_farthest_instance', 'counterfactual', 'counterfactual_dtw'"
+        help="Comma-separated reference policies, optionally aggregated as max(policy1+policy2), min(...), avg(...), or sum(...)."
     )
 
     parser.add_argument(
@@ -258,7 +338,7 @@ def compute_explanations(x_target, y_target, classifier: MinirocketClassifier, e
                                                    reference_policy=reference_policy,
                                                    top_alpha=top_alpha,
                                                    top_alpha_that_change_class=top_alpha_that_change_class,
-                                                   feature_to_backpropagate=propagate_this_feature))[0]
+                                                   feature_to_backpropagate=feature_to_backpropagate))[0]
 
     ## Point to point explanation
     reference = explanation.get_reference()
@@ -320,12 +400,39 @@ def export(idx: int, explanation: Explanation, classifier: MinirocketClassifier,
                                                 f'-feature-{propagate_this_feature}.csv')
 
     pd.DataFrame(betas).T.to_csv(betas_filename, header=False)
-    alphas = explanation.explanation["minirocket_coefficients"]
-    pd.DataFrame(alphas).to_csv(f"{base_path}/alphas_mr_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
     instance = explanation.explanation["instance"]
     pd.DataFrame(instance).T.to_csv(f"{base_path}/instance_{idx}.csv", header=False)
     instance_transformed = explanation.explanation["instance_transformed"]
     pd.DataFrame(instance_transformed).to_csv(f"{base_path}/mr_instance_{idx}.csv", header=False)
+
+    mean_instance_convolution = np.mean([
+        np.asarray(trace['conv_sum'], dtype=float) for trace in explanation.explanation['traces']
+    ], axis=0)
+    mean_reference_convolution = np.mean([
+        np.asarray(trace['conv_sum'], dtype=float) for trace in explanation.explanation['reference_traces']
+    ], axis=0)
+    pd.DataFrame(mean_instance_convolution).to_csv(
+        f"{base_path}/convolved_instance_{idx}_mean_across_features.csv", header=False
+    )
+    pd.DataFrame(mean_reference_convolution).to_csv(
+        f"{base_path}/convolved_reference_{idx}_reference_policy_{reference_policy}_mean_across_features.csv",
+        header=False
+    )
+
+    if "aggregation" in explanation.explanation:
+        metadata_dict = {
+            'instance_prediction': int(explanation.explanation['instance_prediction']),
+            'instance_predicted_probability': float(explanation.explanation['instance_logit']),
+            'instance_label': int(explanation.explanation['instance_label']),
+            'aggregation': explanation.explanation['aggregation'],
+            'reference_policies': explanation.explanation['reference_policies'],
+        }
+        with open(f"{base_path}/metadata_ref_policy_{reference_policy}_instance_{idx}.json", "w") as fp:
+            json.dump(metadata_dict, fp)
+        return
+
+    alphas = explanation.explanation["minirocket_coefficients"]
+    pd.DataFrame(alphas).to_csv(f"{base_path}/alphas_mr_explanations_ref_policy_{reference_policy}_instance_{idx}.csv", header=False)
     reference = explanation.explanation["reference"]
     pd.DataFrame(reference).T.to_csv(f"{base_path}/reference_ref_policy_{reference_policy}_for_instance_{idx}.csv", header=False)
     reference_transformed = explanation.explanation["reference_transformed"]
@@ -422,7 +529,7 @@ if __name__ == '__main__':
     if reference_policy is not None:
         studied_reference_policies = reference_policy
     else:
-        studied_reference_policies = REFERENCE_POLICIES
+        studied_reference_policies = [parse_reference_policy(policy) for policy in REFERENCE_POLICIES]
 
     MinirocketExplainer.REFERENCE_DISTANCE = distance_metric
 
@@ -439,18 +546,17 @@ if __name__ == '__main__':
                     configuration = (dataset_name, mr_classifier_name, explainer_method, label)
                     print(f"Evaluating configuration {configuration}")
 
-                    for reference_policy in studied_reference_policies:
-                        for idx in range(start, end_dataset):
-                            print(f'Instance {idx} out of {end_dataset}')
-                            measures_for_instance = {}
-                            explanations_for_instance = {}
-                            x_target = X_test[idx]
-                            y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
-                            for reference_policy in studied_reference_policies:
-                                explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
-                                explanation, explanation_p2p, segmented_explanation = (
+                    for idx in range(start, end_dataset):
+                        print(f'Instance {idx} out of {end_dataset}')
+                        x_target = X_test[idx]
+                        y_target = y_test[idx] if label == 'training' else y_test_pred[idx]
+                        explainer = classifier.get_explainer(X=X_train, y=classifier.predict(X_train))
+                        for specification in studied_reference_policies:
+                            explanations = []
+                            for constituent_policy in specification.policies:
+                                explanation, _, _ = (
                                     compute_explanations(x_target, y_target, classifier, explainer, configuration,
-                                                         reference_policy,
+                                                         constituent_policy,
                                                          compute_p2p_explanations=False,
                                                          compute_segmented_explanations=False,
                                                          top_alpha=topk,
@@ -458,11 +564,13 @@ if __name__ == '__main__':
                                                          feature_to_backpropagate=propagate_this_feature
                                                          )
                                 )
-                                instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
-                                os.makedirs(instance_output_path, exist_ok=True)
-                                export(idx, explanation, classifier, instance_output_path,
-                                       output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature,
-                                       should_export_data=should_export_data)
+                                explanations.append(explanation)
+                            explanation = aggregate_explanations(explanations, specification)
+                            instance_output_path = output_path + f'/{dataset_name}/{mr_classifier_name}/{explainer_method}/{label}/{idx}'
+                            os.makedirs(instance_output_path, exist_ok=True)
+                            export(idx, explanation, classifier, instance_output_path,
+                                   output_path + f'/{dataset_name}/{mr_classifier_name}', propagate_this_feature,
+                                   should_export_data=should_export_data)
 
 
 

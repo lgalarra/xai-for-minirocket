@@ -297,16 +297,21 @@
 
   function findBaseBetaFile(files, cfg, instanceId) {
     if (!files || !cfg || instanceId == null) return null;
-    const prefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
-    return (files || []).find(f => String(f || '').startsWith(prefix) && /\.csv$/i.test(String(f || '')) && !isFeatureBetaFile(f)) || null;
+    for (const policy of referencePolicyVariants(cfg.refPolicy)) {
+      const prefix = `betas_backpropagated_explanations_ref_policy_${policy}_instance_${instanceId}`;
+      const file = (files || []).find(f => String(f || '').startsWith(prefix) && /\.csv$/i.test(String(f || '')) && !isFeatureBetaFile(f));
+      if (file) return file;
+    }
+    return null;
   }
 
   function findFeatureBetaFiles(files, cfg, instanceId) {
     if (!files || !cfg || instanceId == null) return [];
-    const prefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
+    const prefixes = referencePolicyVariants(cfg.refPolicy)
+      .map(policy => `betas_backpropagated_explanations_ref_policy_${policy}_instance_${instanceId}`);
     return (files || []).filter(f => {
       const s = String(f || '');
-      return s.startsWith(prefix) && /\.csv$/i.test(s) && isFeatureBetaFile(s);
+      return prefixes.some(prefix => s.startsWith(prefix)) && /\.csv$/i.test(s) && isFeatureBetaFile(s);
     });
   }
 
@@ -967,6 +972,81 @@
     return map;
   }
 
+  function parseAggregatedReferencePolicy(policy) {
+    const match = String(policy || '').trim().match(/^(max|min|avg|sum)\(([^()]*)\)$/i);
+    if (!match) return null;
+    const policies = match[2].split('+').map(value => value.trim()).filter(Boolean);
+    if (policies.length < 2 || new Set(policies).size !== policies.length) return null;
+    return { aggregation: match[1].toLowerCase(), policies };
+  }
+
+  function referencePolicyAliases(policy) {
+    const value = String(policy || '').trim();
+    if (value === 'opposite_class_further_instance') {
+      return [value, 'opposite_class_farthest_instance'];
+    }
+    if (value === 'opposite_class_farthest_instance') {
+      return [value, 'opposite_class_further_instance'];
+    }
+    return [value];
+  }
+
+  function referencePolicyVariants(policy) {
+    const value = String(policy || '').trim();
+    const aggregated = parseAggregatedReferencePolicy(value);
+    if (!aggregated) return referencePolicyAliases(value);
+    const combinations = aggregated.policies.reduce((variants, constituent) => {
+      const aliases = referencePolicyAliases(constituent);
+      return variants.flatMap(prefix => aliases.map(alias => [...prefix, alias]));
+    }, [[]]);
+    return combinations.map(policies => `${aggregated.aggregation}(${policies.join('+')})`);
+  }
+
+  function findListedFile(files, expected) {
+    const expectedLower = String(expected || '').toLowerCase();
+    return (files || []).find(file => String(file || '').toLowerCase() === expectedLower) || null;
+  }
+
+  function findReferenceConvolutionFile(files, policy, instanceId, featureIdx) {
+    const suffix = featureIdx == null
+      ? 'mean_across_features.csv'
+      : `feature_${featureIdx}.csv`;
+    for (const variant of referencePolicyVariants(policy)) {
+      const filename = `convolved_reference_${instanceId}_reference_policy_${variant}_${suffix}`;
+      const listed = findListedFile(files, filename);
+      if (listed) return listed;
+    }
+    return null;
+  }
+
+  function resolveAlphaFiles(files, policy, instanceId) {
+    const aggregated = parseAggregatedReferencePolicy(policy);
+    if (aggregated) {
+      for (const constituent of aggregated.policies) {
+        for (const alias of referencePolicyAliases(constituent)) {
+          const filename = `alphas_mr_explanations_ref_policy_${alias}_instance_${instanceId}.csv`;
+          const listed = findListedFile(files, filename);
+          if (listed) return { files: [listed] };
+        }
+      }
+      return null;
+    }
+    for (const alias of referencePolicyAliases(policy)) {
+      const filename = `alphas_mr_explanations_ref_policy_${alias}_instance_${instanceId}.csv`;
+      const listed = findListedFile(files, filename);
+      if (listed) return { files: [listed] };
+    }
+    return null;
+  }
+
+  async function peLoadAlphaMap(base, files, policy, instanceId) {
+    const source = resolveAlphaFiles(files, policy, instanceId);
+    if (!source) {
+      throw new Error(`No alpha files found for reference policy ${policy}, instance ${instanceId}.`);
+    }
+    return parseAlphaCSV(await peFetchText(`${base}/${source.files[0]}`));
+  }
+
   function parseEmbeddingCSV(text) {
     const rows = d3.csvParseRows(text || ""),
       map = new Map();
@@ -1261,6 +1341,7 @@
       updateFeatureHeaderWithReference(featureByIdx(prevSelected));
     } else if (!preserveSelection) {
       state.selectedFeatureIdx = null;
+      if (el.featureIdx) el.featureIdx.value = '';
     }
     renderFeatureCharts();
     if (el.peSummaryBtn) el.peSummaryBtn.disabled = false;
@@ -2782,7 +2863,7 @@
     // Optional: load convolution files computed by the Python pipeline (when available).
     let fromFile = null;
     let referenceFromFile = null;
-    const featureIdx = (el.featureIdx ? (+el.featureIdx.value) : 0);
+    const featureIdx = state.selectedFeatureIdx != null ? Math.round(+state.selectedFeatureIdx) : null;
 
     if (peState && peState.lastRun && peState.instanceId != null) {
       const cfg = peState.lastRun;
@@ -2793,11 +2874,13 @@
         cfg.label,
         peState.instanceId,
         cfg.refPolicy,
-        featureIdx
+        featureIdx == null ? 'mean' : featureIdx
       ].join(':');
 
-      const referenceConvFile = `convolved_reference_${peState.instanceId}_reference_policy_${cfg.refPolicy}_feature_${featureIdx}.csv`;
-      const hasReferenceConv = (peState.fileList || []).some(file => String(file).toLowerCase() === referenceConvFile.toLowerCase());
+      const referenceConvFile = findReferenceConvolutionFile(
+        peState.fileList, cfg.refPolicy, peState.instanceId, featureIdx
+      );
+      const hasReferenceConv = referenceConvFile !== null;
       if (el.showReferenceConv) el.showReferenceConv.disabled = !hasReferenceConv;
 
       // Only trigger a (cached) load when the feature changes.
@@ -4285,10 +4368,7 @@
 
   function peHasLoadableReferenceArtifacts(files, cfg, instanceId) {
     if (!cfg || instanceId == null) return false;
-    const safePolicy = String(cfg.refPolicy || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const safeId = String(instanceId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const alphaRx = new RegExp(`^alphas_mr_explanations_ref_policy_${safePolicy}_instance_${safeId}\\.csv$`, 'i');
-    return (files || []).some(f => alphaRx.test(String(f || '')));
+    return resolveAlphaFiles(files, cfg.refPolicy, instanceId) !== null;
   }
 
   async function peFilterInstanceIdsByReference(cfg, ids, baseDir) {
@@ -4522,11 +4602,9 @@
       const m = f.match(/\_feature\_(\d+)\.csv$/);
       return m ? parseInt(m[1], 10) : null;
     }).filter(Number.isFinite));
-    const betasPrefix = `betas_backpropagated_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}`;
     const betasFile = findBaseBetaFile(files, cfg, instanceId);
     const instanceFile = `instance_${instanceId}.csv`;
     const refFile = `reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
-    const alphasFile = `alphas_mr_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}.csv`;
     const mrExact = `mr_instance_${instanceId}.csv`;
     const mrRefExact = `mr_reference_ref_policy_${cfg.refPolicy}_for_instance_${instanceId}.csv`;
     const mrCandidates = (files || []).filter(f => {
@@ -4548,16 +4626,16 @@
     const mrRefFile = mrRefCandidates.length ? mrRefCandidates[0] : null;
     const seriesUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${instanceFile}`;
     const refUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${refFile}`;
-    const alphaUrl = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${alphasFile}`;
+    const alphaSource = resolveAlphaFiles(files, cfg.refPolicy, instanceId);
+    const alphaUrls = alphaSource
+      ? alphaSource.files.map(file => `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${file}`)
+      : [];
     const betaUrl = betasFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${betasFile}` : null;
     const mrUrl = mrFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrFile}` : null;
     const mrRefUrl = mrRefFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${mrRefFile}` : null;
 
     // Optional per-instance metadata file: metadata_ref_policy_<policy>_instance_<id>.json
-    const metaJsonExact = `metadata_ref_policy_${cfg.refPolicy}_instance_${instanceId}.json`;
-    const metaJsonFile = (files || []).find(f => String(f).toLowerCase() === metaJsonExact.toLowerCase())
-      || (files || []).find(f => String(f).toLowerCase().startsWith(`metadata_ref_policy_${String(cfg.refPolicy).toLowerCase()}_instance_`) && String(f).toLowerCase().endsWith(`${instanceId}.json`))
-      || (files || []).find(f => String(f).toLowerCase().startsWith('metadata_ref_policy_') && String(f).toLowerCase().includes(`instance_${instanceId}.json`));
+    const metaJsonFile = findMetadataFileForPolicy(files, cfg, instanceId);
     const metaJsonUrl = metaJsonFile ? `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${metaJsonFile}` : null;
     // Log which data files are being rendered for this instance (clickable URLs in console)
     try {
@@ -4574,7 +4652,7 @@
       console.groupCollapsed(`[peLoadInstance] rendering files · instance ${instanceId}`);
       console.log('folder:', folder);
       console.log('series:', toLink(seriesUrl));
-      console.log('alphas:', toLink(alphaUrl));
+      console.log('alphas:', alphaUrls.length ? alphaUrls.map(toLink) : '(missing)');
       console.log('embeddings:', mrUrl ? toLink(mrUrl) : '(missing)');
       console.log('reference embeddings:', mrRefUrl ? toLink(mrRefUrl) : '(missing)');
       console.log('reference:', toLink(refUrl));
@@ -4592,9 +4670,9 @@
       peFade(convSvg, 0, 0.12)
     ]);
     const metaJsonPromise = metaJsonUrl ? peFetchJSON(metaJsonUrl).catch(() => null) : Promise.resolve(null);
-    const [seriesText, alphaText, mrText, mrRefText, instMetaJson] = await Promise.all([
+    const [seriesText, alphaMap, mrText, mrRefText, instMetaJson] = await Promise.all([
       peFetchText(seriesUrl),
-      peFetchText(alphaUrl),
+      peLoadAlphaMap(`/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`, files, cfg.refPolicy, instanceId),
       mrUrl ? peFetchText(mrUrl) : Promise.resolve(''),
       mrRefUrl ? peFetchText(mrRefUrl).catch(err => {
         console.warn('Could not load reference embeddings:', err);
@@ -4621,7 +4699,6 @@
     // console.log('meta:', meta);
 
 
-    const alphaMap = parseAlphaCSV(alphaText);
     const embMap = parseEmbeddingCSV(mrText);
     const refEmbMap = parseEmbeddingCSV(mrRefText);
     state.referenceEmbeddingMap = refEmbMap;
@@ -4701,12 +4778,12 @@
   }
 
   function findMetadataFileForPolicy(files, cfg, instanceId) {
-    const exact = `metadata_ref_policy_${cfg.refPolicy}_instance_${instanceId}.json`;
-    const exactLower = exact.toLowerCase();
-    const policyLower = String(cfg.refPolicy || '').toLowerCase();
-    return (files || []).find(f => String(f).toLowerCase() === exactLower)
-      || (files || []).find(f => String(f).toLowerCase().startsWith(`metadata_ref_policy_${policyLower}_instance_`) && String(f).toLowerCase().endsWith(`${instanceId}.json`))
-      || null;
+    for (const policy of referencePolicyVariants(cfg.refPolicy)) {
+      const exact = `metadata_ref_policy_${policy}_instance_${instanceId}.json`;
+      const listed = findListedFile(files, exact);
+      if (listed) return listed;
+    }
+    return null;
   }
 
   async function peReloadReferenceForCurrentInstance(nextCfg, opts = {}) {
@@ -4722,7 +4799,6 @@
 
     const base = `/output/${nextCfg.dataset}/${nextCfg.model}/${nextCfg.explainer}/${nextCfg.label}/${instanceId}`;
     const refFile = `reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
-    const alphasFile = `alphas_mr_explanations_ref_policy_${nextCfg.refPolicy}_instance_${instanceId}.csv`;
     const mrRefExact = `mr_reference_ref_policy_${nextCfg.refPolicy}_for_instance_${instanceId}.csv`;
     const mrRefFile = (files || []).find(f => String(f).toLowerCase() === mrRefExact.toLowerCase())
       || (files || []).find(f => {
@@ -4737,8 +4813,8 @@
     const metaJsonFile = findMetadataFileForPolicy(files, nextCfg, instanceId);
     const betasFile = findBaseBetaFile(files, nextCfg, instanceId);
 
-    const [alphaText, refText, mrRefText, instMetaJson, betaText] = await Promise.all([
-      peFetchText(`${base}/${alphasFile}`),
+    const [alphaMap, refText, mrRefText, instMetaJson, betaText] = await Promise.all([
+      peLoadAlphaMap(base, files, nextCfg.refPolicy, instanceId),
       peFetchText(`${base}/${refFile}`).catch(err => {
         console.warn('No reference file:', err);
         return null;
@@ -4761,7 +4837,6 @@
       return v && Number.isFinite(+v.featureId) ? Math.round(+v.featureId) : null;
     })();
 
-    const alphaMap = parseAlphaCSV(alphaText);
     const embMap = currentEmbeddingMap();
     const refEmbMap = parseEmbeddingCSV(mrRefText);
     state.referenceEmbeddingMap = refEmbMap;
@@ -4822,7 +4897,7 @@
 
   async function peLoadConvForFeature(featureIdx) {
     if (!peState.lastRun || peState.instanceId == null) return null;
-    if (peState.availableConvFeatures && !peState.availableConvFeatures.has(featureIdx)) return null;
+    if (featureIdx != null && peState.availableConvFeatures && !peState.availableConvFeatures.has(featureIdx)) return null;
     const cfg = peState.lastRun;
     const instanceId = peState.instanceId;
     const key = [
@@ -4832,14 +4907,17 @@
       cfg.label,
       instanceId,
       cfg.refPolicy,
-      featureIdx
+      featureIdx == null ? 'mean' : featureIdx
     ].join(':');
     if (peState.convCache.has(key)) return peState.convCache.get(key);
     const base = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
-    const convUrl = `${base}/convolved_instance_${instanceId}_feature_${featureIdx}.csv`;
-    const referenceConvFile = `convolved_reference_${instanceId}_reference_policy_${cfg.refPolicy}_feature_${featureIdx}.csv`;
-    const hasReferenceConv = (peState.fileList || []).some(file => String(file).toLowerCase() === referenceConvFile.toLowerCase());
-    const referenceConvUrl = hasReferenceConv ? `${base}/${referenceConvFile}` : null;
+    const convFile = featureIdx == null
+      ? `convolved_instance_${instanceId}_mean_across_features.csv`
+      : `convolved_instance_${instanceId}_feature_${featureIdx}.csv`;
+    if (!findListedFile(peState.fileList, convFile)) return null;
+    const convUrl = `${base}/${convFile}`;
+    const referenceConvFile = findReferenceConvolutionFile(peState.fileList, cfg.refPolicy, instanceId, featureIdx);
+    const referenceConvUrl = referenceConvFile ? `${base}/${referenceConvFile}` : null;
     try {
       try {
         const toLink = (u) => {
@@ -4851,7 +4929,7 @@
             return u;
           }
         };
-        console.log(`[peLoadConvForFeature] rendering files · instance ${instanceId} · feature ${featureIdx}`, {
+        console.log(`[peLoadConvForFeature] rendering files · instance ${instanceId} · feature ${featureIdx == null ? 'mean' : featureIdx}`, {
           convUrl: toLink(convUrl)
         });
       } catch (e) { }
@@ -5423,10 +5501,10 @@
     if (state.summaryCache && state.summaryCache.alphaMapCache && state.summaryCache.alphaMapCache.has(key)) {
       return state.summaryCache.alphaMapCache.get(key);
     }
-    const file = `alphas_mr_explanations_ref_policy_${cfg.refPolicy}_instance_${instanceId}.csv`;
-    const url = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}/${file}`;
-    const text = await peFetchText(url);
-    const map = parseAlphaCSV(text);
+    const folder = `output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
+    const files = (await peListEntries(folder, 'files')).map(entry => entry.name);
+    const base = `/output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${instanceId}`;
+    const map = await peLoadAlphaMap(base, files, cfg.refPolicy, instanceId);
     if (state.summaryCache && state.summaryCache.alphaMapCache) state.summaryCache.alphaMapCache.set(key, map);
     return map;
   }
@@ -5548,11 +5626,10 @@
     const errors = [];
 
     async function worker(id) {
-      const file = `alphas_mr_explanations_ref_policy_${refPolicy}_instance_${id}.csv`;
-      const url = `${base}/${id}/${file}`;
       try {
-        const text = await peFetchText(url);
-        const m = parseAlphaCSV(text);
+        const folder = `output/${cfg.dataset}/${cfg.model}/${cfg.explainer}/${cfg.label}/${id}`;
+        const files = (await peListEntries(folder, 'files')).map(entry => entry.name);
+        const m = await peLoadAlphaMap(`${base}/${id}`, files, refPolicy, id);
         alphaMaps.push({ id, map: m });
         const key = `${sig}|${id}`;
         if (state.summaryCache && state.summaryCache.alphaMapCache) state.summaryCache.alphaMapCache.set(key, m);

@@ -17,12 +17,27 @@ import generate_official_perturbation_charts as charts
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.csv"
+DEFAULT_LATEX_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.tex"
 PERTURBATION_SETTINGS = ("instance_to_reference", "reference_to_instance", "gaussian")
+LATEX_PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 PRIMARY_METRIC = "f_minus_f0-mean"
 E2E_METRIC = "p2p_f_minus_f0-mean"
 COMPARATORS = ("e2e", "segmented", "tshap", "random", "bottom")
 UNIT_COLUMNS = ("dataset", "base_explainer", "mr_classifier")
 CLASSIFIER_ORDER = ("LogisticRegression", "MLPClassifier", "RandomForestClassifier")
+EXCLUDED_REFERENCE_POLICIES = ("counterfactual",)
+SETTING_LABELS = {
+    "instance_to_reference": "Occlusion",
+    "reference_to_instance": "Reference to instance",
+    "gaussian": "Noise addition",
+}
+COMPARATOR_LABELS = {
+    "e2e": "End-to-end",
+    "segmented": "Segmented",
+    "tshap": "T-SHAP",
+    "random": "Random",
+    "bottom": "Bottom",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +73,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_OUTPUT,
         help=f"CSV path for detailed and summary counts. Default: {DEFAULT_OUTPUT}",
+    )
+    parser.add_argument(
+        "--latex-output",
+        type=Path,
+        default=DEFAULT_LATEX_OUTPUT,
+        help=f"Path for the LaTeX summary table. Default: {DEFAULT_LATEX_OUTPUT}",
     )
     parser.add_argument(
         "--percentile-cut",
@@ -129,6 +150,12 @@ def restrict_to_percentile(data: pd.DataFrame, percentile_cut: float) -> pd.Data
     if data.empty:
         return data
     return data[np.isclose(data["percentile_cut"], percentile_cut, equal_nan=False)].copy()
+
+
+def exclude_reference_policies(data: pd.DataFrame) -> pd.DataFrame:
+    if data.empty or "reference_policy" not in data:
+        return data
+    return data[~data["reference_policy"].isin(EXCLUDED_REFERENCE_POLICIES)].copy()
 
 
 def aggregate_primary_data(data: pd.DataFrame, percentile_cut: float) -> pd.DataFrame:
@@ -204,6 +231,7 @@ def unit_rows_for_analysis(
     args: Args,
 ) -> list[dict[str, object]]:
     raw_data, _, _ = charts.load_data(args.data_dir, args)
+    raw_data = exclude_reference_policies(raw_data)
     primary_data = charts.filter_data(raw_data, args)
     primary_agg = aggregate_primary_data(primary_data, args.percentile_cut)
     baseline_data = charts.filter_average_policy_data(raw_data, args)
@@ -315,6 +343,65 @@ def write_output(output: Path, details: pd.DataFrame, summary: pd.DataFrame) -> 
         details.to_csv(handle, index=False)
 
 
+def format_win_count(win: int, evaluated: int) -> str:
+    if evaluated == 0:
+        return "--"
+    return f"{win}/{evaluated}"
+
+
+def build_latex_summary(summary: pd.DataFrame) -> str:
+    indexed = summary.set_index(["setting", "comparator"])
+    header_labels = [SETTING_LABELS[setting] for setting in LATEX_PERTURBATION_SETTINGS]
+    latex = [
+        r"\begin{table}[t]",
+        r"\centering",
+        r"\small",
+        r"\begin{tabular}{lccc}",
+        r"\toprule",
+        "Comparator & " + " & ".join(header_labels) + r" & Overall \\",
+        r"\midrule",
+    ]
+
+    for comparator in COMPARATORS:
+        cells = []
+        total_wins = 0
+        total_evaluated = 0
+        for setting in LATEX_PERTURBATION_SETTINGS:
+            if (setting, comparator) in indexed.index:
+                row = indexed.loc[(setting, comparator)]
+                wins = int(row["win"])
+                evaluated = int(row["evaluated"])
+            else:
+                wins = 0
+                evaluated = 0
+            cells.append(format_win_count(wins, evaluated))
+            total_wins += wins
+            total_evaluated += evaluated
+        cells.append(format_win_count(total_wins, total_evaluated))
+        latex.append(f"{COMPARATOR_LABELS[comparator]} & " + " & ".join(cells) + r" \\")
+
+    latex.extend(
+        [
+            r"\bottomrule",
+            r"\end{tabular}",
+            (
+                r"\caption{Number of cases in which back-propagation outperforms each "
+                r"competitor. Entries report wins/evaluated comparisons; comparisons "
+                r"with missing values are excluded from the denominator. Results using "
+                r"the counterfactual reference policy are excluded.}"
+            ),
+            r"\label{tab:backprop-perturbation-wins}",
+            r"\end{table}",
+        ]
+    )
+    return "\n".join(latex)
+
+
+def write_latex_output(output: Path, summary: pd.DataFrame) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(build_latex_summary(summary) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     cli_args = parse_args()
     explainers = discover_explainers(cli_args.data_dir)
@@ -338,9 +425,12 @@ def main() -> None:
     summary = summarize(details)
     by_explainer = summarize_by_explainer(details)
     write_output(cli_args.output, details, summary)
+    write_latex_output(cli_args.latex_output, summary)
 
     print(f"Analyzed percentile_cut={cli_args.percentile_cut:g} using probability drops.")
+    print(f"Excluded reference policies: {', '.join(EXCLUDED_REFERENCE_POLICIES)}")
     print(f"Wrote detailed CSV: {cli_args.output}")
+    print(f"Wrote LaTeX summary table: {cli_args.latex_output}")
     print("\nOverall counts:")
     print(summary.to_string(index=False))
     print("\nCounts by explainer:")

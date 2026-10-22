@@ -393,7 +393,7 @@ def write_latex_figures(
         lines,
         instance_charts,
         caption=(
-            "Official perturbation charts for the instance-to-reference policy."
+            "Official perturbation charts for the occlusion perturbation regime."
         ),
         label="fig:official-perturbation-instance-to-reference",
         columns=columns,
@@ -417,8 +417,7 @@ def write_latex_figures(
         lines,
         gaussian_policy_charts,
         caption=(
-            "Official perturbation charts for Gaussian policies, including "
-            "gradient Gaussian variants."
+            "Official perturbation charts for the noise addition perturbation regime."
         ),
         label="fig:official-perturbation-gaussian",
         columns=columns,

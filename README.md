@@ -215,6 +215,31 @@ policy/group/configuration legends, and reporting methodology. LaTeX files are
 fragments suitable for inclusion in a document; wide tables may need landscape
 pages or scaling. The Markdown report also lists input files for provenance.
 
+The script also writes `aggregation-comparison.tex`, a compact dataset-level
+table with O for occlusion (`instance_to_reference`) and N for noise addition
+(`gaussian`). Its M, C, and F columns are the medoid, closest-instance, and
+farthest-instance baselines from the three-policy `min` run; `min` and `avg` are
+the corresponding three-policy combined scores. Scores are equal-weight means
+over classifier coverage shared by both aggregations, and unavailable
+combinations are shown as dashes. The `starlight-c1`, `starlight-c2`,
+and `starlight-c3` scores are first averaged per dataset and then reported as a
+single, equal-weight `starlight` result.
+The dataset cells use `\multirow`, and `booktabs` rules separate dataset blocks,
+so documents including this fragment must load the LaTeX `multirow` and
+`booktabs` packages. Scores in this compact table use three decimal places;
+absolute values below 0.001 are displayed as `< 0.001`. Three-point spacing
+between all columns and suppressed outer padding keep the table compact enough
+for a two-column document. The best score in each row is bold; exact ties are
+all bolded.
+
+`aggregation-comparison-by-classifier.tex` provides the same comparison with a
+classifier column. Logistic regression, MLP, and random forest are abbreviated
+as LR, MLP, and RF. Starlight scores remain equal-weight averages across C1--C3,
+computed separately for each classifier. This appendix-oriented table uses
+standard LaTeX intercolumn spacing for a full-width, two-column float. Classifier
+labels use `\multirow` across their O and N rows, with partial `\cmidrule`
+separators that leave the dataset column open.
+
 Defaults are `--explainer shap --attribution-type backpropagated
 --metric f_minus_f0-mean`. Use `--attribution-type p2p` (or another exported
 variant), `--metric f_minus_f0_norm-mean`, `--digits 7`, `--stdout latex`, or

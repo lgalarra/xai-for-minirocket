@@ -19,7 +19,8 @@ BASE_METRIC = "f_minus_f0"
 METRIC = BASE_METRIC + "-mean"
 LABEL = "predicted"
 PERTURBATION_POLICIES = ("gaussian", "instance_to_reference")
-#MODEL_NAME = "RandomForestClassifier"
+GRADIENT_CLASSIFIERS = ("LogisticRegression", "MLPClassifier")
+MODEL_ORDER = ("LR", "MLP", "RF")
 GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
     "gaussian": "gradient_gaussian_opposite",
 }
@@ -57,7 +58,7 @@ if not dfs:
 data = pd.concat(dfs, ignore_index=True)
 data = data.drop(
     data[
-        (~data["mr_classifier"].isin(("LogisticRegression", "MLPClassifier")))
+        (~data["mr_classifier"].isin(GRADIENT_CLASSIFIERS))
         & (data["base_explainer"] == "gradients")
     ].index
 )
@@ -160,10 +161,6 @@ written_files = []
 explainers = sorted(data["base_explainer"].dropna().unique())
 for perturbation_policy in PERTURBATION_POLICIES:
     for explainer in explainers:
-        plot_perturbation_policy = perturbation_policy_for_explainer(
-            explainer,
-            perturbation_policy,
-        )
         plot_data = filter_for_plot(data, explainer, perturbation_policy)
         if plot_data.empty:
             continue
@@ -175,7 +172,10 @@ for perturbation_policy in PERTURBATION_POLICIES:
             fig, ax = plt.subplots(figsize=(8, 5))
 
             order = sorted(g_ds["reference_policy"].unique())
-            model_order = sorted(g_ds["mr_classifier"].unique())
+            model_order = [
+                model for model in MODEL_ORDER
+                if model in g_ds["mr_classifier"].unique()
+            ]
 
             sns.boxplot(
                 data=g_ds,
@@ -208,7 +208,7 @@ for perturbation_policy in PERTURBATION_POLICIES:
 
             out_file = OUT_DIR / (
                 f"{safe_filename_part(dataset)}_{safe_filename_part(explainer)}_"
-                f"{safe_filename_part(BASE_METRIC)}_{safe_filename_part(plot_perturbation_policy)}_"
+                f"{safe_filename_part(BASE_METRIC)}_{safe_filename_part(perturbation_policy)}_"
                 "reference_policy_boxplot.png"
             )
             fig.savefig(out_file, dpi=300, bbox_inches="tight")

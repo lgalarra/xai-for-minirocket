@@ -269,6 +269,7 @@ def plot_instance_with_shapelet_matches(
         ax.plot(time_axis, instance[channel], color="black", linewidth=1.2)
         ax.set_ylabel(f"channel {channel}")
         ax.grid(True, alpha=0.25)
+        ax.tick_params(axis="both", labelsize=14)
         if channel < n_channels - 1:
             ax.tick_params(labelbottom=False)
 
@@ -289,7 +290,7 @@ def plot_instance_with_shapelet_matches(
                 )
         handles, labels = ax.get_legend_handles_labels()
         if handles:
-            ax.legend(loc="best")
+            ax.legend(loc="best", fontsize=22)
 
     axes[-1].set_xlabel("time")
     fig.suptitle(title, fontsize=13)
@@ -316,7 +317,7 @@ def plot_instance_with_shapelet_matches(
         "Triggered shapelets",
         ha="left",
         va="bottom",
-        fontsize=11,
+        fontsize=18,
         fontweight="bold",
         transform=shapelet_title_ax.transAxes,
     )
@@ -333,16 +334,16 @@ def plot_instance_with_shapelet_matches(
         row = 2 + rank // n_shapelet_columns
         column = rank % n_shapelet_columns
         mini_ax = fig.add_subplot(shapelet_grid[row, column])
-        mini_ax.plot(np.arange(values.shape[0]), values, color=color, linewidth=2.1)
+        mini_ax.plot(np.arange(values.shape[0]), values, color=color, linewidth=4.0)
         mini_ax.set_box_aspect(0.42)
         mini_ax.margins(x=0.06, y=0.28)
         mini_ax.grid(True, alpha=0.2)
-        mini_ax.tick_params(axis="both", labelsize=10)
+        mini_ax.tick_params(axis="both", labelsize=16)
         mini_ax.set_title(
-            f"s{shapelet_index}: {feature['rule']}",
-            fontsize=12,
-            loc="left",
-            pad=6,
+            f"s{shapelet_index}\n{feature['rule']}",
+            fontsize=18,
+            loc="right" if column == n_shapelet_columns - 1 else "left",
+            pad=8,
         )
         for spine in mini_ax.spines.values():
             spine.set_alpha(0.35)
