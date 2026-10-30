@@ -26,6 +26,7 @@ GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
 }
 DEFAULT_EVOLUTION_FACTORS = ("percentile_cut",)
 DEFAULT_METRIC_KINDS = ("probability",)
+DEFAULT_OUTPUT_FORMAT = "tikz"
 DEFAULT_PER_REFERENCE_POLICIES = (
     "gradient_gaussian_opposite",
 )
@@ -49,6 +50,16 @@ def parse_args():
         type=Path,
         default=DEFAULT_OUT_DIR,
         help=f"Directory where figures are written. Default: {DEFAULT_OUT_DIR}",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("tikz", "png"),
+        default=DEFAULT_OUTPUT_FORMAT,
+        dest="output_format",
+        help=(
+            "Chart output format passed through to the generator. "
+            f"Default: {DEFAULT_OUTPUT_FORMAT}."
+        ),
     )
     parser.add_argument(
         "--evolution-factor",
@@ -189,6 +200,8 @@ def build_command(
         str(args.data_dir),
         "--out-dir",
         str(args.out_dir),
+        "--format",
+        args.output_format,
         "--evolution-factor",
         evolution_factor,
         "--metric-kind",
@@ -311,6 +324,7 @@ def main():
     print(f"Reference policies: {', '.join(reference_policies)}")
     print(f"Evolution factors: {', '.join(evolution_factors)}")
     print(f"Metric kinds: {', '.join(metric_kinds)}")
+    print(f"Output format: {args.output_format}")
     print(f"Per-reference policies: {', '.join(DEFAULT_PER_REFERENCE_POLICIES)}")
     print(f"Best-method random regime: {args.best_method_random_regime}")
     print(f"Running {len(combinations)} chart-generation commands")

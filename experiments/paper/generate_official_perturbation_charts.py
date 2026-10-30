@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.colors import to_rgb
 from matplotlib.ticker import MaxNLocator
 
 
@@ -15,6 +16,7 @@ DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
 FIGURE_SIZE = (12, 5)
 FIGURE_DPI = 300
+DEFAULT_OUTPUT_FORMAT = "tikz"
 
 EVOLUTION_FACTORS_LABELS = {
     "percentile_cut": "% observations perturbed",
@@ -75,6 +77,16 @@ def parse_args():
         type=Path,
         default=DEFAULT_OUT_DIR,
         help=f"Directory where figures are written. Default: {DEFAULT_OUT_DIR}",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("tikz", "png"),
+        default=DEFAULT_OUTPUT_FORMAT,
+        dest="output_format",
+        help=(
+            "Write one PGFPlots/TikZ .tex file per chart or retain the legacy "
+            f"PNG output. Default: {DEFAULT_OUTPUT_FORMAT}."
+        ),
     )
     parser.add_argument(
         "--evolution-factor",
@@ -682,6 +694,200 @@ def style_maps(metrics, explainers, color_metrics=None, family_colors=False):
     return color_map, linestyle_map
 
 
+def tikz_escape(value):
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(char, char) for char in str(value))
+
+
+def tikz_color(color):
+    red, green, blue = to_rgb(color)
+    return f"{{rgb,1:red,{red:.4f};green,{green:.4f};blue,{blue:.4f}}}"
+
+
+def tikz_linestyle(linestyle):
+    if linestyle == "-":
+        return "solid"
+    if linestyle == "--":
+        return "dashed"
+    if linestyle == ":":
+        return "dotted"
+    if linestyle == "-.":
+        return "dash dot"
+    if isinstance(linestyle, tuple):
+        pattern = linestyle[1]
+        if pattern == (5, 2):
+            return "dashed"
+        if pattern == (1, 2):
+            return "dotted"
+    return "solid"
+
+
+def tikz_marker(marker):
+    return {
+        ".": "*",
+        "x": "x",
+        "P": "square*",
+    }.get(marker, "*")
+
+
+def tikz_axis_label(args, axis):
+    if axis == "x":
+        return tikz_escape(EVOLUTION_FACTORS_LABELS[args.evolution_factor]).replace(
+            "rho", r"$\rho$"
+        )
+    if args.metric_kind == "probability":
+        return r"$\Delta\tilde{f}$ -- probability drop"
+    return tikz_escape(y_axis_label(args.metric_kind))
+
+
+def tikz_coordinate(value):
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return f"{float(value):.12g}"
+    return tikz_escape(value)
+
+
+def is_e2e_series(item):
+    return item["label"].split("|")[-1].strip() == "e2e"
+
+
+def needs_reference_policy_inset(series, args):
+    if getattr(args, "reference_policy", "all") == "all":
+        return False
+
+    all_values = [
+        float(y_value)
+        for item in series
+        for _, y_value in item["coordinates"]
+        if pd.notna(y_value)
+    ]
+    detail_values = [
+        float(y_value)
+        for item in series
+        if not is_e2e_series(item)
+        for _, y_value in item["coordinates"]
+        if pd.notna(y_value)
+    ]
+    has_e2e = any(is_e2e_series(item) for item in series)
+    if not all_values or not detail_values or not has_e2e:
+        return False
+
+    full_span = max(all_values) - min(all_values)
+    detail_span = max(detail_values) - min(detail_values)
+    return detail_span > 0 and full_span / detail_span >= 8
+
+
+def tikz_series_lines(item, categorical_x, *, include_legend):
+    coordinates = " ".join(
+        f"({{{tikz_coordinate(x_value)}}},{float(y_value):.12g})"
+        if categorical_x
+        else f"({tikz_coordinate(x_value)},{float(y_value):.12g})"
+        for x_value, y_value in item["coordinates"]
+        if pd.notna(x_value) and pd.notna(y_value)
+    )
+    options = [
+        f"color={tikz_color(item['color'])}",
+        tikz_linestyle(item["linestyle"]),
+        "line width=0.8pt",
+        f"mark={tikz_marker(item['marker'])}",
+        "mark size=1.5pt",
+    ]
+    lines = [rf"\addplot+[{','.join(options)}] coordinates {{{coordinates}}};"]
+    if include_legend:
+        lines.append(rf"\addlegendentry{{{tikz_escape(item['label'])}}}")
+    return lines
+
+
+def write_tikz_chart(series, args, out_file):
+    categorical_x = args.evolution_factor == "perturbation_policy"
+    symbolic_values = []
+    if categorical_x:
+        symbolic_values = list(
+            dict.fromkeys(
+                str(x_value)
+                for item in series
+                for x_value, _ in item["coordinates"]
+            )
+        )
+
+    axis_options = [
+        r"width=0.84\linewidth",
+        r"height=0.58\linewidth",
+        rf"xlabel={{{tikz_axis_label(args, 'x')}}}",
+        rf"ylabel={{{tikz_axis_label(args, 'y')}}}",
+        "grid=major",
+        r"tick label style={font=\small}",
+        r"label style={font=\small}",
+        (
+            r"legend style={at={(0.5,-0.30)},anchor=north,font=\scriptsize,"
+            r"draw=none,/tikz/every even column/.append style={column sep=0.8em}}"
+        ),
+        "legend cell align={left}",
+        "legend columns=2",
+    ]
+    if categorical_x:
+        symbols = ",".join(f"{{{tikz_escape(value)}}}" for value in symbolic_values)
+        axis_options.extend(
+            [
+                f"symbolic x coords={{{symbols}}}",
+                "xtick=data",
+                r"x tick label style={rotate=25,anchor=east}",
+            ]
+        )
+
+    lines = [
+        "% Generated by generate_official_perturbation_charts.py.",
+        "% Requires \\usepackage{pgfplots} and \\pgfplotsset{compat=1.18}.",
+        r"\begin{tikzpicture}",
+        "\\begin{axis}[",
+        "  " + ",\n  ".join(axis_options),
+        "]",
+    ]
+    for item in series:
+        lines.extend(tikz_series_lines(item, categorical_x, include_legend=True))
+    lines.append(r"\end{axis}")
+
+    if needs_reference_policy_inset(series, args):
+        lines.extend(
+            [
+                r"\begin{axis}[",
+                r"  at={(current axis.north east)},",
+                r"  anchor=north east,",
+                r"  xshift=-0.6em,",
+                r"  yshift=-0.6em,",
+                r"  width=0.42\linewidth,",
+                r"  height=0.28\linewidth,",
+                r"  title={zoom near zero},",
+                r"  title style={font=\tiny},",
+                r"  tick label style={font=\tiny},",
+                r"  xtick=\empty,",
+                r"  grid=major,",
+                r"  axis background/.style={fill=white,fill opacity=0.92},",
+                r"]",
+            ]
+        )
+        for item in series:
+            if not is_e2e_series(item):
+                lines.extend(
+                    tikz_series_lines(item, categorical_x, include_legend=False)
+                )
+        lines.append(r"\end{axis}")
+
+    lines.extend([r"\end{tikzpicture}", ""])
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text("\n".join(lines), encoding="utf-8")
+
+
 def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, color_metrics=None, family_colors=False):
     g_ds = g_ds.copy()
     g_ds["_plot_x"] = x_values_for_plot(g_ds, args)
@@ -698,7 +904,9 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
         family_colors=family_colors,
     )
 
-    plt.figure(figsize=FIGURE_SIZE)
+    series = []
+    if args.output_format == "png":
+        plt.figure(figsize=FIGURE_SIZE)
 
     for explainer, g_exp in g_ds.groupby("base_explainer"):
         for metric in metrics:
@@ -711,15 +919,25 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
             if len(explainers) > 1:
                 label = f"{explainer} | {label}"
 
-            plt.plot(
-                x,
-                y,
-                linestyle=linestyle_map[explainer],
-                linewidth=2.5,
-                marker=".",
-                color=color_map[metric],
-                label=label,
+            series.append(
+                {
+                    "coordinates": list(zip(x, y)),
+                    "linestyle": linestyle_map[explainer],
+                    "marker": ".",
+                    "color": color_map[metric],
+                    "label": label,
+                }
             )
+            if args.output_format == "png":
+                plt.plot(
+                    x,
+                    y,
+                    linestyle=linestyle_map[explainer],
+                    linewidth=2.5,
+                    marker=".",
+                    color=color_map[metric],
+                    label=label,
+                )
 
     if average_data is not None and not average_data.empty:
         average_styles = {
@@ -734,13 +952,28 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
                 suffix,
                 {"color": "0.2", "linestyle": "--", "marker": "x"},
             )
-            plt.plot(
-                g_avg["_plot_x"],
-                g_avg["average_value"],
-                linewidth=2.5,
-                label=AVERAGE_POLICY_SUFFIX_LABELS.get(suffix, f"{suffix} avg"),
-                **style,
+            label = AVERAGE_POLICY_SUFFIX_LABELS.get(suffix, f"{suffix} avg")
+            series.append(
+                {
+                    "coordinates": list(zip(g_avg["_plot_x"], g_avg["average_value"])),
+                    "linestyle": style["linestyle"],
+                    "marker": style["marker"],
+                    "color": style["color"],
+                    "label": label,
+                }
             )
+            if args.output_format == "png":
+                plt.plot(
+                    g_avg["_plot_x"],
+                    g_avg["average_value"],
+                    linewidth=2.5,
+                    label=label,
+                    **style,
+                )
+
+    if args.output_format == "tikz":
+        write_tikz_chart(series, args, out_file)
+        return
 
     plt.xticks(fontsize=18)
     plt.yticks(fontsize=18)
@@ -797,7 +1030,8 @@ def output_name(dataset, args, best_method_random_regime=None):
     ]
     if best_method_random_regime is not None:
         parts.append(f"best-random-{best_method_random_regime}")
-    return "_".join(safe_filename_part(part) for part in parts) + ".png"
+    extension = ".tex" if args.output_format == "tikz" else ".png"
+    return "_".join(safe_filename_part(part) for part in parts) + extension
 
 
 def should_write_best_methods_chart(args):

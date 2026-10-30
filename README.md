@@ -251,6 +251,15 @@ python generate_all_official_perturbation_charts.py \
   --percentile-cut 90 --sigma 3
 ```
 
+The driver writes one PGFPlots/TikZ `.tex` file per chart by default. Pass
+`--format png` for the legacy raster output. Generate the corresponding LaTeX
+figure grids with `python generate_official_perturbation_latex_figures.py`; the
+generated snippet uses `\input` for each TikZ chart and requires `pgfplots` and
+`subcaption` in the paper preamble. TikZ grids use two columns by default so
+that axis labels and legends remain readable. Explicit reference-policy charts
+automatically add a near-zero inset when an `e2e` curve would otherwise flatten
+the remaining methods against the horizontal axis.
+
 This driver also emits best-method and per-classifier charts, so its directory
 is not a one-to-one list of the figures included in the current manuscript.
 
