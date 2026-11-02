@@ -40,8 +40,10 @@ AVERAGE_POLICY_SUFFIX_LABELS = {
     "bottom_unsigned": "bottom (backprop)",
 }
 BEST_METHOD_FAMILY_COLORS = {
-    "segmented": plt.get_cmap("tab20")(2),
-    "tshap": "tab:red",
+    "backprop": "#0072B2",
+    "e2e": "#E69F00",
+    "segmented": "#009E73",
+    "tshap": "#CC79A7",
 }
 GAUSSIAN_BOTTOM_POLICY_COLUMN = "is_gaussian_bottom_perturbation_policy"
 GAUSSIAN_POLICY_PREFIXES = ("gaussian", "gradient_gaussian")
@@ -684,8 +686,13 @@ def style_maps(metrics, explainers, color_metrics=None, family_colors=False):
     if family_colors:
         for metric in color_metrics:
             family = metric_family(metric)
-            if family in BEST_METHOD_FAMILY_COLORS:
-                color_map[metric] = BEST_METHOD_FAMILY_COLORS[family]
+            stem = metric_stem(metric)
+            color_key = {
+                "f_minus_f0": "backprop",
+                "p2p_f_minus_f0": "e2e",
+            }.get(stem, family)
+            if color_key in BEST_METHOD_FAMILY_COLORS:
+                color_map[metric] = BEST_METHOD_FAMILY_COLORS[color_key]
     linestyles = ["-", "--", ":", "-."]
     linestyle_map = {
         explainer: linestyles[i % len(linestyles)]
@@ -827,7 +834,8 @@ def write_tikz_chart(series, args, out_file):
         rf"ylabel={{{tikz_axis_label(args, 'y')}}}",
         "grid=major",
         r"tick label style={font=\small}",
-        r"label style={font=\small}",
+        r"xlabel style={font=\small}",
+        r"ylabel style={font=\scriptsize}",
         (
             r"legend style={at={(0.5,-0.30)},anchor=north,font=\scriptsize,"
             r"draw=none,/tikz/every even column/.append style={column sep=0.8em}}"
@@ -977,8 +985,8 @@ def plot_dataset(g_ds, dataset, metrics, args, out_file, average_data=None, colo
 
     plt.xticks(fontsize=18)
     plt.yticks(fontsize=18)
-    plt.xlabel(EVOLUTION_FACTORS_LABELS[args.evolution_factor], fontsize=20)
-    plt.ylabel(y_axis_label(args.metric_kind), fontsize=20)
+    plt.xlabel(EVOLUTION_FACTORS_LABELS[args.evolution_factor], fontsize=18)
+    plt.ylabel(y_axis_label(args.metric_kind), fontsize=16)
     plt.grid(True, alpha=0.3)
 
     ax = plt.gca()

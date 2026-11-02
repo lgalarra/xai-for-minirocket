@@ -260,6 +260,12 @@ that axis labels and legends remain readable. Explicit reference-policy charts
 automatically add a near-zero inset when an `e2e` curve would otherwise flatten
 the remaining methods against the horizontal axis.
 
+`generate_bars_per_reference_policy.py` likewise writes one native PGFPlots
+boxplot per `.tex` file by default, including Tukey whiskers and outliers. Use
+`--format png` for its legacy output, then run
+`generate_reference_policy_latex_figures.py` to build two-column TikZ grids.
+These grids additionally require `\usepgfplotslibrary{statistics}`.
+
 This driver also emits best-method and per-classifier charts, so its directory
 is not a one-to-one list of the figures included in the current manuscript.
 

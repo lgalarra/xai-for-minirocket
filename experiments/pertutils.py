@@ -212,6 +212,26 @@ def _limit_mask(mask: np.ndarray, scores: np.ndarray, n_perturbed_points=None, r
     return limited_mask
 
 
+def _matched_bottom_unsigned_mask(
+    explanation: np.ndarray,
+    percentile_cut: float,
+    n_perturbed_points=None,
+) -> np.ndarray:
+    top_positive_mask = _reference_positive_mask(explanation, percentile_cut)
+    top_positive_mask = _limit_mask(
+        top_positive_mask,
+        explanation,
+        n_perturbed_points=n_perturbed_points,
+        random_select=False,
+    )
+    matched_n_perturbed_points = _mask_counts(top_positive_mask)
+    return _bottom_unsigned_mask(
+        explanation,
+        percentile_cut,
+        matched_n_perturbed_points,
+    )
+
+
 def zero_out_random_ones(arr, x, rng=None):
     arr = arr.copy()
     rng = np.random.default_rng(rng)
@@ -429,8 +449,9 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
                                              filter_explanation_fn=percentile_fn,
                                              **args)
         elif policy == 'gaussian_bottom_unsigned':
-            explanation_mask = _bottom_unsigned_mask(
-                X_scores,
+            padded_scores = _pad_last_axis(X_scores, X_target.shape[-1])
+            explanation_mask = _matched_bottom_unsigned_mask(
+                padded_scores,
                 args['percentile_cut'],
                 args.get('n_perturbed_points')
             )
@@ -551,7 +572,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
         return get_reference_perturbation(xfrom=X_target, xto=X_references, explanation=X_scores,
                                           filter_explanation_fn=lambda x : x if x>0.0 else 0.0, **args)
     elif policy == 'reference_to_instance_unsigned':
-        explanation_mask = _bottom_unsigned_mask(
+        explanation_mask = _matched_bottom_unsigned_mask(
             X_scores,
             args['percentile_cut'],
             args.get('n_perturbed_points')
@@ -577,7 +598,7 @@ def get_perturbations(X_target, X_references, X_explanations, explainer_method, 
         return get_reference_perturbation(xfrom=X_references, xto=X_target, explanation=X_scores,
                                           filter_explanation_fn=lambda x: x if x>0.0 else 0.0, **args)
     elif policy == 'instance_to_reference_bottom_unsigned':
-        explanation_mask = _bottom_unsigned_mask(
+        explanation_mask = _matched_bottom_unsigned_mask(
             X_scores,
             args['percentile_cut'],
             args.get('n_perturbed_points')

@@ -240,6 +240,7 @@ def reference_to_instance_charts(charts: list[Chart]) -> list[Chart]:
             chart
             for chart in charts
             if chart.perturbation_policy == "reference_to_instance"
+            and chart.base_explainer != "gradients"
         ),
         key=chart_sort_key,
     )
