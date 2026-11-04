@@ -234,18 +234,6 @@ def instance_to_reference_charts(charts: list[Chart]) -> list[Chart]:
     )
 
 
-def reference_to_instance_charts(charts: list[Chart]) -> list[Chart]:
-    return sorted(
-        (
-            chart
-            for chart in charts
-            if chart.perturbation_policy == "reference_to_instance"
-            and chart.base_explainer != "gradients"
-        ),
-        key=chart_sort_key,
-    )
-
-
 def gaussian_charts(charts: list[Chart]) -> list[Chart]:
     return sorted(
         (
@@ -385,14 +373,11 @@ def write_latex_figures(
     columns: int,
     charts_per_figure: int,
     flat_paths: bool,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     instance_charts = instance_to_reference_charts(charts)
-    reference_charts = reference_to_instance_charts(charts)
     gaussian_policy_charts = gaussian_charts(charts)
     if not instance_charts:
         raise SystemExit("No charts found for perturbation_policy=instance_to_reference")
-    if not reference_charts:
-        raise SystemExit("No charts found for perturbation_policy=reference_to_instance")
     if not gaussian_policy_charts:
         raise SystemExit(
             "No charts found with gaussian and random_no_positive in "
@@ -400,7 +385,7 @@ def write_latex_figures(
         )
     if flat_paths:
         warn_about_flat_source_paths(
-            instance_charts + reference_charts + gaussian_policy_charts,
+            instance_charts + gaussian_policy_charts,
             source_dir,
         )
 
@@ -426,18 +411,6 @@ def write_latex_figures(
     )
     write_figure_parts(
         lines,
-        reference_charts,
-        caption=(
-            "Official perturbation charts for the reference-to-instance policy."
-        ),
-        label="fig:official-perturbation-reference-to-instance",
-        columns=columns,
-        charts_per_figure=charts_per_figure,
-        latex_figures_dir=latex_figures_dir,
-        flat_paths=flat_paths,
-    )
-    write_figure_parts(
-        lines,
         gaussian_policy_charts,
         caption=(
             "Official perturbation charts for the noise addition perturbation regime."
@@ -451,14 +424,14 @@ def write_latex_figures(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines), encoding="utf-8")
-    return len(instance_charts), len(reference_charts), len(gaussian_policy_charts)
+    return len(instance_charts), len(gaussian_policy_charts)
 
 
 def main() -> None:
     args = parse_args()
     source_groups = tuple(args.source_groups or DEFAULT_SOURCE_GROUPS)
     charts = discover_charts(args.source_dir, source_groups, args.chart_format)
-    instance_count, reference_count, gaussian_count = write_latex_figures(
+    instance_count, gaussian_count = write_latex_figures(
         charts,
         args.source_dir,
         args.output,
@@ -469,7 +442,6 @@ def main() -> None:
     )
     print(f"Wrote LaTeX figure snippet: {args.output}")
     print(f"Instance-to-reference charts: {instance_count}")
-    print(f"Reference-to-instance charts: {reference_count}")
     print(f"Gaussian charts: {gaussian_count}")
 
 

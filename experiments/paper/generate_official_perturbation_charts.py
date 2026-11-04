@@ -152,6 +152,11 @@ def parse_args():
         action="store_true",
         help="Write only best-method charts and skip all-method charts.",
     )
+    parser.add_argument(
+        "--include-bottom",
+        action="store_true",
+        help="Include bottom-policy curves in best-method charts.",
+    )
     return parser.parse_args()
 
 
@@ -536,9 +541,14 @@ def aggregate(data, evolution_factor):
 
 
 def average_policy_suffixes(args):
+    random_suffix = args.best_method_random_regime
     if str(args.perturbation_policy).startswith("gradient_gaussian"):
-        return ("bottom", args.best_method_random_regime)
-    return ("bottom_unsigned", args.best_method_random_regime)
+        bottom_suffix = "bottom"
+    else:
+        bottom_suffix = "bottom_unsigned"
+    if getattr(args, "include_bottom", False):
+        return (bottom_suffix, random_suffix)
+    return (random_suffix,)
 
 
 def average_policy_suffix(policy, suffixes):
@@ -834,6 +844,7 @@ def write_tikz_chart(series, args, out_file):
         rf"ylabel={{{tikz_axis_label(args, 'y')}}}",
         "grid=major",
         r"tick label style={font=\small}",
+        r"x tick label style={yshift=-0.3em}",
         r"xlabel style={font=\small}",
         r"ylabel style={font=\scriptsize}",
         (
@@ -849,7 +860,7 @@ def write_tikz_chart(series, args, out_file):
             [
                 f"symbolic x coords={{{symbols}}}",
                 "xtick=data",
-                r"x tick label style={rotate=25,anchor=east}",
+                r"x tick label style={rotate=25,anchor=east,yshift=-0.3em}",
             ]
         )
 

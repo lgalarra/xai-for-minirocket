@@ -18,23 +18,24 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.csv"
 DEFAULT_LATEX_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.tex"
-PERTURBATION_SETTINGS = ("instance_to_reference", "reference_to_instance", "gaussian")
+PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 LATEX_PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 PRIMARY_METRIC = "f_minus_f0-mean"
 E2E_METRIC = "p2p_f_minus_f0-mean"
-COMPARATORS = ("e2e", "segmented", "tshap", "random", "bottom")
+COMPARATORS = ("e2e", "segmented", "tshap", "random")
+BOTTOM_COMPARATOR = "bottom"
 UNIT_COLUMNS = ("dataset", "base_explainer", "mr_classifier")
 CLASSIFIER_ORDER = ("LogisticRegression", "MLPClassifier", "RandomForestClassifier")
 EXCLUDED_REFERENCE_POLICIES = ("counterfactual",)
+EXCLUDED_SETTING_EXPLAINERS = {("instance_to_reference", "gradients")}
 SETTING_LABELS = {
     "instance_to_reference": "Occlusion",
-    "reference_to_instance": "Reference to instance",
     "gaussian": "Noise addition",
 }
 COMPARATOR_LABELS = {
     "e2e": "End-to-end",
     "segmented": "Segmented",
-    "tshap": "T-SHAP",
+    "tshap": "TSHAP",
     "random": "Random",
     "bottom": "Bottom",
 }
@@ -53,13 +54,14 @@ class Args:
     model: str
     reference_policy: str
     best_method_random_regime: str
+    include_bottom: bool = False
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Count dataset/classifier/explainer units where f_minus_f0 "
-            "outperforms e2e, segmented, TSHAP, random, and bottom baselines."
+            "outperforms e2e, segmented, TSHAP, and random baselines."
         )
     )
     parser.add_argument(
@@ -98,6 +100,11 @@ def parse_args() -> argparse.Namespace:
         default="random_no_positive",
         help="Random baseline regime used by the official best-method charts.",
     )
+    parser.add_argument(
+        "--include-bottom",
+        action="store_true",
+        help="Include the bottom baseline comparator in the counts and table.",
+    )
     return parser.parse_args()
 
 
@@ -108,6 +115,7 @@ def analysis_args(
     percentile_cut: float,
     sigma: float,
     random_regime: str,
+    include_bottom: bool = False,
 ) -> Args:
     policy = all_charts.policy_for_explainer(setting, explainer)
     return Args(
@@ -122,6 +130,7 @@ def analysis_args(
         model="all",
         reference_policy="all",
         best_method_random_regime=random_regime,
+        include_bottom=include_bottom,
     )
 
 
@@ -252,8 +261,11 @@ def unit_rows_for_analysis(
             "segmented": row_best_value(row, segmented_metrics),
             "tshap": row_best_value(row, tshap_metrics),
             "random": baseline_value(baseline_agg, unit, "random"),
-            "bottom": baseline_value(baseline_agg, unit, "bottom"),
         }
+        if args.include_bottom:
+            candidates[BOTTOM_COMPARATOR] = baseline_value(
+                baseline_agg, unit, BOTTOM_COMPARATOR
+            )
         for comparator, candidate_value in candidates.items():
             rows.append(
                 {
@@ -349,7 +361,10 @@ def format_win_count(win: int, evaluated: int) -> str:
     return f"{win}/{evaluated}"
 
 
-def build_latex_summary(summary: pd.DataFrame) -> str:
+def build_latex_summary(
+    summary: pd.DataFrame,
+    comparators: tuple[str, ...] = COMPARATORS,
+) -> str:
     indexed = summary.set_index(["setting", "comparator"])
     header_labels = [SETTING_LABELS[setting] for setting in LATEX_PERTURBATION_SETTINGS]
     latex = [
@@ -362,7 +377,7 @@ def build_latex_summary(summary: pd.DataFrame) -> str:
         r"\midrule",
     ]
 
-    for comparator in COMPARATORS:
+    for comparator in comparators:
         cells = []
         total_wins = 0
         total_evaluated = 0
@@ -397,9 +412,16 @@ def build_latex_summary(summary: pd.DataFrame) -> str:
     return "\n".join(latex)
 
 
-def write_latex_output(output: Path, summary: pd.DataFrame) -> None:
+def write_latex_output(
+    output: Path,
+    summary: pd.DataFrame,
+    comparators: tuple[str, ...] = COMPARATORS,
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(build_latex_summary(summary) + "\n", encoding="utf-8")
+    output.write_text(
+        build_latex_summary(summary, comparators) + "\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -408,6 +430,8 @@ def main() -> None:
     rows = []
     for setting in PERTURBATION_SETTINGS:
         for explainer in explainers:
+            if (setting, explainer) in EXCLUDED_SETTING_EXPLAINERS:
+                continue
             args = analysis_args(
                 cli_args.data_dir,
                 setting,
@@ -415,6 +439,7 @@ def main() -> None:
                 cli_args.percentile_cut,
                 cli_args.sigma,
                 cli_args.best_method_random_regime,
+                cli_args.include_bottom,
             )
             rows.extend(unit_rows_for_analysis(setting, explainer, args))
 
@@ -424,11 +449,15 @@ def main() -> None:
     details = pd.DataFrame(rows)
     summary = summarize(details)
     by_explainer = summarize_by_explainer(details)
+    comparators = COMPARATORS + (
+        (BOTTOM_COMPARATOR,) if cli_args.include_bottom else ()
+    )
     write_output(cli_args.output, details, summary)
-    write_latex_output(cli_args.latex_output, summary)
+    write_latex_output(cli_args.latex_output, summary, comparators)
 
     print(f"Analyzed percentile_cut={cli_args.percentile_cut:g} using probability drops.")
     print(f"Excluded reference policies: {', '.join(EXCLUDED_REFERENCE_POLICIES)}")
+    print(f"Included bottom comparator: {cli_args.include_bottom}")
     print(f"Wrote detailed CSV: {cli_args.output}")
     print(f"Wrote LaTeX summary table: {cli_args.latex_output}")
     print("\nOverall counts:")

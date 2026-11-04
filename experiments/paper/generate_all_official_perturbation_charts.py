@@ -117,6 +117,11 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--include-bottom",
+        action="store_true",
+        help="Include bottom-policy curves in generated best-method charts.",
+    )
+    parser.add_argument(
         "--percentile-cut",
         type=float,
         default=90.0,
@@ -217,6 +222,7 @@ def build_command(
         "--best-method-random-regime",
         args.best_method_random_regime,
         "--best-methods-only",
+        *(('--include-bottom',) if args.include_bottom else ()),
         "--percentile-cut",
         str(args.percentile_cut),
         "--sigma",
@@ -327,6 +333,7 @@ def main():
     print(f"Output format: {args.output_format}")
     print(f"Per-reference policies: {', '.join(DEFAULT_PER_REFERENCE_POLICIES)}")
     print(f"Best-method random regime: {args.best_method_random_regime}")
+    print(f"Include bottom curves: {args.include_bottom}")
     print(f"Running {len(combinations)} chart-generation commands")
 
     failures = []

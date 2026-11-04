@@ -150,6 +150,11 @@ def discover_charts(
         chart = Chart(path=path, **match.groupdict())
         if chart.perturbation_policy in EXCLUDED_PERTURBATION_POLICIES:
             continue
+        if (
+            chart.perturbation_policy == "instance_to_reference"
+            and chart.explainer == "gradients"
+        ):
+            continue
         charts.append(chart)
 
     if not charts:
