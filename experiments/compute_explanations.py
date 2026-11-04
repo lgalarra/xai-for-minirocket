@@ -508,7 +508,7 @@ def get_classifier(mr_classifier_name: str, dataset_name: str) -> MinirocketClas
 
 
 def supports_explainer_for_classifier(explainer_method, classifier_name):
-    return explainer_method != 'gradients' or classifier_name == 'LogisticRegression'
+    return explainer_method != 'gradients' or classifier_name != 'RandomForestClassifier'
 
 
 if __name__ == '__main__':
@@ -631,7 +631,7 @@ if __name__ == '__main__':
                 if not supports_explainer_for_classifier(explainer_method, mr_classifier_name):
                     print(
                         f'Skipping {explainer_method} for {mr_classifier_name}: '
-                        'gradients are only supported for LogisticRegression'
+                        'gradients are not supported for RandomForestClassifier'
                     )
                     continue
                 for label in LABELS:

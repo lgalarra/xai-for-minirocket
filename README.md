@@ -78,7 +78,8 @@ The models are `LogisticRegression`, `MLPClassifier`, and
 `RandomForestClassifier`. The base explainers are `shap` (KernelSHAP),
 `stratoshap-k1` (ST-SHAP), `extreme_feature_coalitions` (EFC), and `gradients`.
 For the paper's original experiments, gradients should be restricted to
-logistic regression.
+logistic regression. The current explanation pipeline also supports gradients
+for `MLPClassifier`; gradients remain unsupported for `RandomForestClassifier`.
 
 The six paper reference policies are:
 
