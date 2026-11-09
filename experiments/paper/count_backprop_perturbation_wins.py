@@ -18,6 +18,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.csv"
 DEFAULT_LATEX_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.tex"
+DEFAULT_SCORE_TABLE_WITHOUT_BOTTOM_OUTPUT = (
+    SCRIPT_DIR / "backprop_average_score_drop_without_bottom.tex"
+)
+DEFAULT_SCORE_TABLE_WITH_BOTTOM_OUTPUT = (
+    SCRIPT_DIR / "backprop_average_score_drop_with_bottom.tex"
+)
 PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 LATEX_PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 PRIMARY_METRIC = "f_minus_f0-mean"
@@ -38,6 +44,20 @@ COMPARATOR_LABELS = {
     "tshap": "TSHAP",
     "random": "Random",
     "bottom": "Bottom",
+}
+SCORE_METHODS = ("backprop", "e2e", "segmented", "random", "tshap", "bottom")
+SCORE_METHOD_LABELS = {
+    "backprop": "Back-prop.",
+    "e2e": "e2e",
+    "segmented": "LEFTIST",
+    "random": "Random",
+    "tshap": "TSHAP",
+    "bottom": "Bottom",
+}
+EXPLAINER_LABELS = {
+    "gradients": "Gradients",
+    "shap": "SHAP",
+    "stratoshap-k1": "ST-SHAP",
 }
 
 
@@ -81,6 +101,24 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_LATEX_OUTPUT,
         help=f"Path for the LaTeX summary table. Default: {DEFAULT_LATEX_OUTPUT}",
+    )
+    parser.add_argument(
+        "--score-table-without-bottom-output",
+        type=Path,
+        default=DEFAULT_SCORE_TABLE_WITHOUT_BOTTOM_OUTPUT,
+        help=(
+            "Path for the LaTeX average-score-drop table without Bottom. "
+            f"Default: {DEFAULT_SCORE_TABLE_WITHOUT_BOTTOM_OUTPUT}"
+        ),
+    )
+    parser.add_argument(
+        "--score-table-with-bottom-output",
+        type=Path,
+        default=DEFAULT_SCORE_TABLE_WITH_BOTTOM_OUTPUT,
+        help=(
+            "Path for the LaTeX average-score-drop table with Bottom. "
+            f"Default: {DEFAULT_SCORE_TABLE_WITH_BOTTOM_OUTPUT}"
+        ),
     )
     parser.add_argument(
         "--percentile-cut",
@@ -424,6 +462,147 @@ def write_latex_output(
     )
 
 
+def average_score_drops(details: pd.DataFrame) -> pd.DataFrame:
+    index_columns = ["setting", *UNIT_COLUMNS]
+    backprop = (
+        details[index_columns + ["backprop_value"]]
+        .drop_duplicates(index_columns)
+        .set_index(index_columns)
+    )
+    competitors = details.pivot_table(
+        index=index_columns,
+        columns="comparator",
+        values="comparator_value",
+        aggfunc="first",
+    )
+    per_classifier = backprop.join(competitors, how="outer").rename(
+        columns={"backprop_value": "backprop"}
+    )
+    for method in SCORE_METHODS:
+        if method not in per_classifier:
+            per_classifier[method] = np.nan
+    group_columns = ["setting", "dataset", "base_explainer"]
+    grouped = per_classifier.reset_index().groupby(group_columns, as_index=False)
+    means = grouped[list(SCORE_METHODS)].mean(numeric_only=True)
+    standard_deviations = grouped[list(SCORE_METHODS)].std(
+        numeric_only=True,
+        ddof=0,
+    )
+    standard_deviations = standard_deviations.rename(
+        columns={method: f"{method}_std" for method in SCORE_METHODS}
+    )
+    return means.merge(standard_deviations, on=group_columns).sort_values(group_columns)
+
+
+def latex_escape(value: object) -> str:
+    replacements = {
+        "&": r"\&",
+        "%": r"\%",
+        "#": r"\#",
+        "_": r"\_",
+    }
+    return "".join(replacements.get(character, character) for character in str(value))
+
+
+def format_score(value: float, standard_deviation: float, best_value: float) -> str:
+    if pd.isna(value):
+        return "--"
+    formatted = f"{value:.3f} $\\pm$ {standard_deviation:.3f}"
+    if np.isclose(value, best_value):
+        return rf"\textbf{{{formatted}}}"
+    return formatted
+
+
+def build_latex_score_drop_table(
+    averages: pd.DataFrame,
+    *,
+    include_bottom: bool,
+) -> str:
+    methods = SCORE_METHODS if include_bottom else SCORE_METHODS[:-1]
+    column_spec = "ll" + "r" * len(methods)
+    column_count = 2 + len(methods)
+    bottom_phrase = " including the bottom baseline" if include_bottom else ""
+    label_suffix = "with-bottom" if include_bottom else "without-bottom"
+    latex = [
+        r"\begin{table*}[p]",
+        r"\centering",
+        r"\scriptsize",
+        r"\setlength{\tabcolsep}{3.5pt}",
+        r"\renewcommand{\arraystretch}{0.95}",
+        rf"\begin{{tabular}}{{{column_spec}}}",
+        r"\toprule",
+        "Dataset & Explainer & "
+        + " & ".join(SCORE_METHOD_LABELS[method] for method in methods)
+        + r" \\",
+        r"\midrule",
+    ]
+
+    for setting in LATEX_PERTURBATION_SETTINGS:
+        setting_rows = averages[averages["setting"] == setting]
+        if setting_rows.empty:
+            continue
+        latex.append(
+            rf"\multicolumn{{{column_count}}}{{c}}{{\textbf{{{SETTING_LABELS[setting]} perturbation regime}}}} \\"
+        )
+        dataset_groups = list(setting_rows.groupby("dataset", sort=True))
+        for dataset_index, (dataset, dataset_rows) in enumerate(dataset_groups):
+            for row_index, (_, row) in enumerate(dataset_rows.iterrows()):
+                values = pd.to_numeric(row.reindex(methods), errors="coerce")
+                best_value = values.max(skipna=True)
+                cells = [
+                    format_score(row[method], row[f"{method}_std"], best_value)
+                    for method in methods
+                ]
+                dataset_cell = (
+                    rf"\multirow{{{len(dataset_rows)}}}{{*}}{{{latex_escape(dataset)}}}"
+                    if row_index == 0
+                    else ""
+                )
+                latex.append(
+                    f"{dataset_cell} & "
+                    f"{latex_escape(EXPLAINER_LABELS.get(row['base_explainer'], row['base_explainer']))} & "
+                    + " & ".join(cells)
+                    + r" \\"
+                )
+            if dataset_index != len(dataset_groups) - 1:
+                latex.append(rf"\cmidrule(lr){{2-{column_count}}}")
+        latex.append(r"\addlinespace")
+
+    if latex[-1] == r"\addlinespace":
+        latex.pop()
+    latex.extend(
+        [
+            r"\bottomrule",
+            r"\end{tabular}",
+            (
+                r"\caption{Average probability-score drop at the top 10\% "
+                r"(percentile cut 90) by dataset and base explainer"
+                + bottom_phrase
+                + r". Values are mean $\pm$ standard deviation across available "
+                r"classifiers after averaging over reference policies. For LEFTIST "
+                r"and TSHAP, the best configuration is selected per classifier before "
+                r"aggregation. Bold marks the largest mean in each row; missing "
+                r"results are shown as --.}"
+            ),
+            rf"\label{{tab:backprop-average-score-drop-{label_suffix}}}",
+            r"\end{table*}",
+        ]
+    )
+    return "\n".join(latex)
+
+
+def write_latex_score_drop_table(
+    output: Path,
+    averages: pd.DataFrame,
+    *,
+    include_bottom: bool,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    preamble = "% Requires \\usepackage{booktabs,multirow}.\n"
+    table = build_latex_score_drop_table(averages, include_bottom=include_bottom)
+    output.write_text(preamble + table + "\n", encoding="utf-8")
+
+
 def main() -> None:
     cli_args = parse_args()
     explainers = discover_explainers(cli_args.data_dir)
@@ -439,27 +618,47 @@ def main() -> None:
                 cli_args.percentile_cut,
                 cli_args.sigma,
                 cli_args.best_method_random_regime,
-                cli_args.include_bottom,
+                True,
             )
             rows.extend(unit_rows_for_analysis(setting, explainer, args))
 
     if not rows:
         raise SystemExit("No rows found for the requested analysis.")
 
-    details = pd.DataFrame(rows)
-    summary = summarize(details)
-    by_explainer = summarize_by_explainer(details)
+    all_details = pd.DataFrame(rows)
     comparators = COMPARATORS + (
         (BOTTOM_COMPARATOR,) if cli_args.include_bottom else ()
     )
+    details = all_details[all_details["comparator"].isin(comparators)].copy()
+    summary = summarize(details)
+    by_explainer = summarize_by_explainer(details)
+    score_averages = average_score_drops(all_details)
     write_output(cli_args.output, details, summary)
     write_latex_output(cli_args.latex_output, summary, comparators)
+    write_latex_score_drop_table(
+        cli_args.score_table_without_bottom_output,
+        score_averages,
+        include_bottom=False,
+    )
+    write_latex_score_drop_table(
+        cli_args.score_table_with_bottom_output,
+        score_averages,
+        include_bottom=True,
+    )
 
     print(f"Analyzed percentile_cut={cli_args.percentile_cut:g} using probability drops.")
     print(f"Excluded reference policies: {', '.join(EXCLUDED_REFERENCE_POLICIES)}")
     print(f"Included bottom comparator: {cli_args.include_bottom}")
     print(f"Wrote detailed CSV: {cli_args.output}")
     print(f"Wrote LaTeX summary table: {cli_args.latex_output}")
+    print(
+        "Wrote LaTeX score-drop table without Bottom: "
+        f"{cli_args.score_table_without_bottom_output}"
+    )
+    print(
+        "Wrote LaTeX score-drop table with Bottom: "
+        f"{cli_args.score_table_with_bottom_output}"
+    )
     print("\nOverall counts:")
     print(summary.to_string(index=False))
     print("\nCounts by explainer:")
