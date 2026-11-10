@@ -138,6 +138,16 @@ def parse_args():
         help="reference_policy filter. Use 'all' to disable this filter.",
     )
     parser.add_argument(
+        "--exclude-reference-policy",
+        action="append",
+        default=[],
+        dest="excluded_reference_policies",
+        help=(
+            "reference_policy value to exclude. May be repeated and also applies "
+            "when --reference-policy=all."
+        ),
+    )
+    parser.add_argument(
         "--best-method-random-regime",
         choices=("random", "random_no_positive"),
         default="random_no_positive",
@@ -331,6 +341,10 @@ def policy_can_contribute_to_average(policy, args):
 
 
 def file_matches_metadata_filters(metadata, args):
+    if metadata["reference_policy"] in getattr(
+        args, "excluded_reference_policies", ()
+    ):
+        return False
     if args.base_explainer != "all" and metadata["base_explainer"] != args.base_explainer:
         return False
     if args.model != "all" and metadata["mr_classifier"] != args.model:
@@ -441,6 +455,10 @@ def restrict_gradients_to_supported_classifiers(data):
 def filter_data(data, args):
     data = data.copy()
 
+    excluded_reference_policies = getattr(args, "excluded_reference_policies", ())
+    if excluded_reference_policies:
+        data = data[~data["reference_policy"].isin(excluded_reference_policies)]
+
     if args.evolution_factor != "perturbation_policy" and args.perturbation_policy != "all":
         data = data[perturbation_policy_mask(data, args.perturbation_policy)]
 
@@ -464,6 +482,9 @@ def filter_data(data, args):
 
 def filter_average_policy_data(data, args):
     data = data.copy()
+    excluded_reference_policies = getattr(args, "excluded_reference_policies", ())
+    if excluded_reference_policies:
+        data = data[~data["reference_policy"].isin(excluded_reference_policies)]
     suffixes = average_policy_suffixes(args)
 
     policies = data["perturbation_policy"].astype(str)

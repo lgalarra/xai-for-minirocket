@@ -18,6 +18,7 @@ DEFAULT_ROWS_PER_FIGURE = 2
 DEFAULT_CHARTS_PER_FIGURE = DEFAULT_COLUMNS * DEFAULT_ROWS_PER_FIGURE
 DEFAULT_SOURCE_GROUPS = ("best_methods",)
 DEFAULT_CHART_FORMAT = "tikz"
+EXCLUDED_REFERENCE_POLICIES = ("counterfactual",)
 EVOLUTION_FACTORS = ("percentile_cut", "interpolation", "sigma", "perturbation_policy")
 METRIC_KINDS = ("probability-norm", "change-ratio", "probability")
 EXPLAINER_LABELS = {
@@ -189,6 +190,8 @@ def discover_charts(
         match = FILENAME_RE.match(path.name)
         if not match:
             print(f"Skipping chart with unrecognized name: {path}")
+            continue
+        if match.group("reference_policy") in EXCLUDED_REFERENCE_POLICIES:
             continue
 
         charts.append(

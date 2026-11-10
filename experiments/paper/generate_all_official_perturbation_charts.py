@@ -27,6 +27,7 @@ GRADIENT_PERTURBATION_POLICY_REPLACEMENTS = {
 DEFAULT_EVOLUTION_FACTORS = ("percentile_cut",)
 DEFAULT_METRIC_KINDS = ("probability",)
 DEFAULT_OUTPUT_FORMAT = "tikz"
+EXCLUDED_LATEX_REFERENCE_POLICIES = ("counterfactual",)
 DEFAULT_PER_REFERENCE_POLICIES = (
     "gradient_gaussian_opposite",
 )
@@ -198,6 +199,9 @@ def build_command(
     reference_policy,
 ):
     policy = policy_for_explainer(policy, explainer)
+    excluded_reference_policies = (
+        EXCLUDED_LATEX_REFERENCE_POLICIES if args.output_format == "tikz" else ()
+    )
     return [
         sys.executable,
         str(GENERATOR),
@@ -219,6 +223,11 @@ def build_command(
         args.model,
         "--reference-policy",
         reference_policy,
+        *(
+            argument
+            for excluded_policy in excluded_reference_policies
+            for argument in ("--exclude-reference-policy", excluded_policy)
+        ),
         "--best-method-random-regime",
         args.best_method_random_regime,
         "--best-methods-only",
@@ -245,8 +254,16 @@ def expand_policy_explainer_combinations(policies, explainers):
 
 def reference_policies_for_per_reference_charts(args, discovered_reference_policies):
     if args.reference_policy != "all":
-        return [args.reference_policy]
-    return discovered_reference_policies
+        reference_policies = [args.reference_policy]
+    else:
+        reference_policies = discovered_reference_policies
+    if args.output_format == "tikz":
+        reference_policies = [
+            policy
+            for policy in reference_policies
+            if policy not in EXCLUDED_LATEX_REFERENCE_POLICIES
+        ]
+    return reference_policies
 
 
 def expand_per_reference_combinations(
@@ -331,6 +348,11 @@ def main():
     print(f"Evolution factors: {', '.join(evolution_factors)}")
     print(f"Metric kinds: {', '.join(metric_kinds)}")
     print(f"Output format: {args.output_format}")
+    if args.output_format == "tikz":
+        print(
+            "Excluded LaTeX reference policies: "
+            + ", ".join(EXCLUDED_LATEX_REFERENCE_POLICIES)
+        )
     print(f"Per-reference policies: {', '.join(DEFAULT_PER_REFERENCE_POLICIES)}")
     print(f"Best-method random regime: {args.best_method_random_regime}")
     print(f"Include bottom curves: {args.include_bottom}")
