@@ -57,7 +57,7 @@ SCORE_METHOD_LABELS = {
 EXPLAINER_LABELS = {
     "gradients": "Gradients",
     "shap": "SHAP",
-    "stratoshap-k1": "ST-SHAP",
+    "stratoshap-k1": "STSHAP",
 }
 
 
