@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
         choices=("tikz", "png"),
         default=DEFAULT_CHART_FORMAT,
         help=(
-            "Discover TikZ .tex charts and include them with \\input, or use "
+            "Discover TikZ .tex charts and serialize them with \\appendixchart, or use "
             f"legacy PNG charts. Default: {DEFAULT_CHART_FORMAT}."
         ),
     )
@@ -205,7 +205,7 @@ def write_figure(
                 rf"\begin{{subfigure}}[t]{{{width:.3f}\textwidth}}",
                 r"\centering",
                 (
-                    rf"\input{{{figure_path}}}"
+                    rf"\appendixchart{{{figure_path}}}"
                     if chart.chart_format == "tex"
                     else rf"\includegraphics[width=\linewidth]{{{figure_path}}}"
                 ),
@@ -243,6 +243,8 @@ def write_latex_figures(
         "% TikZ charts also require \\usepackage{pgfplots},",
         "% \\usepgfplotslibrary{statistics}, and \\pgfplotsset{compat=1.18}.",
         "% Requires \\usepackage{subcaption}.",
+        "% TikZ charts require the paper preamble's \\appendixchart helper,",
+        "% which immediately serializes each chart with \\pdfxform to bound pdfTeX memory.",
         "",
     ]
     figure_count = 0
