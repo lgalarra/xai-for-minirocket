@@ -10,6 +10,7 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TEX_OUTPUT_DIR = ROOT / "experiments/paper/tex"
 CONFIG_FIELDS = ["label", "distance", "reference_strategy", "seed", "args", "count_basis"]
 COMPACT_POLICIES = {
     "M": "opposite_class_medoid",
@@ -287,6 +288,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", type=Path, default=ROOT / "experiments/aggregated-results")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "experiments/aggregated-results/tables")
+    parser.add_argument("--tex-output-dir", type=Path, default=DEFAULT_TEX_OUTPUT_DIR)
     parser.add_argument("--explainer", default="shap")
     parser.add_argument("--attribution-type", default="backpropagated")
     parser.add_argument("--metric", default="f_minus_f0-mean")
@@ -307,24 +309,25 @@ def main(argv=None):
     markdown = [description]
     latex = [latex_escape(description) + "\n"]
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.tex_output_dir.mkdir(parents=True, exist_ok=True)
     for name, frame in [("by-dataset", dataset), ("by-dataset-classifier", classifier)]:
         md_table, tex_table = markdown_table(frame, args.digits), latex_table(frame, args.digits)
         (args.output_dir / f"{name}.md").write_text(md_table + "\n")
-        (args.output_dir / f"{name}.tex").write_text(tex_table + "\n")
+        (args.tex_output_dir / f"{name}.tex").write_text(tex_table + "\n")
         markdown.append(f"## {name}\n\n{md_table}")
         latex.append(r"\subsection*{" + latex_escape(name) + "}\n" + tex_table)
     comparison_tex = latex_aggregation_comparison(aggregation_comparison)
-    (args.output_dir / "aggregation-comparison.tex").write_text(comparison_tex + "\n")
+    (args.tex_output_dir / "aggregation-comparison.tex").write_text(comparison_tex + "\n")
     latex.append(r"\subsection*{aggregation-comparison}" + "\n" + comparison_tex)
     classifier_comparison_tex = latex_aggregation_comparison(classifier_aggregation_comparison, compact=False)
-    (args.output_dir / "aggregation-comparison-by-classifier.tex").write_text(classifier_comparison_tex + "\n")
+    (args.tex_output_dir / "aggregation-comparison-by-classifier.tex").write_text(classifier_comparison_tex + "\n")
     latex.append(r"\subsection*{aggregation-comparison-by-classifier}" + "\n" + classifier_comparison_tex)
     for title, entries in legends.items():
         markdown.append(f"## {title}\n\n" + "\n".join(f"- {key}: {value}" for key, value in entries.items()))
         latex.append(r"\subsection*{" + title + "}\n" + "\n\n".join(latex_escape(f"{key}: {value}") for key, value in entries.items()))
     markdown.append("## Sources\n\n" + "\n".join(f"- {source}" for source in sources))
     (args.output_dir / "report.md").write_text("\n\n".join(markdown) + "\n")
-    (args.output_dir / "report.tex").write_text("\n\n".join(latex) + "\n")
+    (args.tex_output_dir / "report.tex").write_text("\n\n".join(latex) + "\n")
     if args.stdout != "none":
         print("\n\n".join(markdown if args.stdout == "markdown" else latex))
 

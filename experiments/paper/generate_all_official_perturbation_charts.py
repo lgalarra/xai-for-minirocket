@@ -8,8 +8,9 @@ import pandas as pd
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
-DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
+DEFAULT_OUT_DIR = TEX_DIR / "official-perturbation-figures"
 GENERATOR = SCRIPT_DIR / "generate_official_perturbation_charts.py"
 DEFAULT_PERTURBATION_POLICIES = (
     "gaussian",

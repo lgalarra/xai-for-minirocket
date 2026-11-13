@@ -8,7 +8,9 @@ import pandas as pd
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
+DEFAULT_OUTPUT = TEX_DIR / "speedup_table.tex"
 COMPUTE_EXPLANATIONS = SCRIPT_DIR.parent / "compute_explanations.py"
 
 METHOD_LABELS = {
@@ -47,8 +49,11 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=None,
-        help="Optional file where the LaTeX table is written. The table is always printed.",
+        default=DEFAULT_OUTPUT,
+        help=(
+            "File where the LaTeX table is written. The table is always printed. "
+            f"Default: {DEFAULT_OUTPUT}"
+        ),
     )
     return parser.parse_args()
 
@@ -410,9 +415,8 @@ def main():
     )
 
     print(latex_tables)
-    if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(latex_tables + "\n")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(latex_tables + "\n")
 
 
 if __name__ == "__main__":

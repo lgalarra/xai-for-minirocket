@@ -246,7 +246,7 @@ legacy figures:
 ```bash
 python generate_all_official_perturbation_charts.py \
   --data-dir ../official-results \
-  --out-dir official-perturbation-figures \
+  --out-dir tex/official-perturbation-figures \
   --evolution-factor percentile_cut \
   --metric-kind probability \
   --percentile-cut 90 --sigma 3
@@ -255,10 +255,11 @@ python generate_all_official_perturbation_charts.py \
 The driver writes one PGFPlots/TikZ `.tex` file per chart by default. Pass
 `--format png` for the legacy raster output. Generate the corresponding LaTeX
 figure grids with `python generate_official_perturbation_latex_figures.py`; the
-generated snippet uses `\input` for each TikZ chart and requires `pgfplots` and
-`subcaption` in the paper preamble. TikZ grids use two columns by default so
-that axis labels and legends remain readable. Explicit reference-policy charts
-automatically add a near-zero inset when an `e2e` curve would otherwise flatten
+default chart and snippet outputs are written under `experiments/paper/tex/`.
+The generated snippet uses `\appendixchart` for each TikZ chart and requires
+`pgfplots` and `subcaption` in the paper preamble. TikZ grids use two columns by
+default so that axis labels and legends remain readable. Explicit reference-policy
+charts automatically add a near-zero inset when an `e2e` curve would otherwise flatten
 the remaining methods against the horizontal axis.
 
 `generate_bars_per_reference_policy.py` likewise writes one native PGFPlots
@@ -307,7 +308,7 @@ completed RF-based run in each dataset directory:
 ```bash
 python experiments/paper/generate_whitebox_accuracy_table.py \
   --data-root experiments/data \
-  --output experiments/paper/whitebox_accuracy_table.tex \
+  --output experiments/paper/tex/whitebox_accuracy_table.tex \
   --digits 3
 ```
 
@@ -342,6 +343,7 @@ the aggregation study with:
 python experiments/report_aggregated_results.py \
   --input-dir experiments/aggregated-results \
   --output-dir experiments/aggregated-results/tables \
+  --tex-output-dir experiments/paper/tex \
   --explainer shap \
   --attribution-type backpropagated \
   --metric f_minus_f0-mean \

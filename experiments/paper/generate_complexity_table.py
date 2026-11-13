@@ -5,7 +5,8 @@ from pathlib import Path
 # Configuration
 # -------------------------------------------------
 INPUT_DIR = Path("runtime-results-full")
-OUTPUT_TEX = "complexity_table.tex"
+SCRIPT_DIR = Path(__file__).resolve().parent
+OUTPUT_TEX = SCRIPT_DIR / "tex" / "complexity_table.tex"
 METHOD_LABELS = {'shap': "KernelSHAP", "stratoshap-k1": "ST-SHAP", "gradients": "Gradients",
                  "extreme_feature_coalitions": "EFC"}
 CLASSIFIER_LABELS = {"RandomForestClassifier": "Random Forest", "MLPClassifier": "Multilayer Perceptron",
@@ -128,7 +129,8 @@ latex.append(r"\end{table}")
 # -------------------------------------------------
 # Write output
 # -------------------------------------------------
-with open(OUTPUT_TEX, "w") as f:
+OUTPUT_TEX.parent.mkdir(parents=True, exist_ok=True)
+with OUTPUT_TEX.open("w") as f:
     f.write("\n".join(latex))
 
 print(f"LaTeX table written to {OUTPUT_TEX}")

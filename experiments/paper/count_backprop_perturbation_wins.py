@@ -15,14 +15,15 @@ import generate_official_perturbation_charts as charts
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.csv"
-DEFAULT_LATEX_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.tex"
+DEFAULT_LATEX_OUTPUT = TEX_DIR / "backprop_perturbation_win_counts.tex"
 DEFAULT_SCORE_TABLE_WITHOUT_BOTTOM_OUTPUT = (
-    SCRIPT_DIR / "backprop_average_score_drop_without_bottom.tex"
+    TEX_DIR / "backprop_average_score_drop_without_bottom.tex"
 )
 DEFAULT_SCORE_TABLE_WITH_BOTTOM_OUTPUT = (
-    SCRIPT_DIR / "backprop_average_score_drop_with_bottom.tex"
+    TEX_DIR / "backprop_average_score_drop_with_bottom.tex"
 )
 PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")
 LATEX_PERTURBATION_SETTINGS = ("instance_to_reference", "gaussian")

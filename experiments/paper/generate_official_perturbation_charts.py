@@ -12,8 +12,9 @@ from matplotlib.ticker import MaxNLocator
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
-DEFAULT_OUT_DIR = SCRIPT_DIR / "official-perturbation-figures"
+DEFAULT_OUT_DIR = TEX_DIR / "official-perturbation-figures"
 FIGURE_SIZE = (12, 5)
 FIGURE_DPI = 300
 DEFAULT_OUTPUT_FORMAT = "tikz"

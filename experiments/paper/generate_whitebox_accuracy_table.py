@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 EXPERIMENTS_DIR = SCRIPT_DIR.parent
 REPO_ROOT = EXPERIMENTS_DIR.parent
 DATA_ROOT = EXPERIMENTS_DIR / "data"
@@ -155,7 +156,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=SCRIPT_DIR / "whitebox_accuracy_table.tex",
+        default=TEX_DIR / "whitebox_accuracy_table.tex",
         help="Path where the LaTeX table should be written.",
     )
     parser.add_argument("--digits", type=int, default=3, help="Number of decimals to print.")

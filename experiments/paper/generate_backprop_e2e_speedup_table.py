@@ -7,10 +7,11 @@ import pandas as pd
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 EXPERIMENTS_DIR = SCRIPT_DIR.parent
 DEFAULT_SEQUENTIAL_DIR = EXPERIMENTS_DIR / "official-results"
 DEFAULT_PARALLEL_DIR = EXPERIMENTS_DIR / "official-results-parallel"
-DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_e2e_speedup_official_parallel.tex"
+DEFAULT_OUTPUT = TEX_DIR / "backprop_e2e_speedup_official_parallel.tex"
 BACKPROP_RUNTIME_COLUMN = "runtimes-seconds"
 E2E_RUNTIME_COLUMN = "runtimes-p2p-seconds"
 COGNITIVE_CIRCLES_RUNTIME_COLUMN = "runtimes-segmented-n20-seconds"

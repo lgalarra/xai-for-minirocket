@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_RESULTS_DIR = SCRIPT_DIR.parent / "official-lrp-results"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "metric-comparison-plots-by-explainer"
 TARGET_METRICS = ("f_minus_f0", "lrp_f_minus_f0")
@@ -500,7 +501,7 @@ def main() -> None:
 
     observations = read_observations(args.results_dir)
     written = plot_charts(observations, args.output_dir)
-    latex_output = args.latex_output or args.output_dir / "lrp_metric_comparison_figures.tex"
+    latex_output = args.latex_output or TEX_DIR / "lrp_metric_comparison_figures.tex"
     write_latex_figures(written, latex_output, args.latex_figures_dir)
     print(f"Wrote {len(written)} chart(s):")
     for chart in written:

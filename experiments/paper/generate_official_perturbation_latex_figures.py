@@ -10,8 +10,9 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_SOURCE_DIR = SCRIPT_DIR / "official-perturbation-figures"
-DEFAULT_OUTPUT = DEFAULT_SOURCE_DIR / "official_perturbation_figures.tex"
+TEX_DIR = SCRIPT_DIR / "tex"
+DEFAULT_SOURCE_DIR = TEX_DIR / "official-perturbation-figures"
+DEFAULT_OUTPUT = TEX_DIR / "official_perturbation_figures.tex"
 DEFAULT_LATEX_FIGURES_DIR = Path("figures")
 DEFAULT_COLUMNS = 2
 DEFAULT_ROWS_PER_FIGURE = 2

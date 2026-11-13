@@ -9,8 +9,9 @@ from matplotlib.colors import to_rgb
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
-DEFAULT_OUT_DIR = SCRIPT_DIR / "bar_charts_reference_policy"
+DEFAULT_OUT_DIR = TEX_DIR / "bar_charts_reference_policy"
 DEFAULT_OUTPUT_FORMAT = "tikz"
 
 BASE_METRIC = "f_minus_f0"

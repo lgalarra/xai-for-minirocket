@@ -11,8 +11,9 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_SOURCE_DIR = SCRIPT_DIR / "bar_charts_reference_policy"
-DEFAULT_OUTPUT = DEFAULT_SOURCE_DIR / "reference_policy_figures.tex"
+TEX_DIR = SCRIPT_DIR / "tex"
+DEFAULT_SOURCE_DIR = TEX_DIR / "bar_charts_reference_policy"
+DEFAULT_OUTPUT = TEX_DIR / "reference_policy_figures.tex"
 DEFAULT_LATEX_FIGURES_DIR = Path("figures")
 DEFAULT_COLUMNS = 2
 DEFAULT_CHARTS_PER_FIGURE = 4
