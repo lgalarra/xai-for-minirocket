@@ -19,6 +19,9 @@ TEX_DIR = SCRIPT_DIR / "tex"
 DEFAULT_DATA_DIR = SCRIPT_DIR.parent / "official-results"
 DEFAULT_OUTPUT = SCRIPT_DIR / "backprop_perturbation_win_counts.csv"
 DEFAULT_LATEX_OUTPUT = TEX_DIR / "backprop_perturbation_win_counts.tex"
+DEFAULT_REFERENCE_POLICY_LATEX_OUTPUT = (
+    TEX_DIR / "backprop_reference_policy_win_counts.tex"
+)
 DEFAULT_SCORE_TABLE_WITHOUT_BOTTOM_OUTPUT = (
     TEX_DIR / "backprop_average_score_drop_without_bottom.tex"
 )
@@ -32,6 +35,7 @@ E2E_METRIC = "p2p_f_minus_f0-mean"
 COMPARATORS = ("e2e", "segmented", "tshap", "random")
 BOTTOM_COMPARATOR = "bottom"
 UNIT_COLUMNS = ("dataset", "base_explainer", "mr_classifier")
+REFERENCE_POLICY_UNIT_COLUMNS = (*UNIT_COLUMNS, "reference_policy")
 CLASSIFIER_ORDER = ("LogisticRegression", "MLPClassifier", "RandomForestClassifier")
 EXCLUDED_REFERENCE_POLICIES = ("counterfactual",)
 EXCLUDED_SETTING_EXPLAINERS = {("instance_to_reference", "gradients")}
@@ -59,6 +63,15 @@ EXPLAINER_LABELS = {
     "gradients": "Gradients",
     "shap": "SHAP",
     "stratoshap-k1": "STSHAP",
+}
+REFERENCE_POLICY_LABELS = {
+    "opposite_class_closest_instance": "Closest instance of enemy class",
+    "opposite_class_medoid": "Medoid of enemy class",
+    "opposite_class_centroid": "Centroid of enemy class",
+    "global_medoid": "Global medoid",
+    "global_centroid": "Global centroid",
+    "opposite_class_farthest_instance": "Farthest instance of enemy class",
+    "counterfactual_dtw": "Counterfactual DTW",
 }
 
 
@@ -102,6 +115,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_LATEX_OUTPUT,
         help=f"Path for the LaTeX summary table. Default: {DEFAULT_LATEX_OUTPUT}",
+    )
+    parser.add_argument(
+        "--reference-policy-latex-output",
+        type=Path,
+        default=DEFAULT_REFERENCE_POLICY_LATEX_OUTPUT,
+        help=(
+            "Path for the LaTeX win-count table disaggregated by reference policy. "
+            f"Default: {DEFAULT_REFERENCE_POLICY_LATEX_OUTPUT}"
+        ),
     )
     parser.add_argument(
         "--score-table-without-bottom-output",
@@ -206,24 +228,29 @@ def exclude_reference_policies(data: pd.DataFrame) -> pd.DataFrame:
     return data[~data["reference_policy"].isin(EXCLUDED_REFERENCE_POLICIES)].copy()
 
 
-def aggregate_primary_data(data: pd.DataFrame, percentile_cut: float) -> pd.DataFrame:
+def aggregate_primary_data(
+    data: pd.DataFrame,
+    percentile_cut: float,
+    unit_columns: tuple[str, ...] = UNIT_COLUMNS,
+) -> pd.DataFrame:
     data = restrict_to_percentile(data, percentile_cut)
     if data.empty:
         return data
     return (
-        data.groupby(list(UNIT_COLUMNS), as_index=False)
+        data.groupby(list(unit_columns), as_index=False)
         .mean(numeric_only=True)
-        .sort_values(list(UNIT_COLUMNS))
+        .sort_values(list(unit_columns))
     )
 
 
 def aggregate_baseline_data(
     data: pd.DataFrame,
     args: Args,
+    unit_columns: tuple[str, ...] = UNIT_COLUMNS,
 ) -> pd.DataFrame:
     data = restrict_to_percentile(data, args.percentile_cut)
     if data.empty or PRIMARY_METRIC not in data:
-        return pd.DataFrame(columns=list(UNIT_COLUMNS) + ["average_policy_suffix", PRIMARY_METRIC])
+        return pd.DataFrame(columns=list(unit_columns) + ["average_policy_suffix", PRIMARY_METRIC])
 
     suffixes = charts.average_policy_suffixes(args)
     data = data.copy()
@@ -232,19 +259,20 @@ def aggregate_baseline_data(
     )
     data = data[pd.notna(data["average_policy_suffix"])]
     if data.empty:
-        return pd.DataFrame(columns=list(UNIT_COLUMNS) + ["average_policy_suffix", PRIMARY_METRIC])
+        return pd.DataFrame(columns=list(unit_columns) + ["average_policy_suffix", PRIMARY_METRIC])
 
     return (
-        data.groupby(list(UNIT_COLUMNS) + ["average_policy_suffix"], as_index=False)[PRIMARY_METRIC]
+        data.groupby(list(unit_columns) + ["average_policy_suffix"], as_index=False)[PRIMARY_METRIC]
         .mean(numeric_only=True)
-        .sort_values(list(UNIT_COLUMNS) + ["average_policy_suffix"])
+        .sort_values(list(unit_columns) + ["average_policy_suffix"])
     )
 
 
 def baseline_value(
     baseline_data: pd.DataFrame,
-    unit: tuple[str, str, str],
+    unit: tuple[str, ...],
     comparator: str,
+    unit_columns: tuple[str, ...] = UNIT_COLUMNS,
 ) -> float:
     suffix = "random_no_positive" if comparator == "random" else None
     if comparator == "bottom":
@@ -252,13 +280,10 @@ def baseline_value(
     else:
         suffixes = (suffix,)
 
-    dataset, explainer, classifier = unit
-    rows = baseline_data[
-        (baseline_data["dataset"] == dataset)
-        & (baseline_data["base_explainer"] == explainer)
-        & (baseline_data["mr_classifier"] == classifier)
-        & (baseline_data["average_policy_suffix"].isin(suffixes))
-    ]
+    mask = baseline_data["average_policy_suffix"].isin(suffixes)
+    for column, value in zip(unit_columns, unit):
+        mask &= baseline_data[column].astype(str) == value
+    rows = baseline_data[mask]
     if rows.empty:
         return np.nan
     values = pd.to_numeric(rows[PRIMARY_METRIC], errors="coerce").dropna()
@@ -273,18 +298,13 @@ def unit_sort_key(unit: tuple[str, str, str]) -> tuple[str, str, int, str]:
     return dataset, explainer, classifier_rank, classifier
 
 
-def unit_rows_for_analysis(
+def comparison_rows(
     setting: str,
-    explainer: str,
     args: Args,
+    primary_agg: pd.DataFrame,
+    baseline_agg: pd.DataFrame,
+    unit_columns: tuple[str, ...],
 ) -> list[dict[str, object]]:
-    raw_data, _, _ = charts.load_data(args.data_dir, args)
-    raw_data = exclude_reference_policies(raw_data)
-    primary_data = charts.filter_data(raw_data, args)
-    primary_agg = aggregate_primary_data(primary_data, args.percentile_cut)
-    baseline_data = charts.filter_average_policy_data(raw_data, args)
-    baseline_agg = aggregate_baseline_data(baseline_data, args)
-
     if primary_agg.empty or PRIMARY_METRIC not in primary_agg:
         return []
 
@@ -293,40 +313,88 @@ def unit_rows_for_analysis(
     tshap_metrics = metric_columns_for_family(metrics, "tshap")
     rows = []
     for _, row in primary_agg.iterrows():
-        unit = tuple(str(row[column]) for column in UNIT_COLUMNS)
+        unit = tuple(str(row[column]) for column in unit_columns)
+        unit_values = dict(zip(unit_columns, unit))
         backprop_value = row.get(PRIMARY_METRIC, np.nan)
         candidates = {
             "e2e": row.get(E2E_METRIC, np.nan),
             "segmented": row_best_value(row, segmented_metrics),
             "tshap": row_best_value(row, tshap_metrics),
-            "random": baseline_value(baseline_agg, unit, "random"),
+            "random": baseline_value(
+                baseline_agg, unit, "random", unit_columns
+            ),
         }
         if args.include_bottom:
             candidates[BOTTOM_COMPARATOR] = baseline_value(
-                baseline_agg, unit, BOTTOM_COMPARATOR
+                baseline_agg, unit, BOTTOM_COMPARATOR, unit_columns
             )
         for comparator, candidate_value in candidates.items():
-            rows.append(
-                {
-                    "setting": setting,
-                    "actual_policy": args.perturbation_policy,
-                    "dataset": unit[0],
-                    "base_explainer": unit[1],
-                    "mr_classifier": unit[2],
-                    "comparator": comparator,
-                    "backprop_value": backprop_value,
-                    "comparator_value": candidate_value,
-                    "result": compare_values(backprop_value, candidate_value),
-                }
-            )
+            result = {
+                "setting": setting,
+                "actual_policy": args.perturbation_policy,
+                **unit_values,
+                "comparator": comparator,
+                "backprop_value": backprop_value,
+                "comparator_value": candidate_value,
+                "result": compare_values(backprop_value, candidate_value),
+            }
+            rows.append(result)
     return sorted(
         rows,
         key=lambda row: (
             row["setting"],
+            row.get("reference_policy", ""),
             row["comparator"],
             unit_sort_key((row["dataset"], row["base_explainer"], row["mr_classifier"])),
         ),
     )
+
+
+def unit_rows_for_analyses(
+    setting: str,
+    explainer: str,
+    args: Args,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    raw_data, _, _ = charts.load_data(args.data_dir, args)
+    raw_data = exclude_reference_policies(raw_data)
+    primary_data = charts.filter_data(raw_data, args)
+    baseline_data = charts.filter_average_policy_data(raw_data, args)
+    primary_agg = aggregate_primary_data(
+        primary_data, args.percentile_cut, UNIT_COLUMNS
+    )
+    baseline_agg = aggregate_baseline_data(
+        baseline_data, args, UNIT_COLUMNS
+    )
+    aggregate_rows = comparison_rows(
+        setting, args, primary_agg, baseline_agg, UNIT_COLUMNS
+    )
+
+    reference_policy_agg = aggregate_primary_data(
+        primary_data, args.percentile_cut, REFERENCE_POLICY_UNIT_COLUMNS
+    )
+    reference_policy_scores = []
+    for _, row in reference_policy_agg.iterrows():
+        reference_policy_scores.append(
+            {
+                "setting": setting,
+                "actual_policy": args.perturbation_policy,
+                **{
+                    column: str(row[column])
+                    for column in REFERENCE_POLICY_UNIT_COLUMNS
+                },
+                "backprop_value": row.get(PRIMARY_METRIC, np.nan),
+            }
+        )
+    return aggregate_rows, reference_policy_scores
+
+
+def unit_rows_for_analysis(
+    setting: str,
+    explainer: str,
+    args: Args,
+) -> list[dict[str, object]]:
+    rows, _ = unit_rows_for_analyses(setting, explainer, args)
+    return rows
 
 
 def discover_explainers(data_dir: Path) -> list[str]:
@@ -385,6 +453,68 @@ def summarize_by_explainer(details: pd.DataFrame) -> pd.DataFrame:
     ].sort_values(["setting", "base_explainer", "comparator"])
 
 
+def reference_policy_win_details(scores: pd.DataFrame) -> pd.DataFrame:
+    case_columns = ["setting", *UNIT_COLUMNS]
+    details = []
+    for _, case in scores.groupby(case_columns, sort=True):
+        case = case.copy()
+        case["backprop_value"] = pd.to_numeric(
+            case["backprop_value"], errors="coerce"
+        )
+        available = case.dropna(subset=["backprop_value"])
+        if len(available) < 2:
+            for _, row in case.iterrows():
+                details.append({**row.to_dict(), "result": "missing"})
+            continue
+
+        best_value = available["backprop_value"].max()
+        best_mask = np.isclose(available["backprop_value"], best_value)
+        tied_best = int(best_mask.sum()) > 1
+        for row_index, row in case.iterrows():
+            if pd.isna(row["backprop_value"]):
+                result = "missing"
+            elif np.isclose(row["backprop_value"], best_value):
+                result = "tie" if tied_best else "win"
+            else:
+                result = "loss"
+            details.append({**row.to_dict(), "result": result})
+    return pd.DataFrame(details)
+
+
+def summarize_by_reference_policy(details: pd.DataFrame) -> pd.DataFrame:
+    group_columns = ["reference_policy", "setting"]
+    counts = (
+        details.groupby([*group_columns, "result"], as_index=False)
+        .size()
+        .rename(columns={"size": "count"})
+    )
+    summary = (
+        counts.pivot_table(
+            index=group_columns,
+            columns="result",
+            values="count",
+            fill_value=0,
+            aggfunc="sum",
+        )
+        .reset_index()
+    )
+    for column in ("win", "loss", "tie", "missing"):
+        if column not in summary:
+            summary[column] = 0
+    summary["evaluated"] = summary["win"] + summary["loss"] + summary["tie"]
+    summary["total_units"] = summary["evaluated"] + summary["missing"]
+    columns = [
+        *group_columns,
+        "win",
+        "loss",
+        "tie",
+        "missing",
+        "evaluated",
+        "total_units",
+    ]
+    return summary[columns].sort_values(group_columns)
+
+
 def write_output(output: Path, details: pd.DataFrame, summary: pd.DataFrame) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as handle:
@@ -398,6 +528,12 @@ def format_win_count(win: int, evaluated: int) -> str:
     if evaluated == 0:
         return "--"
     return f"{win}/{evaluated}"
+
+
+def format_win_percentage(win: int, evaluated: int) -> str:
+    if evaluated == 0:
+        return "--"
+    return f"{win}/{evaluated} ({100 * win / evaluated:.1f}\\%)"
 
 
 def build_latex_summary(
@@ -459,6 +595,83 @@ def write_latex_output(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         build_latex_summary(summary, comparators) + "\n",
+        encoding="utf-8",
+    )
+
+
+def build_reference_policy_latex_summary(
+    summary: pd.DataFrame,
+) -> str:
+    indexed = summary.set_index(["reference_policy", "setting"])
+    policies = sorted(
+        summary["reference_policy"].unique(),
+        key=lambda policy: (
+            list(REFERENCE_POLICY_LABELS).index(policy)
+            if policy in REFERENCE_POLICY_LABELS
+            else len(REFERENCE_POLICY_LABELS),
+            policy,
+        ),
+    )
+    header_labels = [SETTING_LABELS[setting] for setting in LATEX_PERTURBATION_SETTINGS]
+    latex = [
+        r"\begin{table*}[t]",
+        r"\centering",
+        r"\small",
+        r"\begin{tabular}{lccc}",
+        r"\toprule",
+        "Reference policy & " + " & ".join(header_labels) + r" & Overall \\",
+        r"\midrule",
+    ]
+
+    for policy in policies:
+        policy_label = latex_escape(REFERENCE_POLICY_LABELS.get(policy, policy))
+        cells = []
+        total_wins = 0
+        total_evaluated = 0
+        for setting in LATEX_PERTURBATION_SETTINGS:
+            key = (policy, setting)
+            if key in indexed.index:
+                row = indexed.loc[key]
+                wins = int(row["win"])
+                evaluated = int(row["evaluated"])
+            else:
+                wins = 0
+                evaluated = 0
+            cells.append(format_win_percentage(wins, evaluated))
+            total_wins += wins
+            total_evaluated += evaluated
+        cells.append(format_win_percentage(total_wins, total_evaluated))
+        latex.append(f"{policy_label} & " + " & ".join(cells) + r" \\")
+
+    latex.extend(
+        [
+            r"\bottomrule",
+            r"\end{tabular}",
+            (
+                r"\caption{Reference-policy wins for back-propagated explanations. "
+                r"For each dataset, base explainer, and classifier, a policy wins when "
+                r"its average probability-score drop is strictly greater than that of "
+                r"every other available reference policy. Entries report wins/evaluated "
+                r"cases and the corresponding percentage; tied maxima remain in the "
+                r"denominator but do not count as wins. Cases with fewer than two "
+                r"available policies are excluded. The noise-addition column includes "
+                r"gradient-Gaussian perturbations for Gradients. Results using the "
+                r"counterfactual reference policy are excluded.}"
+            ),
+            r"\label{tab:backprop-reference-policy-wins}",
+            r"\end{table*}",
+        ]
+    )
+    return "\n".join(latex)
+
+
+def write_reference_policy_latex_output(
+    output: Path,
+    summary: pd.DataFrame,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        build_reference_policy_latex_summary(summary) + "\n",
         encoding="utf-8",
     )
 
@@ -608,6 +821,7 @@ def main() -> None:
     cli_args = parse_args()
     explainers = discover_explainers(cli_args.data_dir)
     rows = []
+    reference_policy_rows = []
     for setting in PERTURBATION_SETTINGS:
         for explainer in explainers:
             if (setting, explainer) in EXCLUDED_SETTING_EXPLAINERS:
@@ -621,7 +835,11 @@ def main() -> None:
                 cli_args.best_method_random_regime,
                 True,
             )
-            rows.extend(unit_rows_for_analysis(setting, explainer, args))
+            aggregate_rows, policy_rows = unit_rows_for_analyses(
+                setting, explainer, args
+            )
+            rows.extend(aggregate_rows)
+            reference_policy_rows.extend(policy_rows)
 
     if not rows:
         raise SystemExit("No rows found for the requested analysis.")
@@ -631,11 +849,22 @@ def main() -> None:
         (BOTTOM_COMPARATOR,) if cli_args.include_bottom else ()
     )
     details = all_details[all_details["comparator"].isin(comparators)].copy()
+    reference_policy_scores = pd.DataFrame(reference_policy_rows)
+    reference_policy_details = reference_policy_win_details(
+        reference_policy_scores
+    )
     summary = summarize(details)
+    reference_policy_summary = summarize_by_reference_policy(
+        reference_policy_details
+    )
     by_explainer = summarize_by_explainer(details)
     score_averages = average_score_drops(all_details)
     write_output(cli_args.output, details, summary)
     write_latex_output(cli_args.latex_output, summary, comparators)
+    write_reference_policy_latex_output(
+        cli_args.reference_policy_latex_output,
+        reference_policy_summary,
+    )
     write_latex_score_drop_table(
         cli_args.score_table_without_bottom_output,
         score_averages,
@@ -652,6 +881,10 @@ def main() -> None:
     print(f"Included bottom comparator: {cli_args.include_bottom}")
     print(f"Wrote detailed CSV: {cli_args.output}")
     print(f"Wrote LaTeX summary table: {cli_args.latex_output}")
+    print(
+        "Wrote per-reference-policy LaTeX win table: "
+        f"{cli_args.reference_policy_latex_output}"
+    )
     print(
         "Wrote LaTeX score-drop table without Bottom: "
         f"{cli_args.score_table_without_bottom_output}"
